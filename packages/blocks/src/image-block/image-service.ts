@@ -30,7 +30,7 @@ import { type ImageBlockModel, ImageBlockSchema } from './image-model.js';
 import { ImageSelection } from './image-selection.js';
 import { addSiblingImageBlock } from './utils.js';
 
-export class ImageService extends BlockService<ImageBlockModel> {
+export class ImageBlockService extends BlockService<ImageBlockModel> {
   get rootElement(): RootBlockComponent {
     const rootModel = this.doc.root;
     assertExists(rootModel);
@@ -42,7 +42,7 @@ export class ImageService extends BlockService<ImageBlockModel> {
     return rootElement;
   }
 
-  maxFileSize = 10 * 1000 * 1000; // 10MB (default)
+  static setImageProxyURL = setImageProxyMiddlewareURL;
 
   private _fileDropOptions: FileDropOptions = {
     flavour: this.flavour,
@@ -60,14 +60,21 @@ export class ImageService extends BlockService<ImageBlockModel> {
         );
       } else if (isInsideEdgelessEditor(this.host as EditorHost)) {
         const edgelessRoot = this.rootElement as EdgelessRootBlockComponent;
+        point = edgelessRoot.service.viewport.toViewCoordFromClientCoord(point);
         await edgelessRoot.addImages(imageFiles, point);
+
+        edgelessRoot.service.telemetryService?.track('CanvasElementAdded', {
+          control: 'canvas:drop',
+          page: 'whiteboard editor',
+          module: 'toolbar',
+          segment: 'toolbar',
+          type: 'image',
+        });
       }
 
       return true;
     },
   };
-
-  fileDropManager!: FileDropManager;
 
   private _dragHandleOption: DragHandleOption = {
     flavour: ImageBlockSchema.model.flavour,
@@ -77,10 +84,7 @@ export class ImageService extends BlockService<ImageBlockModel> {
       if (element?.classList.contains('resize')) return false;
 
       if (!anchorBlockPath) return false;
-      const anchorComponent = editorHost.std.view.viewFromPath(
-        'block',
-        anchorBlockPath
-      );
+      const anchorComponent = editorHost.std.view.getBlock(anchorBlockPath);
       if (
         !anchorComponent ||
         !matchFlavours(anchorComponent.model, [ImageBlockSchema.model.flavour])
@@ -98,7 +102,7 @@ export class ImageService extends BlockService<ImageBlockModel> {
       if (!isInSurface && (isDraggingByDragHandle || isDraggingByComponent)) {
         editorHost.std.selection.setGroup('note', [
           editorHost.std.selection.create('block', {
-            path: blockComponent.path,
+            blockId: blockComponent.blockId,
           }),
         ]);
         startDragging([blockComponent], state);
@@ -157,6 +161,10 @@ export class ImageService extends BlockService<ImageBlockModel> {
     },
   };
 
+  maxFileSize = 10 * 1000 * 1000; // 10MB (default)
+
+  fileDropManager!: FileDropManager;
+
   override mounted(): void {
     super.mounted();
 
@@ -168,6 +176,4 @@ export class ImageService extends BlockService<ImageBlockModel> {
       AffineDragHandleWidget.registerOption(this._dragHandleOption)
     );
   }
-
-  static setImageProxyURL = setImageProxyMiddlewareURL;
 }

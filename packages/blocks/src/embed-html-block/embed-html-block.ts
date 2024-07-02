@@ -1,5 +1,4 @@
-import '../_common/components/block-selection.js';
-import '../_common/components/embed-card/embed-card-caption.js';
+import './components/fullscreen-toolbar.js';
 
 import { assertExists } from '@blocksuite/global/utils';
 import { html } from 'lit';
@@ -7,43 +6,39 @@ import { customElement, query, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-import type { EmbedCardCaption } from '../_common/components/embed-card/embed-card-caption.js';
 import { EMBED_CARD_HEIGHT, EMBED_CARD_WIDTH } from '../_common/consts.js';
 import { EmbedBlockElement } from '../_common/embed-block-helper/index.js';
 import { Bound } from '../surface-block/utils/bound.js';
 import type { EmbedHtmlModel, EmbedHtmlStyles } from './embed-html-model.js';
-import type { EmbedHtmlService } from './embed-html-service.js';
+import type { EmbedHtmlBlockService } from './embed-html-service.js';
 import { HtmlIcon, styles } from './styles.js';
 
 @customElement('affine-embed-html-block')
 export class EmbedHtmlBlockComponent extends EmbedBlockElement<
   EmbedHtmlModel,
-  EmbedHtmlService
+  EmbedHtmlBlockService
 > {
   static override styles = styles;
 
-  override _cardStyle: (typeof EmbedHtmlStyles)[number] = 'html';
+  @state()
+  private accessor _isSelected = false;
 
   @state()
-  private _isSelected = false;
-
-  @state()
-  private _showOverlay = true;
-
-  @query('iframe')
-  private _iframe!: HTMLIFrameElement;
-
-  @query('embed-card-caption')
-  captionElement!: EmbedCardCaption;
+  private accessor _showOverlay = true;
 
   private _isDragging = false;
 
   private _isResizing = false;
 
+  override _cardStyle: (typeof EmbedHtmlStyles)[number] = 'html';
+
+  @query('.embed-html-block-iframe-wrapper')
+  accessor iframeWrapper!: HTMLDivElement;
+
   private _selectBlock() {
     const selectionManager = this.host.selection;
     const blockSelection = selectionManager.create('block', {
-      path: this.path,
+      blockId: this.blockId,
     });
     selectionManager.setGroup('note', [blockSelection]);
   }
@@ -61,7 +56,11 @@ export class EmbedHtmlBlockComponent extends EmbedBlockElement<
   }
 
   open = () => {
-    this._iframe.requestFullscreen().catch(console.error);
+    this.iframeWrapper?.requestFullscreen().catch(console.error);
+  };
+
+  close = () => {
+    document.exitFullscreen().catch(console.error);
   };
 
   refreshData = () => {};
@@ -121,9 +120,9 @@ export class EmbedHtmlBlockComponent extends EmbedBlockElement<
 
     const htmlSrc = `
       <style>
-        body { 
+        body {
           margin: 0;
-        } 
+        }
       </style>
       ${this.model.html}
     `;
@@ -147,13 +146,17 @@ export class EmbedHtmlBlockComponent extends EmbedBlockElement<
         >
           <div class="affine-embed-html">
             <div class="affine-embed-html-iframe-container">
-              <iframe
-                class="embed-html-block-iframe"
-                sandbox="allow-scripts"
-                scrolling="no"
-                allowfullscreen
-                .srcdoc=${htmlSrc}
-              ></iframe>
+              <div class="embed-html-block-iframe-wrapper" allowfullscreen>
+                <iframe
+                  class="embed-html-block-iframe"
+                  sandbox="allow-scripts"
+                  scrolling="no"
+                  .srcdoc=${htmlSrc}
+                ></iframe>
+                <embed-html-fullscreen-toolbar
+                  .embedHtml=${this}
+                ></embed-html-fullscreen-toolbar>
+              </div>
 
               <div
                 class=${classMap({
@@ -170,10 +173,6 @@ export class EmbedHtmlBlockComponent extends EmbedBlockElement<
             <div class="affine-embed-html-title-text">${titleText}</div>
           </div>
         </div>
-
-        <embed-card-caption .block=${this}></embed-card-caption>
-
-        <affine-block-selection .block=${this}></affine-block-selection>
       `;
     });
   }

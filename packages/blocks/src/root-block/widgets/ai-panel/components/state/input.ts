@@ -1,9 +1,10 @@
 import { WithDisposable } from '@blocksuite/block-std';
-import { css, html, LitElement } from 'lit';
-import { customElement, property, query } from 'lit/decorators.js';
+import { css, html, LitElement, nothing } from 'lit';
+import { customElement, property, query, state } from 'lit/decorators.js';
 
 import { AIStarIcon } from '../../../../../_common/icons/ai.js';
 import { ArrowUpBigIcon } from '../../../../../_common/icons/text.js';
+import { stopPropagation } from '../../../../../_common/utils/event.js';
 
 @customElement('ai-panel-input')
 export class AIPanelInput extends WithDisposable(LitElement) {
@@ -69,27 +70,66 @@ export class AIPanelInput extends WithDisposable(LitElement) {
       padding: 2px;
       gap: 10px;
       border-radius: 4px;
-      background: var(--light-black-black10, rgba(0, 0, 0, 0.1));
+      background: var(--affine-black-10, rgba(0, 0, 0, 0.1));
 
       svg {
         width: 16px;
         height: 16px;
-        color: var(--light-pure-white, #fff);
+        color: var(--affine-pure-white, #fff);
       }
     }
     .arrow[data-active] {
-      background: var(--light-brandColor, #1e96eb);
+      background: var(--affine-brand-color, #1e96eb);
+    }
+    .arrow[data-active]:hover {
+      cursor: pointer;
     }
   `;
 
-  @property({ attribute: false })
-  onFinish?: (input: string) => void;
-
   @query('.arrow')
-  private _arrow!: HTMLDivElement;
+  private accessor _arrow!: HTMLDivElement;
 
   @query('textarea')
-  private _textarea!: HTMLTextAreaElement;
+  private accessor _textarea!: HTMLTextAreaElement;
+
+  @state()
+  private accessor _hasContent = false;
+
+  @property({ attribute: false })
+  accessor onFinish: ((input: string) => void) | undefined = undefined;
+
+  @property({ attribute: false })
+  accessor onInput: ((input: string) => void) | undefined = undefined;
+
+  private _sendToAI = () => {
+    const value = this._textarea.value.trim();
+    if (value.length === 0) return;
+
+    this.onFinish?.(value);
+    this.remove();
+  };
+
+  private _onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      this._sendToAI();
+    }
+  };
+
+  private _onInput = () => {
+    this._textarea.style.height = 'auto';
+    this._textarea.style.height = this._textarea.scrollHeight + 'px';
+
+    this.onInput?.(this._textarea.value);
+    const value = this._textarea.value.trim();
+    if (value.length > 0) {
+      this._arrow.dataset.active = '';
+      this._hasContent = true;
+    } else {
+      delete this._arrow.dataset.active;
+      this._hasContent = false;
+    }
+  };
 
   override updated(_changedProperties: Map<PropertyKey, unknown>): void {
     const result = super.updated(_changedProperties);
@@ -112,23 +152,26 @@ export class AIPanelInput extends WithDisposable(LitElement) {
         <textarea
           placeholder="Ask AI to edit or generate..."
           rows="1"
-          @keydown=${(e: KeyboardEvent) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-              e.preventDefault();
-              this.onFinish?.(this._textarea.value);
-              this.remove();
-            }
-          }}
-          @input=${() => {
-            this._textarea.style.height = 'auto';
-            this._textarea.style.height = this._textarea.scrollHeight + 'px';
-
-            if (this._textarea.value.length > 0) {
-              this._arrow.dataset.active = '';
-            }
-          }}
+          @keydown=${this._onKeyDown}
+          @input=${this._onInput}
+          @pointerdown=${stopPropagation}
+          @click=${stopPropagation}
+          @dblclick=${stopPropagation}
+          @cut=${stopPropagation}
+          @copy=${stopPropagation}
+          @paste=${stopPropagation}
+          @keyup=${stopPropagation}
         ></textarea>
-        <div class="arrow">${ArrowUpBigIcon}</div>
+        <div
+          class="arrow"
+          @click=${this._sendToAI}
+          @pointerdown=${stopPropagation}
+        >
+          ${ArrowUpBigIcon}
+          ${this._hasContent
+            ? html`<affine-tooltip .offset=${12}>Send to AI</affine-tooltip>`
+            : nothing}
+        </div>
       </div>
     </div>`;
   }

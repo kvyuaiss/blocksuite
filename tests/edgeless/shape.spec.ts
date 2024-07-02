@@ -9,6 +9,7 @@ import {
   changeShapeStyle,
   clickComponentToolbarMoreMenuButton,
   getEdgelessSelectedRect,
+  locatorComponentToolbar,
   locatorEdgelessToolButton,
   locatorShapeStrokeStyleButton,
   openComponentToolbarMoreMenu,
@@ -164,7 +165,7 @@ test.skip('change shape fill color', async ({ page }) => {
 
   await page.mouse.click(rect.start.x + 5, rect.start.y + 5);
   await triggerComponentToolbarAction(page, 'changeShapeFillColor');
-  const color = '--affine-palette-shape-navy';
+  const color = '--affine-palette-shape-teal';
   await changeShapeFillColor(page, color);
   await page.waitForTimeout(50);
   const [picked] = await pickColorAtPoints(page, [
@@ -187,7 +188,7 @@ test('change shape stroke color', async ({ page }) => {
 
   await page.mouse.click(rect.start.x + 5, rect.start.y + 5);
   await triggerComponentToolbarAction(page, 'changeShapeStrokeColor');
-  const color = '--affine-palette-line-navy';
+  const color = '--affine-palette-line-teal';
   await changeShapeStrokeColor(page, color);
   await page.waitForTimeout(50);
   const [picked] = await pickColorAtPoints(page, [
@@ -204,19 +205,19 @@ test('the tooltip of shape tool button should be hidden when the shape menu is s
   await initEmptyEdgelessState(page);
   await switchEditorMode(page);
 
-  const shapeTool = locatorEdgelessToolButton(page, 'shape');
+  const shapeTool = await locatorEdgelessToolButton(page, 'shape');
   const shapeToolBox = await shapeTool.boundingBox();
   const tooltip = page.locator('.affine-tooltip');
 
   assertExists(shapeToolBox);
 
-  await page.mouse.move(shapeToolBox.x + 20, shapeToolBox.y + 20);
+  await page.mouse.move(shapeToolBox.x + 2, shapeToolBox.y + 2);
   await expect(tooltip).toBeVisible();
 
-  await page.mouse.click(shapeToolBox.x + 20, shapeToolBox.y + 20);
+  await page.mouse.click(shapeToolBox.x + 2, shapeToolBox.y + 2);
   await expect(tooltip).toBeHidden();
 
-  await page.mouse.click(shapeToolBox.x + 20, shapeToolBox.y + 20);
+  await page.mouse.click(shapeToolBox.x + 2, shapeToolBox.y + 2);
   await expect(tooltip).toBeVisible();
 });
 
@@ -262,18 +263,18 @@ test('edgeless toolbar shape menu shows up and close normally', async ({
   const toolbarLocator = page.locator('.edgeless-toolbar-container');
   await expect(toolbarLocator).toBeVisible();
 
-  const shapeTool = locatorEdgelessToolButton(page, 'shape');
+  const shapeTool = await locatorEdgelessToolButton(page, 'shape');
   const shapeToolBox = await shapeTool.boundingBox();
 
   assertExists(shapeToolBox);
 
-  await page.mouse.click(shapeToolBox.x + 20, shapeToolBox.y + 20);
+  await page.mouse.click(shapeToolBox.x + 2, shapeToolBox.y + 2);
 
   const shapeMenu = page.locator('edgeless-shape-menu');
   await expect(shapeMenu).toBeVisible();
   await page.waitForTimeout(500);
 
-  await page.mouse.click(shapeToolBox.x + 20, shapeToolBox.y + 20);
+  await page.mouse.click(shapeToolBox.x + 2, shapeToolBox.y + 2);
   await page.waitForTimeout(500);
   await expect(shapeMenu).toBeHidden();
 });
@@ -335,7 +336,7 @@ test('change shape stroke width', async ({ page }) => {
 
   await page.mouse.click(start.x + 5, start.y + 5);
   await triggerComponentToolbarAction(page, 'changeShapeStrokeColor');
-  await changeShapeStrokeColor(page, '--affine-palette-line-navy');
+  await changeShapeStrokeColor(page, '--affine-palette-line-teal');
 
   await triggerComponentToolbarAction(page, 'changeShapeStrokeStyles');
   await changeShapeStrokeWidth(page);
@@ -358,14 +359,14 @@ test('change shape stroke style', async ({ page }) => {
 
   await page.mouse.click(start.x + 5, start.y + 5);
   await triggerComponentToolbarAction(page, 'changeShapeStrokeColor');
-  await changeShapeStrokeColor(page, '--affine-palette-line-navy');
+  await changeShapeStrokeColor(page, '--affine-palette-line-teal');
 
   await triggerComponentToolbarAction(page, 'changeShapeStrokeStyles');
-  await changeShapeStrokeStyle(page, 'none');
+  await changeShapeStrokeStyle(page, 'dash');
   await waitNextFrame(page);
 
   await triggerComponentToolbarAction(page, 'changeShapeStrokeStyles');
-  const activeButton = locatorShapeStrokeStyleButton(page, 'none');
+  const activeButton = locatorShapeStrokeStyleButton(page, 'dash');
   const className = await activeButton.evaluate(ele => ele.className);
   expect(className.includes(' active')).toBeTruthy();
 
@@ -468,7 +469,7 @@ test('auto wrap text in shape', async ({ page }) => {
   await page.mouse.dblclick(250, 200);
   await waitNextFrame(page);
   // type long text
-  await type(page, 'cccccccc');
+  await type(page, '\ncccccccc');
   await assertEdgelessCanvasText(page, 'aaaa\nbbbb\ncccccccc');
 
   // blur to finish typing
@@ -521,12 +522,67 @@ test('change shape style', async ({ page }) => {
 
   await page.mouse.click(start.x + 5, start.y + 5);
   await triggerComponentToolbarAction(page, 'changeShapeStrokeColor');
-  const color = '--affine-palette-line-navy';
+  const color = '--affine-palette-line-teal';
   await changeShapeStrokeColor(page, color);
   await page.waitForTimeout(50);
   const [picked] = await pickColorAtPoints(page, [[start.x + 1, start.y + 1]]);
 
   await assertEdgelessColorSameWithHexColor(page, color, picked);
+});
+
+test('shape adds text by button', async ({ page }) => {
+  await enterPlaygroundRoom(page);
+  await initEmptyEdgelessState(page);
+  await switchEditorMode(page);
+  await zoomResetByKeyboard(page);
+
+  await setEdgelessTool(page, 'shape');
+  await waitNextFrame(page, 500);
+
+  await page.mouse.click(200, 150);
+  await waitNextFrame(page);
+
+  await triggerComponentToolbarAction(page, 'addText');
+  await type(page, 'hello');
+  await assertEdgelessCanvasText(page, 'hello');
+});
+
+test('should reset shape text when text is empty', async ({ page }) => {
+  await enterPlaygroundRoom(page);
+  await initEmptyEdgelessState(page);
+  await switchEditorMode(page);
+  await zoomResetByKeyboard(page);
+
+  await setEdgelessTool(page, 'shape');
+  await waitNextFrame(page, 500);
+
+  await page.mouse.click(200, 150);
+  await waitNextFrame(page);
+
+  await triggerComponentToolbarAction(page, 'addText');
+  await type(page, ' a ');
+  await assertEdgelessCanvasText(page, ' a ');
+
+  await page.mouse.click(0, 0);
+  await waitNextFrame(page);
+  await page.mouse.click(200, 150);
+
+  const addTextBtn = locatorComponentToolbar(page).getByRole('button', {
+    name: 'Add text',
+  });
+  await expect(addTextBtn).toBeHidden();
+
+  await page.mouse.dblclick(250, 200);
+  await assertEdgelessCanvasText(page, 'a');
+
+  await page.keyboard.press('Backspace');
+  await assertEdgelessCanvasText(page, '');
+
+  await page.mouse.click(0, 0);
+  await waitNextFrame(page);
+  await page.mouse.click(200, 150);
+
+  await expect(addTextBtn).toBeVisible();
 });
 
 test.describe('shape hit test', () => {
@@ -549,7 +605,11 @@ test.describe('shape hit test', () => {
   }
 
   test.beforeEach(async ({ page }) => {
-    await enterPlaygroundRoom(page);
+    await enterPlaygroundRoom(page, {
+      flags: {
+        enable_edgeless_text: false,
+      },
+    });
     await initEmptyEdgelessState(page);
     await switchEditorMode(page);
   });

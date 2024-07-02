@@ -17,9 +17,9 @@ import type {
 } from '@blocksuite/store';
 import { BaseAdapter } from '@blocksuite/store';
 
-import { decode, encode } from './utils.js';
+import { decodeClipboardBlobs, encodeClipboardBlobs } from './utils.js';
 
-type FileSnapshot = {
+export type FileSnapshot = {
   name: string;
   type: string;
   content: string;
@@ -27,6 +27,7 @@ type FileSnapshot = {
 
 export class ClipboardAdapter extends BaseAdapter<string> {
   static MIME = 'BLOCKSUITE/SNAPSHOT';
+
   override fromDocSnapshot(
     _payload: FromDocSnapshotPayload
   ): Promise<FromDocSnapshotResult<string>> {
@@ -58,18 +59,7 @@ export class ClipboardAdapter extends BaseAdapter<string> {
     const assets = payload.assets;
     assertExists(assets);
     const map = assets.getAssets();
-    const blobs: Record<string, FileSnapshot> = {};
-    await Promise.all(
-      Array.from(map.entries()).map(async ([id, blob]) => {
-        const content = encode(await blob.arrayBuffer());
-        const file: FileSnapshot = {
-          name: (blob as File).name,
-          type: blob.type,
-          content,
-        };
-        blobs[id] = file;
-      })
-    );
+    const blobs: Record<string, FileSnapshot> = await encodeClipboardBlobs(map);
     return {
       file: JSON.stringify({
         snapshot,
@@ -85,14 +75,7 @@ export class ClipboardAdapter extends BaseAdapter<string> {
     const json = JSON.parse(payload.file);
     const { blobs, snapshot } = json;
     const map = payload.assets?.getAssets();
-    Object.entries<FileSnapshot>(blobs).forEach(([sourceId, file]) => {
-      const blob = new Blob([decode(file.content)]);
-      const f = new File([blob], file.name, {
-        type: file.type,
-      });
-      assertExists(map);
-      map.set(sourceId, f);
-    });
+    decodeClipboardBlobs(blobs, map);
     return Promise.resolve(snapshot);
   }
 }

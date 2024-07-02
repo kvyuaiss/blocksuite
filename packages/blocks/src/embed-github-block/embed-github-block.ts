@@ -1,21 +1,17 @@
-import '../_common/components/block-selection.js';
-import '../_common/components/embed-card/embed-card-caption.js';
-
 import { assertExists } from '@blocksuite/global/utils';
 import { html, nothing } from 'lit';
-import { customElement, property, query, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-import type { EmbedCardCaption } from '../_common/components/embed-card/embed-card-caption.js';
 import { EMBED_CARD_HEIGHT, EMBED_CARD_WIDTH } from '../_common/consts.js';
 import { EmbedBlockElement } from '../_common/embed-block-helper/embed-block-element.js';
 import { OpenIcon } from '../_common/icons/text.js';
 import { getEmbedCardIcons } from '../_common/utils/url.js';
 import type { EmbedGithubStyles } from './embed-github-model.js';
 import { type EmbedGithubModel, githubUrlRegex } from './embed-github-model.js';
-import type { EmbedGithubService } from './embed-github-service.js';
+import type { EmbedGithubBlockService } from './embed-github-service.js';
 import { GithubIcon, styles } from './styles.js';
 import {
   getGithubStatusIcon,
@@ -26,25 +22,22 @@ import {
 @customElement('affine-embed-github-block')
 export class EmbedGithubBlockComponent extends EmbedBlockElement<
   EmbedGithubModel,
-  EmbedGithubService
+  EmbedGithubBlockService
 > {
   static override styles = styles;
 
+  @state()
+  private accessor _isSelected = false;
+
   override _cardStyle: (typeof EmbedGithubStyles)[number] = 'horizontal';
 
-  @state()
-  private _isSelected = false;
-
   @property({ attribute: false })
-  loading = false;
-
-  @query('embed-card-caption')
-  captionElement!: EmbedCardCaption;
+  accessor loading = false;
 
   private _selectBlock() {
     const selectionManager = this.host.selection;
     const blockSelection = selectionManager.create('block', {
-      path: this.path,
+      blockId: this.blockId,
     });
     selectionManager.setGroup('note', [blockSelection]);
   }
@@ -75,11 +68,15 @@ export class EmbedGithubBlockComponent extends EmbedBlockElement<
   };
 
   refreshData = () => {
-    refreshEmbedGithubUrlData(this).catch(console.error);
+    refreshEmbedGithubUrlData(this, this.fetchAbortController.signal).catch(
+      console.error
+    );
   };
 
   refreshStatus = () => {
-    refreshEmbedGithubStatus(this).catch(console.error);
+    refreshEmbedGithubStatus(this, this.fetchAbortController.signal).catch(
+      console.error
+    );
   };
 
   override connectedCallback() {
@@ -287,13 +284,7 @@ export class EmbedGithubBlockComponent extends EmbedBlockElement<
 
             <div class="affine-embed-github-banner">${bannerImage}</div>
           </div>
-
-          <embed-card-caption .block=${this}></embed-card-caption>
-
-          <affine-block-selection .block=${this}></affine-block-selection>
         </div>
-
-        ${this.isInSurface ? nothing : Object.values(this.widgets)}
       `
     );
   }

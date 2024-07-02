@@ -1,8 +1,8 @@
 import type { SurfaceBlockModel } from './surface-model.js';
-import type { SurfaceService } from './surface-service.js';
+import type { SurfaceBlockService } from './surface-service.js';
 
 export { normalizeShapeBound } from './canvas-renderer/element-renderer/index.js';
-export { updateMindmapNodeRect } from './canvas-renderer/element-renderer/shape/utils.js';
+export { fitContent } from './canvas-renderer/element-renderer/shape/utils.js';
 export { Overlay, Renderer } from './canvas-renderer/renderer.js';
 export {
   type IBound,
@@ -13,9 +13,13 @@ export {
   ZOOM_MIN,
   ZOOM_STEP,
 } from './consts.js';
-export { CanvasTextFonts, GRID_GAP_MAX, GRID_GAP_MIN } from './consts.js';
-export { type EdgelessBlockType } from './edgeless-types.js';
-export { ElementModel } from './element-model/base.js';
+export {
+  AffineCanvasTextFonts,
+  CommunityCanvasTextFonts,
+  GRID_GAP_MAX,
+  GRID_GAP_MIN,
+} from './consts.js';
+export { SurfaceElementModel } from './element-model/base.js';
 export { BrushElementModel } from './element-model/brush.js';
 export {
   type Connection,
@@ -28,12 +32,13 @@ export {
 } from './element-model/connector.js';
 export { GroupElementModel } from './element-model/group.js';
 export { CanvasElementType } from './element-model/index.js';
-export { MindmapElementModel } from './element-model/mindmap.js';
+export { MindmapElementModel, MindmapStyle } from './element-model/mindmap.js';
 export { ShapeElementModel } from './element-model/shape.js';
 export { TextElementModel } from './element-model/text.js';
 export * from './elements/index.js';
 export { ShapeType } from './elements/shape/consts.js';
 export {
+  markdownToMindmap,
   MindmapRootBlock,
   MindmapService,
   MindmapSurfaceBlock,
@@ -69,13 +74,13 @@ export {
   toRadian,
 } from './utils/math-utils.js';
 export { PointLocation } from './utils/point-location.js';
-export { type IVec, Vec } from './utils/vec.js';
+export { type IVec, type IVec2, Vec } from './utils/vec.js';
 export * from './utils/xywh.js';
 
 declare global {
   namespace BlockSuite {
     interface BlockServices {
-      'affine:surface': SurfaceService;
+      'affine:surface': SurfaceBlockService;
     }
     interface BlockModels {
       'affine:surface': SurfaceBlockModel;

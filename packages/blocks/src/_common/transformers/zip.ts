@@ -1,4 +1,4 @@
-import { assertExists } from '@blocksuite/global/utils';
+import { assertExists, sha } from '@blocksuite/global/utils';
 import type {
   CollectionInfoSnapshot,
   Doc,
@@ -6,10 +6,10 @@ import type {
   DocSnapshot,
   JobMiddleware,
 } from '@blocksuite/store';
-import { extMimeMap, getAssetName, Job, sha } from '@blocksuite/store';
+import { extMimeMap, getAssetName, Job } from '@blocksuite/store';
 import JSZip from 'jszip';
 
-import { replaceIdMiddleware } from './middlewares.js';
+import { replaceIdMiddleware, titleMiddleware } from './middlewares.js';
 
 async function exportDocs(collection: DocCollection, docs: Doc[]) {
   const zip = new JSZip();
@@ -87,11 +87,9 @@ async function importDocs(collection: DocCollection, imported: Blob) {
   };
   const job = new Job({
     collection,
-    middlewares: [replaceIdMiddleware, migrationMiddleware],
+    middlewares: [replaceIdMiddleware, migrationMiddleware, titleMiddleware],
   });
   const assetsMap = job.assets;
-
-  job.snapshotToCollectionInfo(info);
 
   await Promise.all(
     assetObjs.map(async fileObj => {

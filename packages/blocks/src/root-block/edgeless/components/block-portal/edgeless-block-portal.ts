@@ -5,9 +5,9 @@ import './bookmark/edgeless-bookmark.js';
 import './attachment/edgeless-attachment.js';
 import './frame/edgeless-frame.js';
 import './embed/edgeless-embed.js';
+import './edgeless-text/edgeless-edgeless-text.js';
 import '../rects/edgeless-selected-rect.js';
 import '../rects/edgeless-dragging-area-rect.js';
-import '../../components/auto-connect/edgeless-index-label.js';
 import '../presentation/edgeless-navigator-black-background.js';
 
 import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
@@ -18,37 +18,31 @@ import { repeat } from 'lit/directives/repeat.js';
 import { styleMap } from 'lit/directives/style-map.js';
 import { html, literal, unsafeStatic } from 'lit/static-html.js';
 
-import {
-  batchToAnimationFrame,
-  requestConnectedFrame,
-} from '../../../../_common/utils/event.js';
-import {
-  matchFlavours,
-  NoteDisplayMode,
-  type TopLevelBlockModel,
-} from '../../../../_common/utils/index.js';
-import type {
-  FrameBlockModel,
-  SurfaceBlockComponent,
-} from '../../../../index.js';
+import { requestThrottledConnectFrame } from '../../../../_common/utils/event.js';
+import { last } from '../../../../_common/utils/iterable.js';
+import type { FrameBlockModel } from '../../../../frame-block/frame-model.js';
 import type { NoteBlockModel } from '../../../../note-block/index.js';
 import type { GroupElementModel } from '../../../../surface-block/index.js';
-import { type EdgelessBlockType } from '../../../../surface-block/index.js';
+import type { BlockLayer } from '../../../../surface-block/managers/layer-manager.js';
+import type { SurfaceBlockComponent } from '../../../../surface-block/surface-block.js';
+import { EdgelessBlockModel } from '../../edgeless-block-model.js';
 import type { EdgelessRootBlockComponent } from '../../edgeless-root-block.js';
 import { getBackgroundGrid, isNoteBlock } from '../../utils/query.js';
 import type { EdgelessSelectedRect } from '../rects/edgeless-selected-rect.js';
+import type { EdgelessPortalBase } from './edgeless-portal-base.js';
 
 export type AutoConnectElement =
   | NoteBlockModel
   | FrameBlockModel
   | GroupElementModel;
 
-const portalMap = new Map<EdgelessBlockType | RegExp, string>([
+const portalMap = new Map<BlockSuite.EdgelessModelKeyType | RegExp, string>([
   ['affine:frame', 'edgeless-block-portal-frame'],
   ['affine:note', 'edgeless-block-portal-note'],
   ['affine:image', 'edgeless-block-portal-image'],
   ['affine:bookmark', 'edgeless-block-portal-bookmark'],
   ['affine:attachment', 'edgeless-block-portal-attachment'],
+  ['affine:edgeless-text', 'edgeless-block-portal-edgeless-text'],
   [/affine:embed-*/, 'edgeless-block-portal-embed'],
 ]);
 
@@ -56,6 +50,10 @@ const portalMap = new Map<EdgelessBlockType | RegExp, string>([
 export class EdgelessBlockPortalContainer extends WithDisposable(
   ShadowlessElement
 ) {
+  get isDragging() {
+    return this.selectedRect.dragging;
+  }
+
   static override styles = css`
     .affine-block-children-container.edgeless {
       user-select: none;
@@ -65,14 +63,317 @@ export class EdgelessBlockPortalContainer extends WithDisposable(
       position: absolute;
     }
 
-    .affine-edgeless-layer edgeless-frames-container {
+    .affine-edgeless-layer > [data-portal-block-id] {
+      display: none;
       position: relative;
-      z-index: 1;
     }
   `;
 
+  @state()
+  private accessor _isResizing = false;
+
+  @state()
+  private accessor _enableNoteSlicer = false;
+
+  @state()
+  private accessor _slicerAnchorNote: NoteBlockModel | null = null;
+
+  private _visibleElements = new Set<EdgelessBlockModel>();
+
+  private _updateOnVisibleBlocksChange = requestThrottledConnectFrame(() => {
+    if (this._updateVisibleBlocks()) {
+      this.requestUpdate();
+    }
+  }, this);
+
+  @property({ attribute: false })
+  accessor edgeless!: EdgelessRootBlockComponent;
+
+  @query('.affine-block-children-container.edgeless')
+  accessor container!: HTMLDivElement;
+
+  @query('edgeless-selected-rect')
+  accessor selectedRect!: EdgelessSelectedRect;
+
+  @query('.affine-edgeless-layer')
+  accessor layer!: HTMLDivElement;
+
+  @query('.canvas-slot')
+  accessor canvasSlot!: HTMLDivElement;
+
+  concurrentRendering: number = 2;
+
+  renderingSet = new Set<string>();
+
+  refreshLayerViewport = requestThrottledConnectFrame(() => {
+    if (!this.edgeless || !this.edgeless.surface) return;
+
+    const { service } = this.edgeless;
+    const { zoom, translateX, translateY } = service.viewport;
+    const { gap } = getBackgroundGrid(zoom, true);
+
+    this.container.style.setProperty(
+      'background-position',
+      `${translateX}px ${translateY}px`
+    );
+    this.container.style.setProperty('background-size', `${gap}px ${gap}px`);
+
+    this.layer.style.setProperty('transform', this._getLayerViewport());
+    this.layer.dataset.scale = zoom.toString();
+
+    this.canvasSlot.style.setProperty(
+      '--canvas-transform-offset',
+      this._getLayerViewport(true)
+    );
+  }, this);
+
+  /**
+   * @returns true if the visible elements have changed
+   */
+  private _updateVisibleBlocks() {
+    const { service } = this.edgeless;
+    const blockSet = service.layer.blocksGrid.search(
+      service.viewport.viewportBounds,
+      false,
+      true
+    );
+    const frameSet = service.layer.framesGrid.search(
+      service.viewport.viewportBounds,
+      false,
+      true
+    );
+
+    if (this._visibleElements.size !== blockSet.size + frameSet.size) {
+      this._visibleElements = new Set([...blockSet, ...frameSet]);
+      return true;
+    } else {
+      for (const element of this._visibleElements) {
+        if (
+          !blockSet.has(element) &&
+          !frameSet.has(element as FrameBlockModel)
+        ) {
+          this._visibleElements = new Set([...blockSet, ...frameSet]);
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private _updateNoteSlicer() {
+    const { edgeless } = this;
+    const { selectedElements } = edgeless.service.selection;
+    if (
+      !edgeless.service.selection.editing &&
+      selectedElements.length === 1 &&
+      isNoteBlock(selectedElements[0])
+    ) {
+      this._slicerAnchorNote = selectedElements[0];
+    } else {
+      this._slicerAnchorNote = null;
+    }
+  }
+
+  private _getLayerViewport(negative = false) {
+    const { service } = this.edgeless;
+    const { translateX, translateY, zoom } = service.viewport;
+
+    if (negative) {
+      return `scale(${1 / zoom}) translate(${-translateX}px, ${-translateY}px)`;
+    }
+
+    return `translate(${translateX}px, ${translateY}px) scale(${zoom})`;
+  }
+
+  setSlotContent(children: HTMLElement[]) {
+    if (this.canvasSlot.children.length !== children.length) {
+      children.forEach(child => {
+        child.style.setProperty('transform', 'var(--canvas-transform-offset)');
+      });
+      this.canvasSlot.replaceChildren(...children);
+    }
+  }
+
+  getPortalElement(id: string) {
+    return this.querySelector(
+      `[data-portal-block-id="${id}"]`
+    ) as EdgelessPortalBase<BlockSuite.EdgelessBlockModelType> | null;
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._updateVisibleBlocks();
+  }
+
+  override firstUpdated() {
+    const { _disposables, edgeless } = this;
+
+    _disposables.add(
+      edgeless.service.viewport.viewportUpdated.on(() => {
+        this.refreshLayerViewport();
+        this._updateOnVisibleBlocksChange();
+      })
+    );
+
+    _disposables.add(
+      edgeless.service.layer.slots.layerUpdated.on(() => {
+        this.requestUpdate();
+      })
+    );
+
+    _disposables.add(
+      edgeless.doc.slots.blockUpdated.on(payload => {
+        if (
+          (payload.type === 'update' && payload.props.key === 'xywh') ||
+          payload.type === 'add'
+        ) {
+          const block = edgeless.doc.getBlock(payload.id);
+
+          if (block?.model instanceof EdgelessBlockModel) {
+            this._updateOnVisibleBlocksChange();
+          }
+        } else {
+          if (
+            'model' in payload &&
+            payload.model instanceof EdgelessBlockModel
+          ) {
+            this._updateOnVisibleBlocksChange();
+          }
+        }
+      })
+    );
+
+    _disposables.add(
+      edgeless.slots.readonlyUpdated.on(() => {
+        this.requestUpdate();
+      })
+    );
+
+    _disposables.add(
+      edgeless.service.selection.slots.updated.on(() => {
+        this._enableNoteSlicer = false;
+        this._updateNoteSlicer();
+      })
+    );
+
+    _disposables.add(
+      edgeless.slots.elementResizeStart.on(() => {
+        this._isResizing = true;
+      })
+    );
+
+    _disposables.add(
+      edgeless.slots.elementResizeEnd.on(() => {
+        this._isResizing = false;
+      })
+    );
+
+    _disposables.add(
+      edgeless.slots.toggleNoteSlicer.on(() => {
+        this._enableNoteSlicer = !this._enableNoteSlicer;
+      })
+    );
+  }
+
+  override render() {
+    const { edgeless, _visibleElements } = this;
+    const { surface, doc, service } = edgeless;
+    const { readonly } = doc;
+    const { zoom } = service.viewport;
+
+    if (!surface) return nothing;
+
+    const layers = service.layer.layers;
+    const lastLayer = last(layers);
+    const frameStartIndex =
+      lastLayer?.zIndex ?? 1 + (lastLayer?.elements.length ?? 0) + 1;
+    const blocks = layers.reduce(
+      (pre, layer) => {
+        if (layer.type === 'block') {
+          pre = pre.concat(
+            layer.elements.map((block, index) => [block, layer, index])
+          );
+        }
+
+        return pre;
+      },
+      [] as [EdgelessBlockModel, BlockLayer, number][]
+    );
+
+    return html`
+      <div class="affine-block-children-container edgeless">
+        <div
+          class="affine-edgeless-layer"
+          data-scale="${zoom}"
+          data-translate="true"
+        >
+          <div class="canvas-slot"></div>
+          ${repeat(
+            blocks,
+            block => block[0].id,
+            ([block, layer, index]) => {
+              const target = Array.from(portalMap.entries()).find(([key]) => {
+                if (typeof key === 'string') {
+                  return key === block.flavour;
+                }
+                return key.test(block.flavour);
+              });
+              assertExists(
+                target,
+                `Unknown block flavour for edgeless portal: ${block.flavour}`
+              );
+
+              const [_, tagName] = target;
+              const tag = unsafeStatic(tagName);
+
+              return html`<${tag}
+                      data-index=${block.index}
+                      data-portal-block-id=${block.id}
+                      .index=${layer.zIndex + index}
+                      .model=${block}
+                      .surface=${surface}
+                      .edgeless=${edgeless}
+                      .updatingSet=${this.renderingSet}
+                      .concurrentUpdatingCount=${this.concurrentRendering}
+                      .portalContainer=${this}
+                      style=${`z-index: ${layer.zIndex + index};${_visibleElements.has(block) ? 'display:block' : ''}`}
+                    ></${tag}>`;
+            }
+          )}
+          <edgeless-frames-container
+            .edgeless=${edgeless}
+            .frames=${service.layer.frames}
+            .startIndex=${frameStartIndex}
+            .visibleFrames=${this._visibleElements}
+          >
+          </edgeless-frames-container>
+        </div>
+      </div>
+      <edgeless-dragging-area-rect
+        .edgeless=${edgeless}
+      ></edgeless-dragging-area-rect>
+
+      ${readonly || this._isResizing || !this._enableNoteSlicer
+        ? nothing
+        : html`<note-slicer
+            .edgeless=${edgeless}
+            .anchorNote=${this._slicerAnchorNote}
+          ></note-slicer>`}
+
+      <edgeless-selected-rect
+        .edgeless=${edgeless}
+        .autoCompleteOff=${this._enableNoteSlicer}
+      ></edgeless-selected-rect>
+
+      <edgeless-navigator-black-background
+        .edgeless=${edgeless}
+      ></edgeless-navigator-black-background>
+    `;
+  }
+
   static renderPortal(
-    block: TopLevelBlockModel,
+    block: BlockSuite.EdgelessBlockModelType,
     zIndex: number,
     surface: SurfaceBlockComponent,
     edgeless: EdgelessRootBlockComponent
@@ -100,375 +401,10 @@ export class EdgelessBlockPortalContainer extends WithDisposable(
           .edgeless=${edgeless}
           style=${styleMap({
             zIndex,
+            display: 'block',
             position: 'relative',
           })}
         ></${tag}>`;
-  }
-
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
-
-  @query('.affine-block-children-container.edgeless')
-  container!: HTMLDivElement;
-
-  @query('edgeless-selected-rect')
-  selectedRect!: EdgelessSelectedRect;
-
-  @query('.affine-edgeless-layer')
-  layer!: HTMLDivElement;
-
-  @query('.canvas-slot')
-  canvasSlot!: HTMLDivElement;
-
-  @state()
-  private _showIndexLabel = false;
-
-  @state()
-  private _toolbarVisible = false;
-
-  @state()
-  private _isResizing = false;
-
-  @state()
-  private _enableNoteSlicer = false;
-
-  @state()
-  private _slicerAnchorNote: NoteBlockModel | null = null;
-
-  private _surfaceRefReferenceSet = new Set<string>();
-
-  private _clearWillChangeId: null | ReturnType<typeof setTimeout> = null;
-
-  get isDragging() {
-    return this.selectedRect.dragging;
-  }
-
-  refreshLayerViewport = batchToAnimationFrame(() => {
-    if (!this.edgeless || !this.edgeless.surface) return;
-
-    const { service } = this.edgeless;
-    const { zoom, translateX, translateY } = service.viewport;
-    const { gap } = getBackgroundGrid(zoom, true);
-
-    this.container.style.setProperty(
-      'background-position',
-      `${translateX}px ${translateY}px`
-    );
-    this.container.style.setProperty('background-size', `${gap}px ${gap}px`);
-
-    this.layer.style.setProperty('transform', this._getLayerViewport());
-    this.layer.dataset.scale = zoom.toString();
-
-    this.canvasSlot.style.setProperty(
-      '--canvas-transform-offset',
-      this._getLayerViewport(true)
-    );
-  }, this);
-
-  private _applyWillChangeProp = () => {
-    if (this._clearWillChangeId) clearTimeout(this._clearWillChangeId);
-
-    this._clearWillChangeId = setTimeout(() => {
-      this.layer?.style.removeProperty('will-change');
-      this._clearWillChangeId = null;
-    }, 100);
-
-    if (this.layer.style.getPropertyValue('will-change') !== 'content') {
-      requestConnectedFrame(() => {
-        this.layer.style.setProperty('will-change', 'content');
-      }, this);
-    }
-  };
-
-  setSlotContent(children: HTMLElement[]) {
-    if (this.canvasSlot.children.length !== children.length) {
-      children.forEach(child => {
-        child.style.setProperty('transform', 'var(--canvas-transform-offset)');
-      });
-      this.canvasSlot.replaceChildren(...children);
-    }
-  }
-
-  private _updateReference() {
-    const { _surfaceRefReferenceSet, edgeless } = this;
-    edgeless.service.blocks
-      .filter(block => block.flavour === 'affine:note')
-      .forEach(note => {
-        note.children.forEach(model => {
-          if (matchFlavours(model, ['affine:surface-ref'])) {
-            _surfaceRefReferenceSet.add(model.reference);
-          }
-        });
-      });
-  }
-
-  private _updateIndexLabel() {
-    const { edgeless } = this;
-    const { elements } = edgeless.service.selection;
-    if (
-      !edgeless.service.selection.editing &&
-      elements.length === 1 &&
-      (isNoteBlock(elements[0]) ||
-        this._surfaceRefReferenceSet.has(elements[0].id))
-    ) {
-      this._showIndexLabel = true;
-    } else {
-      this._showIndexLabel = false;
-    }
-  }
-
-  private _updateNoteSlicer() {
-    const { edgeless } = this;
-    const { elements } = edgeless.service.selection;
-    if (
-      !edgeless.service.selection.editing &&
-      elements.length === 1 &&
-      isNoteBlock(elements[0])
-    ) {
-      this._slicerAnchorNote = elements[0];
-    } else {
-      this._slicerAnchorNote = null;
-    }
-  }
-
-  private _getLayerViewport(negative = false) {
-    const { service } = this.edgeless;
-    const { translateX, translateY, zoom } = service.viewport;
-
-    if (negative) {
-      return `scale(${1 / zoom}) translate(${-translateX}px, ${-translateY}px)`;
-    }
-
-    return `translate(${translateX}px, ${translateY}px) scale(${zoom})`;
-  }
-
-  override firstUpdated() {
-    this._updateReference();
-    const { _disposables, edgeless } = this;
-    const { doc } = edgeless;
-
-    _disposables.add(
-      edgeless.service.viewport.viewportUpdated.on(() => {
-        this._applyWillChangeProp();
-        this.refreshLayerViewport();
-      })
-    );
-
-    _disposables.add(
-      edgeless.service.layer.slots.layerUpdated.on(() => {
-        this.requestUpdate();
-      })
-    );
-
-    _disposables.add(
-      edgeless.slots.readonlyUpdated.on(() => {
-        this.requestUpdate();
-      })
-    );
-
-    _disposables.add(
-      doc.slots.blockUpdated.on(payload => {
-        const { type, flavour } = payload;
-        if (
-          (type === 'add' || type === 'delete') &&
-          (flavour === 'affine:surface-ref' || flavour === 'affine:note')
-        ) {
-          requestConnectedFrame(() => {
-            this._updateReference();
-            this._updateIndexLabel();
-          }, this);
-        }
-        // When note display mode is changed, we need to update the portal
-        if (
-          type === 'update' &&
-          flavour === 'affine:note' &&
-          payload.props.key === 'displayMode'
-        ) {
-          this.requestUpdate();
-        }
-
-        // When doc children is updated, we need to update the portal
-        if (
-          type === 'update' &&
-          flavour === 'affine:page' &&
-          payload.props.key === 'sys:children'
-        ) {
-          this.requestUpdate();
-        }
-      })
-    );
-
-    _disposables.add(
-      edgeless.service.selection.slots.updated.on(() => {
-        const selection = edgeless.service.selection;
-
-        if (selection.selectedIds.length === 0 || selection.editing) {
-          this._toolbarVisible = false;
-        } else {
-          this._toolbarVisible = true;
-        }
-        this._enableNoteSlicer = false;
-        this._updateIndexLabel();
-        this._updateNoteSlicer();
-      })
-    );
-
-    _disposables.add(
-      edgeless.slots.elementResizeStart.on(() => {
-        this._isResizing = true;
-      })
-    );
-
-    _disposables.add(
-      edgeless.slots.elementResizeEnd.on(() => {
-        this._isResizing = false;
-      })
-    );
-
-    _disposables.add(
-      edgeless.surfaceBlockModel.elementUpdated.on(({ id, props }) => {
-        const element = edgeless.service.getElementById(id);
-        if (isNoteBlock(element) && props && props['displayMode']) {
-          this.requestUpdate();
-        }
-      })
-    );
-
-    _disposables.add(
-      edgeless.slots.toggleNoteSlicer.on(() => {
-        this._enableNoteSlicer = !this._enableNoteSlicer;
-      })
-    );
-  }
-
-  override render() {
-    const { edgeless } = this;
-    const { surface, doc, service } = edgeless;
-    const { readonly } = doc;
-    const { zoom } = service.viewport;
-
-    if (!surface) return nothing;
-
-    const notes = doc.root?.children.filter(child =>
-      matchFlavours(child, ['affine:note'])
-    ) as NoteBlockModel[];
-    const layers = service.layer.layers;
-    const pageVisibleBlocks = new Map<AutoConnectElement, number>();
-    const edgelessOnlyNotesSet = new Set<NoteBlockModel>();
-
-    notes.forEach(note => {
-      if (isNoteBlock(note)) {
-        if (note.displayMode === NoteDisplayMode.EdgelessOnly) {
-          edgelessOnlyNotesSet.add(note);
-        } else if (note.displayMode === NoteDisplayMode.DocAndEdgeless) {
-          pageVisibleBlocks.set(note, 1);
-        }
-      }
-
-      note.children.forEach(model => {
-        if (matchFlavours(model, ['affine:surface-ref'])) {
-          const reference = service.getElementById(
-            model.reference
-          ) as AutoConnectElement;
-          if (!pageVisibleBlocks.has(reference)) {
-            pageVisibleBlocks.set(reference, 1);
-          } else {
-            pageVisibleBlocks.set(
-              reference,
-              pageVisibleBlocks.get(reference)! + 1
-            );
-          }
-        }
-      });
-    });
-    return html`
-      <div class="affine-block-children-container edgeless">
-        <div
-          class="affine-edgeless-layer"
-          data-scale="${zoom}"
-          data-translate="true"
-        >
-          <edgeless-frames-container
-            .surface=${surface}
-            .edgeless=${edgeless}
-            .frames=${service.layer.frames}
-          >
-          </edgeless-frames-container>
-          <div class="canvas-slot"></div>
-          ${layers
-            .filter(layer => layer.type === 'block')
-            .map(layer => {
-              return repeat(
-                layer.elements as TopLevelBlockModel[],
-                block => block.id,
-                (block, index) => {
-                  const target = Array.from(portalMap.entries()).find(
-                    ([key]) => {
-                      if (typeof key === 'string') {
-                        return key === block.flavour;
-                      }
-                      return key.test(block.flavour);
-                    }
-                  );
-                  assertExists(
-                    target,
-                    `Unknown block flavour for edgeless portal: ${block.flavour}`
-                  );
-
-                  const [_, tagName] = target;
-
-                  const tag = unsafeStatic(tagName);
-                  const zIndex =
-                    (layer.zIndexes as [number, number])[0] + index;
-
-                  return html`<${tag}
-                      data-index=${block.index}
-                      data-portal-block-id=${block.id}
-                      .index=${zIndex}
-                      .model=${block}
-                      .surface=${surface}
-                      .edgeless=${edgeless}
-                      style=${styleMap({
-                        zIndex,
-                        position: 'relative',
-                      })}
-                    ></${tag}>`;
-                }
-              );
-            })}
-        </div>
-      </div>
-      <edgeless-dragging-area-rect
-        .edgeless=${edgeless}
-      ></edgeless-dragging-area-rect>
-
-      ${readonly || this._isResizing || !this._enableNoteSlicer
-        ? nothing
-        : html`<note-slicer
-            .edgeless=${edgeless}
-            .anchorNote=${this._slicerAnchorNote}
-          ></note-slicer>`}
-
-      <edgeless-selected-rect
-        .edgeless=${edgeless}
-        .toolbarVisible=${this._toolbarVisible}
-        .autoCompleteOff=${this._enableNoteSlicer}
-      ></edgeless-selected-rect>
-
-      ${!readonly
-        ? html`<edgeless-index-label
-            .pageVisibleElementsMap=${pageVisibleBlocks}
-            .edgelessOnlyNotesSet=${edgelessOnlyNotesSet}
-            .surface=${surface}
-            .edgeless=${edgeless}
-            .show=${this._showIndexLabel}
-          ></edgeless-index-label>`
-        : nothing}
-
-      <edgeless-navigator-black-background
-        .edgeless=${edgeless}
-      ></edgeless-navigator-black-background>
-    `;
   }
 }
 

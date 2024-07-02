@@ -27,7 +27,12 @@ import {
   TextIcon,
   UnderlineIcon,
 } from '../../../_common/icons/index.js';
-import { createLinkedDocFromSelectedBlocks } from '../../../_common/utils/render-linked-doc.js';
+import {
+  convertSelectedBlocksToLinkedDoc,
+  getTitleFromSelectedModels,
+  notifyDocCreated,
+  promptDocTitle,
+} from '../../../_common/utils/render-linked-doc.js';
 import type { AffineFormatBarWidget } from './format-bar.js';
 
 export type DividerConfigItem = {
@@ -172,7 +177,7 @@ export function toolbarDefaultConfig(toolbar: AffineFormatBarWidget) {
       action: (chain, formatBar) => {
         const [_, ctx] = chain
           .getSelectedModels({
-            types: ['block'],
+            types: ['block', 'text'],
             mode: 'highest',
           })
           .run();
@@ -184,19 +189,42 @@ export function toolbarDefaultConfig(toolbar: AffineFormatBarWidget) {
         host.selection.clear();
 
         const doc = host.doc;
-        const linkedDoc = createLinkedDocFromSelectedBlocks(
-          doc,
-          selectedModels
-        );
-        const linkedDocService = host.spec.getService(
-          'affine:embed-linked-doc'
-        );
-        linkedDocService.slots.linkedDocCreated.emit({ docId: linkedDoc.id });
+        const autofill = getTitleFromSelectedModels(selectedModels);
+        void promptDocTitle(host, autofill).then(title => {
+          if (title === null) return;
+          const linkedDoc = convertSelectedBlocksToLinkedDoc(
+            doc,
+            selectedModels,
+            title
+          );
+          const linkedDocService = host.spec.getService(
+            'affine:embed-linked-doc'
+          );
+          linkedDocService.slots.linkedDocCreated.emit({ docId: linkedDoc.id });
+          notifyDocCreated(host, doc);
+          host.spec
+            .getService('affine:page')
+            .telemetryService?.track('DocCreated', {
+              control: 'create linked doc',
+              page: 'doc editor',
+              module: 'format toolbar',
+              type: 'embed-linked-doc',
+            });
+          host.spec
+            .getService('affine:page')
+            .telemetryService?.track('LinkedDocCreated', {
+              control: 'create linked doc',
+              page: 'doc editor',
+              module: 'format toolbar',
+              type: 'embed-linked-doc',
+            });
+        });
       },
       showWhen: chain => {
         const [_, ctx] = chain
           .getSelectedModels({
-            types: ['block'],
+            types: ['block', 'text'],
+            mode: 'highest',
           })
           .run();
         const { selectedModels } = ctx;

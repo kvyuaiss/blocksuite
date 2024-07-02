@@ -11,9 +11,13 @@ import { getClosestRootBlockComponent } from '../root-block/utils/query.js';
 
 export class ImageResizeManager {
   private _activeComponent: BlockComponent | null = null;
+
   private _imageContainer: HTMLElement | null = null;
+
   private _imageCenterX = 0;
+
   private _dragMoveTarget = 'right';
+
   private _zoom = 1;
 
   onStart(e: PointerEventState) {
@@ -71,7 +75,6 @@ export class ImageResizeManager {
 
     requestAnimationFrame(() => {
       activeImgContainer.style.width = (width / this._zoom).toFixed(2) + 'px';
-      activeImgContainer.style.height = (height / this._zoom).toFixed(2) + 'px';
     });
   }
 

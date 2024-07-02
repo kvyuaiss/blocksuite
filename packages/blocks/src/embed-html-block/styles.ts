@@ -47,10 +47,35 @@ export const styles = css`
     overflow: hidden;
   }
 
-  .affine-embed-html-iframe-container > iframe {
+  .embed-html-block-iframe-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  .embed-html-block-iframe-wrapper > iframe {
     width: 100%;
     height: 100%;
     border: none;
+  }
+
+  .embed-html-block-iframe-wrapper affine-menu {
+    min-width: 296px;
+  }
+
+  .embed-html-block-iframe-wrapper affine-menu .settings-header {
+    padding: 7px 12px;
+    font-weight: 500;
+    font-size: var(--affine-font-xs);
+    color: var(--affine-text-secondary-color);
+  }
+
+  .embed-html-block-iframe-wrapper > embed-html-fullscreen-toolbar {
+    visibility: hidden;
+  }
+
+  .embed-html-block-iframe-wrapper:fullscreen > embed-html-fullscreen-toolbar {
+    visibility: visible;
   }
 
   .affine-embed-html-iframe-overlay {

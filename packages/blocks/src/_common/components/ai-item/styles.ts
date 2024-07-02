@@ -35,10 +35,11 @@ export const menuItemStyles = css`
   .item-name {
     display: flex;
     padding: 0px 4px;
-    align-items: center;
+    align-items: baseline;
     flex: 1 0 0;
     color: var(--affine-text-primary-color);
-    text-align: justify;
+    text-align: start;
+    white-space: nowrap;
     font-feature-settings:
       'clig' off,
       'liga' off;
@@ -47,19 +48,24 @@ export const menuItemStyles = css`
     font-weight: 400;
     line-height: 22px;
   }
+
+  .item-beta {
+    color: var(--affine-text-secondary-color);
+    font-size: var(--affine-font-xs);
+    font-weight: 500;
+    margin-left: 0.5em;
+  }
+
   .enter-icon,
   .arrow-right-icon {
     color: var(--affine-icon-color);
-    position: absolute;
-    right: 12px;
-    top: 50%;
-    transform: translateY(-40%);
+    display: flex;
   }
   .enter-icon {
-    display: none;
+    opacity: 0;
   }
   .arrow-right-icon,
   .menu-item:hover .enter-icon {
-    display: flex;
+    opacity: 1;
   }
 `;

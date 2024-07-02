@@ -30,7 +30,7 @@ import {
 } from './attachment-model.js';
 import { addSiblingAttachmentBlocks } from './utils.js';
 
-export class AttachmentService extends BlockService<AttachmentBlockModel> {
+export class AttachmentBlockService extends BlockService<AttachmentBlockModel> {
   get rootElement(): RootBlockComponent {
     const rootModel = this.doc.root;
     assertExists(rootModel);
@@ -41,12 +41,6 @@ export class AttachmentService extends BlockService<AttachmentBlockModel> {
     assertExists(rootElement);
     return rootElement;
   }
-
-  maxFileSize = 10 * 1000 * 1000; // 10MB (default)
-
-  slots = {
-    onFilesDropped: new Slot<File[]>(),
-  };
 
   private _fileDropOptions: FileDropOptions = {
     flavour: this.flavour,
@@ -59,7 +53,7 @@ export class AttachmentService extends BlockService<AttachmentBlockModel> {
       );
 
       if (targetModel && !matchFlavours(targetModel, ['affine:surface'])) {
-        addSiblingAttachmentBlocks(
+        await addSiblingAttachmentBlocks(
           this.host as EditorHost,
           attachmentFiles,
           this.maxFileSize,
@@ -68,7 +62,16 @@ export class AttachmentService extends BlockService<AttachmentBlockModel> {
         );
       } else if (isInsideEdgelessEditor(this.host as EditorHost)) {
         const edgelessRoot = this.rootElement as EdgelessRootBlockComponent;
+        point = edgelessRoot.service.viewport.toViewCoordFromClientCoord(point);
         await edgelessRoot.addAttachments(attachmentFiles, point);
+
+        edgelessRoot.service.telemetryService?.track('CanvasElementAdded', {
+          control: 'canvas:drop',
+          page: 'whiteboard editor',
+          module: 'toolbar',
+          segment: 'toolbar',
+          type: 'attachment',
+        });
       }
 
       this.slots.onFilesDropped.emit(attachmentFiles);
@@ -76,17 +79,12 @@ export class AttachmentService extends BlockService<AttachmentBlockModel> {
     },
   };
 
-  fileDropManager!: FileDropManager;
-
   private _dragHandleOption: DragHandleOption = {
     flavour: AttachmentBlockSchema.model.flavour,
     edgeless: true,
     onDragStart: ({ state, startDragging, anchorBlockPath, editorHost }) => {
       if (!anchorBlockPath) return false;
-      const anchorComponent = editorHost.std.view.viewFromPath(
-        'block',
-        anchorBlockPath
-      );
+      const anchorComponent = editorHost.std.view.getBlock(anchorBlockPath);
       if (
         !anchorComponent ||
         !matchFlavours(anchorComponent.model, [
@@ -107,7 +105,7 @@ export class AttachmentService extends BlockService<AttachmentBlockModel> {
       if (!isInSurface && (isDraggingByDragHandle || isDraggingByComponent)) {
         editorHost.selection.setGroup('note', [
           editorHost.selection.create('block', {
-            path: blockComponent.path,
+            blockId: blockComponent.blockId,
           }),
         ]);
         startDragging([blockComponent], state);
@@ -179,6 +177,14 @@ export class AttachmentService extends BlockService<AttachmentBlockModel> {
       return false;
     },
   };
+
+  maxFileSize = 10 * 1000 * 1000; // 10MB (default)
+
+  slots = {
+    onFilesDropped: new Slot<File[]>(),
+  };
+
+  fileDropManager!: FileDropManager;
 
   override mounted(): void {
     super.mounted();

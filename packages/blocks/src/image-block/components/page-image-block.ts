@@ -1,5 +1,4 @@
 import type { UIEventStateContext } from '@blocksuite/block-std';
-import { PathFinder } from '@blocksuite/block-std';
 import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
 import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
@@ -12,6 +11,18 @@ import { ImageSelectedRect } from './image-selected-rect.js';
 
 @customElement('affine-page-image')
 export class ImageBlockPageComponent extends WithDisposable(ShadowlessElement) {
+  private get _host() {
+    return this.block.host;
+  }
+
+  private get _doc() {
+    return this.block.doc;
+  }
+
+  private get _model() {
+    return this.block.model;
+  }
+
   static override styles = css`
     affine-page-image {
       display: flex;
@@ -34,57 +45,16 @@ export class ImageBlockPageComponent extends WithDisposable(ShadowlessElement) {
     }
   `;
 
-  @property({ attribute: false })
-  block!: ImageBlockComponent;
-
-  @state()
-  _isSelected = false;
-
-  @query('.resizable-img')
-  public readonly resizeImg!: HTMLElement;
-
   private _isDragging = false;
 
-  private get _host() {
-    return this.block.host;
-  }
+  @property({ attribute: false })
+  accessor block!: ImageBlockComponent;
 
-  private get _doc() {
-    return this.block.doc;
-  }
+  @state()
+  accessor _isSelected = false;
 
-  private get _model() {
-    return this.block.model;
-  }
-
-  override connectedCallback() {
-    super.connectedCallback();
-
-    this._bindKeyMap();
-
-    this._observeDrag();
-  }
-
-  override firstUpdated(changedProperties: PropertyValues) {
-    super.firstUpdated(changedProperties);
-
-    this._handleSelection();
-
-    // The embed block can not be focused,
-    // so the active element will be the last activated element.
-    // If the active element is the title textarea,
-    // any event will dispatch from it and be ignored. (Most events will ignore title)
-    // so we need to blur it.
-    // See also https://developer.mozilla.org/en-US/docs/Web/API/Document/activeElement
-    this.addEventListener('click', () => {
-      if (
-        document.activeElement &&
-        document.activeElement instanceof HTMLElement
-      ) {
-        document.activeElement.blur();
-      }
-    });
-  }
+  @query('.resizable-img')
+  accessor resizeImg!: HTMLElement;
 
   private _bindKeyMap() {
     const selection = this._host.selection;
@@ -110,7 +80,7 @@ export class ImageBlockPageComponent extends WithDisposable(ShadowlessElement) {
           .concat(
             selection.create('text', {
               from: {
-                path: this.block.parentPath.concat(blockId),
+                blockId,
                 index: 0,
                 length: 0,
               },
@@ -125,9 +95,9 @@ export class ImageBlockPageComponent extends WithDisposable(ShadowlessElement) {
         selection.update(selList => {
           return selList.map(sel => {
             const current =
-              sel.is('image') && PathFinder.equals(sel.path, this.block.path);
+              sel.is('image') && sel.blockId === this.block.blockId;
             if (current) {
-              return selection.create('block', { path: this.block.path });
+              return selection.create('block', { blockId: this.block.blockId });
             }
             return sel;
           });
@@ -162,7 +132,7 @@ export class ImageBlockPageComponent extends WithDisposable(ShadowlessElement) {
     this._disposables.add(
       selection.slots.changed.on(selList => {
         this._isSelected = selList.some(
-          sel => PathFinder.equals(sel.path, this.block.path) && sel.is('image')
+          sel => sel.blockId === this.block.blockId && sel.is('image')
         );
       })
     );
@@ -181,7 +151,7 @@ export class ImageBlockPageComponent extends WithDisposable(ShadowlessElement) {
         selection.update(selList => {
           return selList
             .filter(sel => !['text', 'block', 'image'].includes(sel.type))
-            .concat(selection.create('image', { path: this.block.path }));
+            .concat(selection.create('image', { blockId: this.block.blockId }));
         });
         return true;
       }
@@ -194,8 +164,7 @@ export class ImageBlockPageComponent extends WithDisposable(ShadowlessElement) {
 
         selection.update(selList =>
           selList.filter(
-            sel =>
-              !(sel.is('image') && PathFinder.equals(sel.path, this.block.path))
+            sel => !(sel.is('image') && sel.blockId === this.block.blockId)
           )
         );
       },
@@ -253,7 +222,6 @@ export class ImageBlockPageComponent extends WithDisposable(ShadowlessElement) {
     if (this._isDragging && this.resizeImg) {
       return {
         width: this.resizeImg.style.width,
-        height: this.resizeImg.style.height,
       };
     }
 
@@ -267,8 +235,36 @@ export class ImageBlockPageComponent extends WithDisposable(ShadowlessElement) {
 
     return {
       width: `${width}px`,
-      height: `${height}px`,
     };
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+
+    this._bindKeyMap();
+
+    this._observeDrag();
+  }
+
+  override firstUpdated(changedProperties: PropertyValues) {
+    super.firstUpdated(changedProperties);
+
+    this._handleSelection();
+
+    // The embed block can not be focused,
+    // so the active element will be the last activated element.
+    // If the active element is the title textarea,
+    // any event will dispatch from it and be ignored. (Most events will ignore title)
+    // so we need to blur it.
+    // See also https://developer.mozilla.org/en-US/docs/Web/API/Document/activeElement
+    this.addEventListener('click', () => {
+      if (
+        document.activeElement &&
+        document.activeElement instanceof HTMLElement
+      ) {
+        document.activeElement.blur();
+      }
+    });
   }
 
   override render() {

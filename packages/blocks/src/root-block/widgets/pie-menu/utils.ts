@@ -1,7 +1,7 @@
-import type { EdgelessTool } from '../../../_common/types.js';
-import { type IVec } from '../../../surface-block/index.js';
+import type { IVec } from '../../../surface-block/index.js';
 import { ShapeToolController } from '../../edgeless/controllers/tools/shape-tool.js';
 import { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
+import type { EdgelessTool } from '../../edgeless/types.js';
 import type {
   ActionFunction,
   IPieNodeWithAction,
@@ -24,7 +24,7 @@ export function updateShapeOverlay(rootElement: EdgelessRootBlockComponent) {
 export function getActiveShapeColor(type: 'fill' | 'stroke') {
   return ({ rootElement }: PieMenuContext) => {
     if (rootElement instanceof EdgelessRootBlockComponent) {
-      const props = rootElement.service.editSession.getLastProps('shape');
+      const props = rootElement.service.editPropsStore.getLastProps('shape');
       if (type == 'fill') return props.fillColor;
       else return props.strokeColor;
     }
@@ -34,7 +34,7 @@ export function getActiveShapeColor(type: 'fill' | 'stroke') {
 
 export function getActiveConnectorStrokeColor({ rootElement }: PieMenuContext) {
   if (rootElement instanceof EdgelessRootBlockComponent) {
-    const props = rootElement.service.editSession.getLastProps('connector');
+    const props = rootElement.service.editPropsStore.getLastProps('connector');
     return props.stroke;
   }
   return '';

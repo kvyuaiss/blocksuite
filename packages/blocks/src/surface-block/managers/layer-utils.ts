@@ -1,41 +1,31 @@
 import type { Doc } from '@blocksuite/store';
 
-import type {
-  EdgelessBlockModel,
-  EdgelessModel,
-} from '../../root-block/edgeless/type.js';
-import { GroupLikeModel } from '../element-model/base.js';
+import { SurfaceGroupLikeModel } from '../element-model/base.js';
 import type { SurfaceBlockModel } from '../surface-model.js';
 import type { Layer } from './layer-manager.js';
 
-export function getLayerZIndex(layers: Layer[], layerIndex: number) {
+export function getLayerEndZIndex(layers: Layer[], layerIndex: number) {
   const layer = layers[layerIndex];
   return layer
     ? layer.type === 'block'
-      ? layer.zIndexes[1]
-      : layer.zIndexes
+      ? layer.zIndex + layer.elements.length - 1
+      : layer.zIndex
     : 1;
 }
 
-export function updateLayersIndex(layers: Layer[], startIdx: number) {
+export function updateLayersZIndex(layers: Layer[], startIdx: number) {
   const startLayer = layers[startIdx];
-  let curIndex =
-    startLayer.type === 'block' ? startLayer.zIndexes[1] : startLayer.zIndexes;
+  let curIndex = startLayer.zIndex;
 
   for (let i = startIdx; i < layers.length; ++i) {
     const curLayer = layers[i];
 
-    if (curLayer.type === 'block') {
-      curLayer.zIndexes = [curIndex, curIndex + curLayer.elements.length];
-      curIndex += curLayer.elements.length;
-    } else {
-      curLayer.zIndexes = curIndex;
-      curIndex += 1;
-    }
+    curLayer.zIndex = curIndex;
+    curIndex += curLayer.type === 'block' ? curLayer.elements.length : 1;
   }
 }
 
-export function getElementIndex(indexable: EdgelessModel) {
+export function getElementIndex(indexable: BlockSuite.EdgelessModelType) {
   const groups = indexable.groups;
 
   if (groups.length > 1) {
@@ -56,8 +46,8 @@ export function ungroupIndex(index: string) {
 }
 
 export function insertToOrderedArray(
-  array: EdgelessModel[],
-  element: EdgelessModel
+  array: BlockSuite.EdgelessModelType[],
+  element: BlockSuite.EdgelessModelType
 ) {
   let idx = 0;
   while (idx < array.length && compare(array[idx], element) < 0) {
@@ -68,8 +58,8 @@ export function insertToOrderedArray(
 }
 
 export function removeFromOrderedArray(
-  array: EdgelessModel[],
-  element: EdgelessModel
+  array: BlockSuite.EdgelessModelType[],
+  element: BlockSuite.EdgelessModelType
 ) {
   const idx = array.indexOf(element);
 
@@ -79,8 +69,8 @@ export function removeFromOrderedArray(
 }
 
 export function isInRange(
-  edges: [EdgelessModel, EdgelessModel],
-  target: EdgelessModel
+  edges: [BlockSuite.EdgelessModelType, BlockSuite.EdgelessModelType],
+  target: BlockSuite.EdgelessModelType
 ) {
   return compare(target, edges[0]) >= 0 && compare(target, edges[1]) < 0;
 }
@@ -88,17 +78,20 @@ export function isInRange(
 export function renderableInEdgeless(
   doc: Doc,
   surface: SurfaceBlockModel,
-  block: EdgelessBlockModel
+  block: BlockSuite.EdgelessBlockModelType
 ) {
   const parent = doc.getParent(block);
 
   return parent === doc.root || parent === surface;
 }
 
-export function compare(a: EdgelessModel, b: EdgelessModel) {
-  if (a instanceof GroupLikeModel && a.hasDescendant(b)) {
+export function compare(
+  a: BlockSuite.EdgelessModelType,
+  b: BlockSuite.EdgelessModelType
+) {
+  if (a instanceof SurfaceGroupLikeModel && a.hasDescendant(b)) {
     return -1;
-  } else if (b instanceof GroupLikeModel && b.hasDescendant(a)) {
+  } else if (b instanceof SurfaceGroupLikeModel && b.hasDescendant(a)) {
     return 1;
   } else {
     const aGroups = a.groups;

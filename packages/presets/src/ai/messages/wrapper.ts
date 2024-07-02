@@ -1,10 +1,14 @@
-import './_common/generating-placeholder.js';
+import type { EditorHost } from '@blocksuite/block-std';
+import type { AffineAIPanelWidgetConfig } from '@blocksuite/blocks';
+import { css, html, LitElement, nothing } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
 
-import { type AffineAIPanelWidgetConfig } from '@blocksuite/blocks';
-import { css, html, LitElement } from 'lit';
-import { customElement } from 'lit/decorators.js';
-
+import { getAIPanel } from '../ai-panel.js';
 import { preprocessHtml } from '../utils/html.js';
+
+type AIAnswerWrapperOptions = {
+  height: number;
+};
 
 @customElement('ai-answer-wrapper')
 export class AIAnswerWrapper extends LitElement {
@@ -12,8 +16,6 @@ export class AIAnswerWrapper extends LitElement {
     :host {
       display: block;
       width: 100%;
-      height: 100%;
-      padding: 8px 12px;
       box-sizing: border-box;
       border-radius: 4px;
       border: 1px solid var(--affine-border-color);
@@ -30,12 +32,22 @@ export class AIAnswerWrapper extends LitElement {
 
     ::slotted(.ai-answer-image) {
       width: 100%;
-      height: auto;
+      height: 100%;
     }
   `;
 
+  @property({ attribute: false })
+  accessor options: AIAnswerWrapperOptions | undefined = undefined;
+
   protected override render() {
-    return html`<slot></slot>`;
+    return html`<style>
+        :host {
+          height: ${this.options?.height
+            ? this.options?.height + 'px'
+            : '100%'};
+        }
+      </style>
+      <slot></slot> `;
   }
 }
 
@@ -45,10 +57,19 @@ declare global {
   }
 }
 
-export const createIframeRenderer: AffineAIPanelWidgetConfig['answerRenderer'] =
-  (answer, state) => {
-    if (state !== 'finished') {
-      return html`<ai-generating-placeholder></ai-generating-placeholder>`;
+export const createIframeRenderer: (
+  host: EditorHost,
+  options?: AIAnswerWrapperOptions
+) => AffineAIPanelWidgetConfig['answerRenderer'] = (host, options) => {
+  return (answer, state) => {
+    if (state === 'generating') {
+      const panel = getAIPanel(host);
+      panel.generatingElement?.updateLoadingProgress(2);
+      return nothing;
+    }
+
+    if (state !== 'finished' && state !== 'error') {
+      return nothing;
     }
 
     const template = html`<iframe
@@ -59,15 +80,40 @@ export const createIframeRenderer: AffineAIPanelWidgetConfig['answerRenderer'] =
       .srcdoc=${preprocessHtml(answer)}
     >
     </iframe>`;
-    return html`<ai-answer-wrapper>${template}</ai-answer-wrapper>`;
+    return html`<ai-answer-wrapper .options=${options}
+      >${template}</ai-answer-wrapper
+    >`;
   };
+};
 
-export const createImageRenderer: AffineAIPanelWidgetConfig['answerRenderer'] =
-  (answer, state) => {
-    if (state !== 'finished') {
-      return html`<ai-generating-placeholder></ai-generating-placeholder>`;
+export const createImageRenderer: (
+  host: EditorHost,
+  options?: AIAnswerWrapperOptions
+) => AffineAIPanelWidgetConfig['answerRenderer'] = (host, options) => {
+  return (answer, state) => {
+    if (state === 'generating') {
+      const panel = getAIPanel(host);
+      panel.generatingElement?.updateLoadingProgress(2);
+      return nothing;
     }
 
-    const template = html`<img class="ai-answer-image" src=${answer}></img>`;
-    return html`<ai-answer-wrapper>${template}</ai-answer-wrapper>`;
+    if (state !== 'finished' && state !== 'error') {
+      return nothing;
+    }
+
+    const template = html`<style>
+      .ai-answer-image img{
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+    </style>
+    <div class="ai-answer-image">
+      <img src=${answer}></img>
+    </div>`;
+
+    return html`<ai-answer-wrapper .options=${options}
+      >${template}</ai-answer-wrapper
+    >`;
   };
+};

@@ -16,18 +16,9 @@ const styles = css`
 @customElement('affine-database-column-stats')
 export class DataBaseColumnStats extends WithDisposable(LitElement) {
   static override styles = styles;
+
   @property({ attribute: false })
-  view!: DataViewTableManager;
-
-  override connectedCallback(): void {
-    super.connectedCallback();
-
-    this.disposables.add(
-      this.view.slots.update.on(() => {
-        this.requestUpdate();
-      })
-    );
-  }
+  accessor view!: DataViewTableManager;
 
   protected override render() {
     const cols = this.view.columnManagerList;
@@ -45,6 +36,16 @@ export class DataBaseColumnStats extends WithDisposable(LitElement) {
         )}
       </div>
     `;
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+
+    this.disposables.add(
+      this.view.slots.update.on(() => {
+        this.requestUpdate();
+      })
+    );
   }
 }
 

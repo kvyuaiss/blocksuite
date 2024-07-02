@@ -1,13 +1,12 @@
 import type {
   BlockSelection,
+  EditorHost,
   UIEventHandler,
   UIEventStateContext,
 } from '@blocksuite/block-std';
-import type { EditorHost } from '@blocksuite/block-std';
-import { type BlockElement } from '@blocksuite/block-std';
+import type { BlockElement } from '@blocksuite/block-std';
 import { assertExists } from '@blocksuite/global/utils';
-import type { ReactiveController } from 'lit';
-import type { ReactiveControllerHost } from 'lit';
+import type { ReactiveController, ReactiveControllerHost } from 'lit';
 
 import { moveBlockConfigs } from '../_common/configs/move-block.js';
 import { quickActionConfig } from '../_common/configs/quick-action/config.js';
@@ -17,54 +16,23 @@ import { onModelElementUpdated } from '../root-block/utils/callback.js';
 import { ensureBlockInContainer } from './utils.js';
 
 export class KeymapController implements ReactiveController {
-  private _anchorSel: BlockSelection | null = null;
-  private _focusBlock: BlockElement | null = null;
-
-  host: ReactiveControllerHost & BlockElement;
-
   private get _std() {
     return this.host.std;
   }
+
+  private _anchorSel: BlockSelection | null = null;
+
+  private _focusBlock: BlockElement | null = null;
+
+  host: ReactiveControllerHost & BlockElement;
 
   constructor(host: ReactiveControllerHost & BlockElement) {
     (this.host = host).addController(this);
   }
 
-  hostConnected() {
-    this._reset();
-  }
-
-  hostDisconnected() {
-    this._reset();
-  }
-
   private _reset = () => {
     this._anchorSel = null;
     this._focusBlock = null;
-  };
-
-  bind = () => {
-    this.host.handleEvent('keyDown', ctx => {
-      const state = ctx.get('keyboardState');
-      if (state.raw.key === 'Shift') {
-        return;
-      }
-      this._reset();
-    });
-
-    this.host.bindHotKey({
-      ArrowDown: this._onArrowDown,
-      ArrowUp: this._onArrowUp,
-      'Shift-ArrowDown': this._onShiftArrowDown,
-      'Shift-ArrowUp': this._onShiftArrowUp,
-      Escape: this._onEsc,
-      Enter: this._onEnter,
-      'Mod-a': this._onSelectAll,
-    });
-
-    this._bindQuickActionHotKey();
-    this._bindTextConversionHotKey();
-    this._bindMoveBlockHotKey();
   };
 
   private _onArrowDown = (ctx: UIEventStateContext) => {
@@ -85,7 +53,7 @@ export class KeymapController implements ReactiveController {
           .inline<'currentSelectionPath'>((ctx, next) => {
             const currentTextSelection = ctx.currentTextSelection;
             assertExists(currentTextSelection);
-            return next({ currentSelectionPath: currentTextSelection.path });
+            return next({ currentSelectionPath: currentTextSelection.blockId });
           })
           .getNextBlock()
           .inline((ctx, next) => {
@@ -126,7 +94,7 @@ export class KeymapController implements ReactiveController {
             if (!blockSelection) {
               return;
             }
-            return next({ currentSelectionPath: blockSelection.path });
+            return next({ currentSelectionPath: blockSelection.blockId });
           })
           .getNextBlock()
           .inline<'focusBlock'>((ctx, next) => {
@@ -179,7 +147,7 @@ export class KeymapController implements ReactiveController {
           .inline<'currentSelectionPath'>((ctx, next) => {
             const currentTextSelection = ctx.currentTextSelection;
             assertExists(currentTextSelection);
-            return next({ currentSelectionPath: currentTextSelection.path });
+            return next({ currentSelectionPath: currentTextSelection.blockId });
           })
           .getPrevBlock()
           .inline((ctx, next) => {
@@ -219,7 +187,7 @@ export class KeymapController implements ReactiveController {
             if (!blockSelection) {
               return;
             }
-            return next({ currentSelectionPath: blockSelection.path });
+            return next({ currentSelectionPath: blockSelection.blockId });
           })
           .getPrevBlock()
           .inline<'focusBlock'>((ctx, next) => {
@@ -279,16 +247,14 @@ export class KeymapController implements ReactiveController {
           return;
         }
 
-        const anchorBlock = ctx.std.view.viewFromPath(
-          'block',
-          this._anchorSel.path
-        );
+        const anchorBlock = ctx.std.view.getBlock(this._anchorSel.blockId);
         if (!anchorBlock) {
           return;
         }
         return next({
           anchorBlock,
-          currentSelectionPath: this._focusBlock?.path ?? anchorBlock?.path,
+          currentSelectionPath:
+            this._focusBlock?.blockId ?? anchorBlock?.blockId,
         });
       })
       .getNextBlock({})
@@ -329,16 +295,14 @@ export class KeymapController implements ReactiveController {
         if (!this._anchorSel) {
           return;
         }
-        const anchorBlock = ctx.std.view.viewFromPath(
-          'block',
-          this._anchorSel.path
-        );
+        const anchorBlock = ctx.std.view.getBlock(this._anchorSel.blockId);
         if (!anchorBlock) {
           return;
         }
         return next({
           anchorBlock,
-          currentSelectionPath: this._focusBlock?.path ?? anchorBlock?.path,
+          currentSelectionPath:
+            this._focusBlock?.blockId ?? anchorBlock?.blockId,
         });
       })
       .getPrevBlock({})
@@ -389,7 +353,7 @@ export class KeymapController implements ReactiveController {
 
         const { view, doc, selection } = ctx.std;
 
-        const element = view.viewFromPath('block', blockSelection.path);
+        const element = view.getBlock(blockSelection.blockId);
         if (!element) {
           return;
         }
@@ -406,7 +370,7 @@ export class KeymapController implements ReactiveController {
 
         const sel = selection.create('text', {
           from: {
-            path: element.parentPath.concat(blockId),
+            blockId,
             index: 0,
             length: 0,
           },
@@ -436,7 +400,9 @@ export class KeymapController implements ReactiveController {
       if (
         // Remove children blocks, only select the most top level blocks.
         !blocks
-          .map(b => b.path)
+          .map(block => this._std.doc.getBlockById(block.blockId))
+          .filter(b => !!b)
+          .map(b => buildPath(b))
           .reduce(
             (acc, cur) =>
               // check whether cur is a sub list of nodeView.path
@@ -446,12 +412,12 @@ export class KeymapController implements ReactiveController {
       ) {
         blocks.push(
           selection.create('block', {
-            path: nodeView.path,
+            blockId: nodeView.blockId,
           })
         );
       }
       return null;
-    }, this.host.path);
+    }, this.host.blockId);
     selection.update(selList => {
       return selList.filter(sel => !sel.is('block')).concat(blocks);
     });
@@ -508,7 +474,7 @@ export class KeymapController implements ReactiveController {
                   this._std.selection.setGroup('note', [
                     this._std.selection.create('text', {
                       from: {
-                        path: codeElement.path,
+                        blockId: codeElement.blockId,
                         index: 0,
                         length: codeModel.text?.length ?? 0,
                       },
@@ -539,5 +505,37 @@ export class KeymapController implements ReactiveController {
         });
       });
     });
+  };
+
+  hostConnected() {
+    this._reset();
+  }
+
+  hostDisconnected() {
+    this._reset();
+  }
+
+  bind = () => {
+    this.host.handleEvent('keyDown', ctx => {
+      const state = ctx.get('keyboardState');
+      if (state.raw.key === 'Shift') {
+        return;
+      }
+      this._reset();
+    });
+
+    this.host.bindHotKey({
+      ArrowDown: this._onArrowDown,
+      ArrowUp: this._onArrowUp,
+      'Shift-ArrowDown': this._onShiftArrowDown,
+      'Shift-ArrowUp': this._onShiftArrowUp,
+      Escape: this._onEsc,
+      Enter: this._onEnter,
+      'Mod-a': this._onSelectAll,
+    });
+
+    this._bindQuickActionHotKey();
+    this._bindTextConversionHotKey();
+    this._bindMoveBlockHotKey();
   };
 }

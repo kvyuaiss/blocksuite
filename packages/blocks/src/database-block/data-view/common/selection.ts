@@ -49,7 +49,7 @@ const KanbanGroupSelectionSchema = z.object({
 });
 
 const DatabaseSelectionSchema = z.object({
-  path: z.array(z.string()),
+  blockId: z.string(),
   viewSelection: z.union([
     TableViewSelectionSchema,
     KanbanCellSelectionSchema,
@@ -60,19 +60,20 @@ const DatabaseSelectionSchema = z.object({
 
 export class DatabaseSelection extends BaseSelection {
   static override type = 'database';
+
   static override group = 'note';
 
   readonly viewSelection: DataViewSelection;
 
   constructor({
-    path,
+    blockId,
     viewSelection,
   }: {
-    path: string[];
+    blockId: string;
     viewSelection: DataViewSelection;
   }) {
     super({
-      path,
+      blockId,
     });
 
     this.viewSelection = viewSelection;
@@ -100,7 +101,7 @@ export class DatabaseSelection extends BaseSelection {
   override toJSON(): Record<string, unknown> {
     return {
       type: 'database',
-      path: this.path,
+      blockId: this.blockId,
       viewSelection: this.viewSelection,
     };
   }
@@ -108,7 +109,7 @@ export class DatabaseSelection extends BaseSelection {
   static override fromJSON(json: Record<string, unknown>): DatabaseSelection {
     DatabaseSelectionSchema.parse(json);
     return new DatabaseSelection({
-      path: json.path as string[],
+      blockId: json.blockId as string,
       viewSelection: json.viewSelection as DataViewSelection,
     });
   }

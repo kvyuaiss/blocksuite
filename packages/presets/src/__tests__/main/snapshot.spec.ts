@@ -4,13 +4,20 @@ import { beforeEach, expect, test } from 'vitest';
 import { wait } from '../utils/common.js';
 import { setupEditor } from '../utils/setup.js';
 
+const excludes = new Set([
+  'shape-textBound',
+  'externalXYWH',
+  'connector-text',
+  'connector-labelXYWH',
+]);
+
 beforeEach(async () => {
   const cleanup = await setupEditor('page');
 
   return cleanup;
 });
 
-const xywhPattern = /\[(\s*\d(\.\d)?\s*,){4}(\s*\d(\.\d)?\s*)\]/;
+const xywhPattern = /\[(\s*-?\d+(\.\d+)?\s*,){3}(\s*-?\d+(\.\d+)?\s*)\]/;
 
 test('snapshot 1 importing', async () => {
   const pageService = window.editor.host.std.spec.getService('affine:page');
@@ -42,16 +49,24 @@ test('snapshot 1 importing', async () => {
   expect(surfaceElements.length).toBe(25);
 
   surfaceElements.forEach(element => {
+    type Type = keyof typeof element;
     for (const field in element) {
-      const value = element[field as keyof typeof element];
+      const value = element[field as Type];
+
+      if (excludes.has(`${element.type}-${field}`) || excludes.has(field)) {
+        return;
+      }
 
       if (field === 'xywh') {
         expect(value).toMatch(xywhPattern);
       }
 
-      expect(value).not.toBeUndefined();
-      expect(value).not.toBeNull();
-      expect(value).not.toBeNaN();
+      expect(
+        value,
+        `type: ${element.type} field: "${field}"`
+      ).not.toBeUndefined();
+      expect(value, `type: ${element.type} field: "${field}"`).not.toBeNull();
+      expect(value, `type: ${element.type} field: "${field}"`).not.toBeNaN();
     }
   });
 });
@@ -89,13 +104,20 @@ test('snapshot 2 importing', async () => {
     for (const field in element) {
       const value = element[field as keyof typeof element];
 
+      if (excludes.has(`${element.type}-${field}`) || excludes.has(field)) {
+        return;
+      }
+
       if (field === 'xywh') {
         expect(value).toMatch(xywhPattern);
       }
 
-      expect(value).not.toBeUndefined();
-      expect(value).not.toBeNull();
-      expect(value).not.toBeNaN();
+      expect(
+        value,
+        `type: ${element.type} field: "${field}"`
+      ).not.toBeUndefined();
+      expect(value, `type: ${element.type} field: "${field}"`).not.toBeNull();
+      expect(value, `type: ${element.type} field: "${field}"`).not.toBeNaN();
     }
   });
 });

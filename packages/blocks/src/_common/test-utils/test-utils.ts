@@ -6,6 +6,7 @@ import {
 class DocTestUtils {
   // block model operations (data layer)
   mergeToCodeModel = mergeToCodeModel;
+
   transformModel = transformModel;
 }
 
@@ -13,9 +14,9 @@ export class TestUtils {
   docTestUtils = new DocTestUtils();
 }
 
-import type { BlockSnapshot } from '@blocksuite/store';
+import type { BlockSnapshot, SliceSnapshot } from '@blocksuite/store';
 
-export function nanoidReplacement(snapshot: BlockSnapshot) {
+export function nanoidReplacement(snapshot: BlockSnapshot | SliceSnapshot) {
   return JSON.parse(nanoidReplacementString(JSON.stringify(snapshot)));
 }
 

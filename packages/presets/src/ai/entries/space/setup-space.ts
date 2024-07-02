@@ -1,6 +1,6 @@
-import { type AffineAIPanelWidget } from '@blocksuite/blocks';
+import type { AffineAIPanelWidget } from '@blocksuite/blocks';
 
-import { handleAskAIAction } from '../../actions/handler.js';
+import { handleInlineAskAIAction } from '../../actions/doc-handler.js';
 import { AIProvider } from '../../provider.js';
 
 export function setupSpaceEntry(panel: AffineAIPanelWidget) {
@@ -14,11 +14,11 @@ export function setupSpaceEntry(panel: AffineAIPanelWidget) {
     ) {
       const selection = host.selection.find('text');
       if (selection && selection.isCollapsed() && selection.from.index === 0) {
-        const block = host.view.viewFromPath('block', selection.path);
+        const block = host.view.getBlock(selection.blockId);
         if (!block?.model?.text || block.model.text?.length > 0) return;
 
         keyboardState.raw.preventDefault();
-        handleAskAIAction(panel);
+        handleInlineAskAIAction(host);
       }
     }
   });

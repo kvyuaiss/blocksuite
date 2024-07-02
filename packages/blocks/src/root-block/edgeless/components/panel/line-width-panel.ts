@@ -1,8 +1,9 @@
 import { WithDisposable } from '@blocksuite/block-std';
-import { css, html, LitElement, nothing } from 'lit';
+import { css, html, LitElement, nothing, type PropertyValues } from 'lit';
 import { customElement, property, query, queryAll } from 'lit/decorators.js';
 
 import { LineWidth } from '../../../../_common/types.js';
+import { requestConnectedFrame } from '../../../../_common/utils/event.js';
 
 type DragConfig = {
   stepWidth: number;
@@ -32,18 +33,19 @@ export class EdgelessLineWidthPanel extends WithDisposable(LitElement) {
   static override styles = css`
     :host {
       display: flex;
-      box-sizing: border-box;
-      background: var(--affine-background-overlay-panel-color);
+      align-items: center;
+      justify-content: center;
+      align-self: stretch;
     }
 
     .line-width-panel {
+      width: 108px;
+      height: 24px;
       display: flex;
       flex-direction: row;
       align-items: center;
       justify-content: space-between;
       position: relative;
-      width: 108px;
-      margin: 4px 0;
       cursor: default;
     }
 
@@ -105,31 +107,31 @@ export class EdgelessLineWidthPanel extends WithDisposable(LitElement) {
     }
   `;
 
-  @property({ attribute: false })
-  selectedSize: LineWidth = LineWidth.Two;
-
-  @property({ attribute: false })
-  hasTooltip = true;
-
-  @property({ attribute: false })
-  disable = false;
-
   @query('.line-width-panel')
-  private _lineWidthPanel!: HTMLElement;
+  private accessor _lineWidthPanel!: HTMLElement;
 
   @query('.line-width-overlay')
-  private _lineWidthOverlay!: HTMLElement;
+  private accessor _lineWidthOverlay!: HTMLElement;
 
   @queryAll('.line-width-icon')
-  private _lineWidthIcons!: NodeListOf<HTMLElement>;
+  private accessor _lineWidthIcons!: NodeListOf<HTMLElement>;
 
   @query('.bottom-line')
-  private _bottomLine!: HTMLElement;
+  private accessor _bottomLine!: HTMLElement;
 
   @query('.drag-handle')
-  private _dragHandle!: HTMLElement;
+  private accessor _dragHandle!: HTMLElement;
 
   private _dragConfig: DragConfig | null = null;
+
+  @property({ attribute: false })
+  accessor selectedSize: LineWidth = LineWidth.Two;
+
+  @property({ attribute: false })
+  accessor hasTooltip = true;
+
+  @property({ attribute: false })
+  accessor disable = false;
 
   private _updateLineWidthPanel(selectedSize: LineWidth) {
     if (!this._lineWidthOverlay) return;
@@ -169,9 +171,10 @@ export class EdgelessLineWidthPanel extends WithDisposable(LitElement) {
 
   private _updateIconsColor = () => {
     if (!this._dragHandle.offsetParent) {
-      requestAnimationFrame(() => this._updateIconsColor());
+      requestConnectedFrame(() => this._updateIconsColor(), this);
       return;
     }
+
     const dragHandleRect = this._dragHandle.getBoundingClientRect();
     const dragHandleCenterX = dragHandleRect.left + dragHandleRect.width / 2;
     // All the icons located at the left of the drag handle should be filled with the icon color.
@@ -312,6 +315,12 @@ export class EdgelessLineWidthPanel extends WithDisposable(LitElement) {
     this._disposables.addFromEvent(this, 'pointerout', this._onPointerOut);
   }
 
+  override willUpdate(changedProperties: PropertyValues<this>) {
+    if (changedProperties.has('selectedSize')) {
+      this._updateLineWidthPanel(this.selectedSize);
+    }
+  }
+
   override disconnectedCallback(): void {
     this._disposables.dispose();
   }
@@ -348,7 +357,7 @@ export class EdgelessLineWidthPanel extends WithDisposable(LitElement) {
         <div class="bottom-line"></div>
         <div class="line-width-overlay"></div>
         ${this.hasTooltip
-          ? html`<affine-tooltip>Thickness</affine-tooltip>`
+          ? html`<affine-tooltip .offset=${8}>Thickness</affine-tooltip>`
           : nothing}
       </div>`;
   }

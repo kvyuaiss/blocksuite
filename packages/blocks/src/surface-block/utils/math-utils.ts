@@ -148,7 +148,7 @@ export function getBoundsFromPoints(points: IVec[], rotation = 0): TLBounds {
   let maxX = -Infinity;
   let maxY = -Infinity;
 
-  if (points.length < 2) {
+  if (points.length < 1) {
     minX = 0;
     minY = 0;
     maxX = 1;
@@ -447,9 +447,7 @@ export function rotatePoints<T extends IVec>(
   rotate: number
 ): T[] {
   const rad = toRadian(rotate);
-  return points.map(p =>
-    Vec.add(center, Vec.rot(Vec.sub(p, center), rad))
-  ) as T[];
+  return points.map(p => Vec.rotWith(p, center, rad)) as T[];
 }
 
 export function rotatePoint(

@@ -3,7 +3,6 @@ import {
   ShadowlessElement,
   WithDisposable,
 } from '@blocksuite/block-std';
-import type { SurfaceBlockComponent } from '@blocksuite/blocks';
 import { EdgelessEditorBlockSpecs } from '@blocksuite/blocks';
 import { noop } from '@blocksuite/global/utils';
 import type { Doc } from '@blocksuite/store';
@@ -15,6 +14,10 @@ noop(EditorHost);
 
 @customElement('edgeless-editor')
 export class EdgelessEditor extends WithDisposable(ShadowlessElement) {
+  get host() {
+    return this._host.value as EditorHost;
+  }
+
   static override styles = css`
     edgeless-editor {
       font-family: var(--affine-font-family);
@@ -41,17 +44,13 @@ export class EdgelessEditor extends WithDisposable(ShadowlessElement) {
     }
   `;
 
-  @property({ attribute: false })
-  doc!: Doc;
-
-  @property({ attribute: false })
-  specs = EdgelessEditorBlockSpecs;
-
   private _host: Ref<EditorHost> = createRef<EditorHost>();
 
-  get host() {
-    return this._host.value as EditorHost;
-  }
+  @property({ attribute: false })
+  accessor doc!: Doc;
+
+  @property({ attribute: false })
+  accessor specs = EdgelessEditorBlockSpecs;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -78,25 +77,6 @@ export class EdgelessEditor extends WithDisposable(ShadowlessElement) {
         ></editor-host>
       </div>
     `;
-  }
-
-  override disconnectedCallback(): void {
-    const host = this.host;
-    if (!host) return;
-    const surfaceModel = host.doc.getBlockByFlavour('affine:surface')[0];
-    const surface = host.view.viewFromPath('block', [
-      this.doc.root!.id,
-      surfaceModel.id,
-    ]) as SurfaceBlockComponent;
-
-    if (!surface) return;
-
-    const { edgeless } = surface;
-    edgeless.service.editSession.setItem('viewport', {
-      centerX: edgeless.service.viewport.centerX,
-      centerY: edgeless.service.viewport.centerY,
-      zoom: edgeless.service.viewport.zoom,
-    });
   }
 }
 

@@ -4,7 +4,12 @@ import { IS_MAC, IS_WINDOWS } from '@blocksuite/global/env';
 import { assertExists } from '@blocksuite/global/utils';
 
 import { matchFlavours } from '../../_common/utils/model.js';
-import { createLinkedDocFromSelectedBlocks } from '../../_common/utils/render-linked-doc.js';
+import {
+  convertSelectedBlocksToLinkedDoc,
+  getTitleFromSelectedModels,
+  notifyDocCreated,
+  promptDocTitle,
+} from '../../_common/utils/render-linked-doc.js';
 
 export class PageKeyboardManager {
   constructor(public rootElement: BlockElement) {
@@ -76,12 +81,12 @@ export class PageKeyboardManager {
       );
 
       if (selection) {
-        this._selection.set([
+        this._selection.setGroup('note', [
           this._selection.create('text', {
             from: {
               index: 0,
               length: 0,
-              path: selection.path,
+              blockId: selection.blockId,
             },
             to: null,
           }),
@@ -106,18 +111,10 @@ export class PageKeyboardManager {
   ) {
     const current = selections[0];
     const first = this._doc.getBlockById(current.blockId);
-    const firstElement = this.rootElement.host.view.viewFromPath(
-      'block',
-      current.path
-    );
+    const firstElement = this.rootElement.host.view.getBlock(current.blockId);
 
     assertExists(first, `Cannot find block ${current.blockId}`);
-    assertExists(
-      firstElement,
-      `Cannot find block view ${current.path.join(' -> ')}`
-    );
-
-    const parentPath = firstElement.parentPath;
+    assertExists(firstElement, `Cannot find block view ${current.blockId}`);
 
     const parent = this._doc.getParent(first);
     const index = parent?.children.indexOf(first);
@@ -134,7 +131,7 @@ export class PageKeyboardManager {
 
     return {
       blockId,
-      path: parentPath.concat(blockId),
+      path: blockId,
     };
   }
 
@@ -158,10 +155,19 @@ export class PageKeyboardManager {
     }
 
     const doc = rootElement.host.doc;
-    const linkedDoc = createLinkedDocFromSelectedBlocks(doc, selectedModels);
-    const linkedDocService = rootElement.host.spec.getService(
-      'affine:embed-linked-doc'
-    );
-    linkedDocService.slots.linkedDocCreated.emit({ docId: linkedDoc.id });
+    const autofill = getTitleFromSelectedModels(selectedModels);
+    void promptDocTitle(rootElement.host, autofill).then(title => {
+      if (title === null) return;
+      const linkedDoc = convertSelectedBlocksToLinkedDoc(
+        doc,
+        selectedModels,
+        title
+      );
+      const linkedDocService = rootElement.host.spec.getService(
+        'affine:embed-linked-doc'
+      );
+      linkedDocService.slots.linkedDocCreated.emit({ docId: linkedDoc.id });
+      notifyDocCreated(rootElement.host, doc);
+    });
   }
 }

@@ -1,3 +1,4 @@
+import { IS_MAC } from '@blocksuite/global/env';
 import { baseTheme } from '@toeverything/theme';
 import { css, html, unsafeCSS } from 'lit';
 import { customElement, query } from 'lit/decorators.js';
@@ -19,6 +20,7 @@ export class NumberCell extends BaseCellRenderer<number> {
     .affine-database-number {
       display: flex;
       align-items: center;
+      justify-content: flex-end;
       width: 100%;
       padding: 0;
       border: none;
@@ -59,6 +61,7 @@ export class NumberCellEditing extends BaseCellRenderer<number> {
       color: var(--affine-text-primary-color);
       font-weight: 400;
       background-color: transparent;
+      text-align: right;
     }
 
     .affine-database-number:focus {
@@ -67,17 +70,7 @@ export class NumberCellEditing extends BaseCellRenderer<number> {
   `;
 
   @query('input')
-  private _inputEle!: HTMLInputElement;
-
-  focusEnd = () => {
-    const end = this._inputEle.value.length;
-    this._inputEle.focus();
-    this._inputEle.setSelectionRange(end, end);
-  };
-
-  override onExitEditMode() {
-    this._setValue();
-  }
+  private accessor _inputEle!: HTMLInputElement;
 
   private _setValue = (str: string = this._inputEle.value) => {
     if (!str) {
@@ -94,12 +87,29 @@ export class NumberCellEditing extends BaseCellRenderer<number> {
   };
 
   private _keydown = (e: KeyboardEvent) => {
+    const ctrlKey = IS_MAC ? e.metaKey : e.ctrlKey;
+
+    if (e.key.toLowerCase() === 'z' && ctrlKey) {
+      e.stopPropagation();
+      return;
+    }
+
     if (e.key === 'Enter' && !e.isComposing) {
       requestAnimationFrame(() => {
         this.selectCurrentCell(false);
       });
     }
   };
+
+  focusEnd = () => {
+    const end = this._inputEle.value.length;
+    this._inputEle.focus();
+    this._inputEle.setSelectionRange(end, end);
+  };
+
+  override onExitEditMode() {
+    this._setValue();
+  }
 
   override firstUpdated() {
     requestAnimationFrame(() => {
@@ -110,6 +120,7 @@ export class NumberCellEditing extends BaseCellRenderer<number> {
   _blur() {
     this.selectCurrentCell(false);
   }
+
   _focus() {
     if (!this.isEditing) {
       this.selectCurrentCell(true);
@@ -119,6 +130,8 @@ export class NumberCellEditing extends BaseCellRenderer<number> {
   override render() {
     const value = `${this.value ?? ''}`;
     return html`<input
+      type="text"
+      autocomplete="off"
       .value="${value}"
       @keydown="${this._keydown}"
       @blur="${this._blur}"

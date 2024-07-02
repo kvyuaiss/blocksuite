@@ -6,6 +6,7 @@ import { dragBetweenIndices } from './utils/actions/drag.js';
 import {
   copyByKeyboard,
   pasteByKeyboard,
+  pressArrowLeft,
   pressArrowRight,
   pressBackspace,
   pressEnter,
@@ -44,15 +45,15 @@ test.describe('multiple page', () => {
   prop:title="title0"
 >
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -83,15 +84,15 @@ test.describe('multiple page', () => {
 >
   <affine:surface />
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -469,15 +470,15 @@ test.describe('reference node', () => {
 >
   <affine:surface />
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -503,15 +504,15 @@ test.describe('reference node', () => {
   prop:title="page0"
 >
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -726,15 +727,15 @@ test.describe.skip('linked page with clipboard', () => {
       page,
       `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -840,4 +841,34 @@ test('should [[Selected text]] converted to linked page', async ({ page }) => {
   );
   await switchToPage(page, '3');
   await assertTitle(page, '2');
+});
+
+test('add reference node before the other reference node', async ({ page }) => {
+  await enterPlaygroundRoom(page);
+  await initEmptyParagraphState(page);
+  await focusRichText(page);
+  await type(page, 'aaa');
+
+  const firstRefNode = page.locator('affine-reference').nth(0);
+
+  await type(page, '@bbb');
+  await pressEnter(page);
+
+  expect(await firstRefNode.textContent()).toEqual(
+    expect.stringContaining('bbb')
+  );
+  expect(await firstRefNode.textContent()).not.toEqual(
+    expect.stringContaining('ccc')
+  );
+
+  await pressArrowLeft(page, 3);
+  await type(page, '@ccc');
+  await pressEnter(page);
+
+  expect(await firstRefNode.textContent()).not.toEqual(
+    expect.stringContaining('bbb')
+  );
+  expect(await firstRefNode.textContent()).toEqual(
+    expect.stringContaining('ccc')
+  );
 });

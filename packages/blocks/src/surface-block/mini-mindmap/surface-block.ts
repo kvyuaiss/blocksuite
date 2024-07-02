@@ -3,7 +3,7 @@ import { html } from 'lit';
 import { customElement, query } from 'lit/decorators.js';
 
 import { ThemeObserver } from '../../_common/theme/theme-observer.js';
-import { updateMindmapNodeRect } from '../canvas-renderer/element-renderer/shape/utils.js';
+import { fitContent } from '../canvas-renderer/element-renderer/shape/utils.js';
 import { Renderer } from '../canvas-renderer/renderer.js';
 import type { ShapeElementModel } from '../element-model/shape.js';
 import { LayerManager } from '../managers/layer-manager.js';
@@ -14,11 +14,13 @@ import type { MindmapService } from './service.js';
 @customElement('mini-mindmap-surface-block')
 export class MindmapSurfaceBlock extends BlockElement<SurfaceBlockModel> {
   private _theme = new ThemeObserver();
+
   private _layer!: LayerManager;
+
   private _renderer!: Renderer;
 
   @query('.affine-mini-mindmap-surface')
-  editorContainer!: HTMLDivElement;
+  accessor editorContainer!: HTMLDivElement;
 
   get mindmapService() {
     return this.host.spec.getService(
@@ -30,7 +32,7 @@ export class MindmapSurfaceBlock extends BlockElement<SurfaceBlockModel> {
     this.model.doc.transact(() => {
       this.model.elementModels.forEach(element => {
         if (element.type === 'shape') {
-          updateMindmapNodeRect(element as ShapeElementModel);
+          fitContent(element as ShapeElementModel);
         }
       });
     });
@@ -80,7 +82,7 @@ export class MindmapSurfaceBlock extends BlockElement<SurfaceBlockModel> {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this._layer = LayerManager.create(this.model.doc, this.model);
+    this._layer = LayerManager.create(this.doc, this.model);
     this._renderer = new Renderer({
       layerManager: this._layer,
       enableStackingCanvas: true,
@@ -90,6 +92,7 @@ export class MindmapSurfaceBlock extends BlockElement<SurfaceBlockModel> {
       },
     });
     this._theme.observe(this.ownerDocument.documentElement);
+    this.disposables.add(this._theme);
   }
 
   override firstUpdated(_changedProperties: Map<PropertyKey, unknown>): void {

@@ -1,19 +1,19 @@
 import z from 'zod';
 
-import { PathFinder } from '../../utils/index.js';
 import { BaseSelection } from '../base.js';
 
 const BlockSelectionSchema = z.object({
-  path: z.array(z.string()),
+  blockId: z.string(),
 });
 
 export class BlockSelection extends BaseSelection {
   static override type = 'block';
+
   static override group = 'note';
 
   override equals(other: BaseSelection): boolean {
     if (other instanceof BlockSelection) {
-      return PathFinder.equals(this.path, other.path);
+      return this.blockId === other.blockId;
     }
     return false;
   }
@@ -21,14 +21,14 @@ export class BlockSelection extends BaseSelection {
   override toJSON(): Record<string, unknown> {
     return {
       type: 'block',
-      path: this.path,
+      blockId: this.blockId,
     };
   }
 
   static override fromJSON(json: Record<string, unknown>): BlockSelection {
     BlockSelectionSchema.parse(json);
     return new BlockSelection({
-      path: json.path as string[],
+      blockId: json.blockId as string,
     });
   }
 }

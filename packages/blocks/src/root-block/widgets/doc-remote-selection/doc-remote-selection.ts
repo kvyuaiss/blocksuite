@@ -5,7 +5,7 @@ import {
 } from '@blocksuite/block-std';
 import { WidgetElement } from '@blocksuite/block-std';
 import { assertExists, throttle } from '@blocksuite/global/utils';
-import { type UserInfo } from '@blocksuite/store';
+import type { UserInfo } from '@blocksuite/store';
 import { css, html, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
@@ -26,6 +26,18 @@ export const AFFINE_DOC_REMOTE_SELECTION_WIDGET =
 
 @customElement(AFFINE_DOC_REMOTE_SELECTION_WIDGET)
 export class AffineDocRemoteSelectionWidget extends WidgetElement {
+  private get _selectionManager() {
+    return this.host.selection;
+  }
+
+  private get _container() {
+    return this.offsetParent;
+  }
+
+  private get _containerRect() {
+    return this.offsetParent?.getBoundingClientRect();
+  }
+
   // avoid being unable to select text by mouse click or drag
   static override styles = css`
     :host {
@@ -41,61 +53,11 @@ export class AffineDocRemoteSelectionWidget extends WidgetElement {
     user?: UserInfo;
   }> = [];
 
-  private get _selectionManager() {
-    return this.host.selection;
-  }
-
-  private get _container() {
-    return this.offsetParent;
-  }
-
-  private get _containerRect() {
-    return this.offsetParent?.getBoundingClientRect();
-  }
-
   private _resizeObserver: ResizeObserver = new ResizeObserver(() => {
     this.requestUpdate();
   });
 
   private _abortController = new AbortController();
-
-  override connectedCallback() {
-    super.connectedCallback();
-
-    this.disposables.add(
-      this._selectionManager.slots.remoteChanged.on(
-        throttle((remoteSelections: Map<number, BaseSelection[]>) => {
-          const status = this.doc.awarenessStore.getStates();
-          this._remoteSelections = [...remoteSelections.entries()].map(
-            ([id, selections]) => {
-              return {
-                id,
-                selections,
-                user: status.get(id)?.user,
-              };
-            }
-          );
-
-          this.requestUpdate();
-        }, 100)
-      )
-    );
-    this.handleEvent('wheel', () => {
-      this.requestUpdate();
-    });
-
-    this.disposables.addFromEvent(window, 'resize', () => {
-      this.requestUpdate();
-    });
-
-    this._remoteColorManager = new RemoteColorManager(this.host);
-  }
-
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    this._resizeObserver.disconnect();
-    this._abortController.abort();
-  }
 
   private _getSelectionRect(selections: BaseSelection[]): SelectionRect[] {
     if (!isRootElement(this.blockElement)) {
@@ -137,10 +99,7 @@ export class AffineDocRemoteSelectionWidget extends WidgetElement {
       }
     } else if (blockSelections.length > 0) {
       return blockSelections.flatMap(blockSelection => {
-        const blockElement = this.host.view.viewFromPath(
-          'block',
-          blockSelection.path
-        );
+        const blockElement = this.host.view.getBlock(blockSelection.blockId);
         if (blockElement) {
           const rect = blockElement.getBoundingClientRect();
           return {
@@ -184,9 +143,9 @@ export class AffineDocRemoteSelectionWidget extends WidgetElement {
       const range = rangeManager.textSelectionToRange(
         this._selectionManager.create('text', {
           from: {
-            path: textSelection.to
-              ? textSelection.to.path
-              : textSelection.from.path,
+            blockId: textSelection.to
+              ? textSelection.to.blockId
+              : textSelection.from.blockId,
             index: textSelection.to
               ? textSelection.to.index + textSelection.to.length
               : textSelection.from.index + textSelection.from.length,
@@ -219,10 +178,7 @@ export class AffineDocRemoteSelectionWidget extends WidgetElement {
     } else if (blockSelections.length > 0) {
       const lastBlockSelection = blockSelections[blockSelections.length - 1];
 
-      const blockElement = this.host.view.viewFromPath(
-        'block',
-        lastBlockSelection.path
-      );
+      const blockElement = this.host.view.getBlock(lastBlockSelection.blockId);
       if (blockElement) {
         const rect = blockElement.getBoundingClientRect();
         return {
@@ -240,6 +196,44 @@ export class AffineDocRemoteSelectionWidget extends WidgetElement {
     }
 
     return null;
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+
+    this.disposables.add(
+      this._selectionManager.slots.remoteChanged.on(
+        throttle((remoteSelections: Map<number, BaseSelection[]>) => {
+          const status = this.doc.awarenessStore.getStates();
+          this._remoteSelections = [...remoteSelections.entries()].map(
+            ([id, selections]) => {
+              return {
+                id,
+                selections,
+                user: status.get(id)?.user,
+              };
+            }
+          );
+
+          this.requestUpdate();
+        }, 100)
+      )
+    );
+    this.handleEvent('wheel', () => {
+      this.requestUpdate();
+    });
+
+    this.disposables.addFromEvent(window, 'resize', () => {
+      this.requestUpdate();
+    });
+
+    this._remoteColorManager = new RemoteColorManager(this.host);
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this._resizeObserver.disconnect();
+    this._abortController.abort();
   }
 
   override render() {
@@ -312,9 +306,10 @@ export class AffineDocRemoteSelectionWidget extends WidgetElement {
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
+                      display: selection.user ? 'block' : 'none',
                     })}"
                   >
-                    ${selection.user?.name ?? 'Unknown'}
+                    ${selection.user?.name}
                   </div>
                 </div>
               </div>

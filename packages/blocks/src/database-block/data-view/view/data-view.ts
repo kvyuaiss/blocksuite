@@ -6,8 +6,6 @@ import type {
 import type { Disposable, Slot } from '@blocksuite/global/utils';
 import type { Doc } from '@blocksuite/store';
 
-import type { DatabaseBlockModel } from '../../database-model.js';
-import type { ColumnMeta } from '../column/column-config.js';
 import type { DataSource } from '../common/data-source/base.js';
 import type { ViewSource } from '../common/index.js';
 import type { DataViewRenderer } from '../data-view.js';
@@ -15,7 +13,7 @@ import type { DataViewSelection, InsertToPosition } from '../types.js';
 import type { UniComponent } from '../utils/uni-component/index.js';
 import type { DataViewWidget } from '../widget/types.js';
 import type { DataViewManagerBase } from './data-view-manager.js';
-import { type DataViewManager } from './data-view-manager.js';
+import type { DataViewManager } from './data-view-manager.js';
 
 export interface DataViewProps<
   T extends DataViewManager = DataViewManager,
@@ -87,20 +85,7 @@ export interface DataViewConfig<
 > {
   defaultName: string;
   dataViewManager: new () => DataViewManagerBase<Data>;
-  init(
-    columnMetaMap: Record<string, ColumnMeta>,
-    model: DatabaseBlockModel,
-    id: string,
-    name: string
-  ): Data;
 }
-
-export type DataViewToolsProps<
-  Manager extends DataViewManager = DataViewManager,
-> = {
-  view: Manager;
-  viewMethods: DataViewExpose;
-};
 
 export interface DataViewRendererConfig {
   view: UniComponent<DataViewProps, DataViewExpose>;

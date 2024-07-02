@@ -1,21 +1,19 @@
 import './components/image-card.js';
 import './components/page-image-block.js';
 import './components/edgeless-image-block.js';
-import '../_common/components/embed-card/embed-card-caption.js';
-import '../_common/components/block-selection.js';
 
-import { BlockElement } from '@blocksuite/block-std';
 import { html, nothing } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-import type { EmbedCardCaption } from '../_common/components/embed-card/embed-card-caption.js';
+import { BlockComponent } from '../_common/components/block-component.js';
+import { Peekable } from '../_common/components/index.js';
 import { Bound } from '../surface-block/utils/bound.js';
 import type { ImageBlockEdgelessComponent } from './components/edgeless-image-block.js';
 import type { AffineImageCard } from './components/image-card.js';
 import type { ImageBlockPageComponent } from './components/page-image-block.js';
-import { type ImageBlockModel } from './image-model.js';
-import type { ImageService } from './image-service.js';
+import type { ImageBlockModel } from './image-model.js';
+import type { ImageBlockService } from './image-service.js';
 import {
   copyImageBlob,
   downloadImageBlob,
@@ -25,45 +23,11 @@ import {
 } from './utils.js';
 
 @customElement('affine-image')
-export class ImageBlockComponent extends BlockElement<
+@Peekable()
+export class ImageBlockComponent extends BlockComponent<
   ImageBlockModel,
-  ImageService
+  ImageBlockService
 > {
-  @property({ attribute: false })
-  loading = false;
-
-  @property({ attribute: false })
-  error = false;
-
-  @property({ attribute: false })
-  downloading = false;
-
-  @property({ attribute: false })
-  retryCount = 0;
-
-  @property({ attribute: false })
-  blob?: Blob;
-
-  @property({ attribute: false })
-  blobUrl?: string;
-
-  @state()
-  lastSourceId!: string;
-
-  @query('affine-image-block-card')
-  private _imageCard?: AffineImageCard;
-
-  @query('affine-page-image')
-  private _pageImage?: ImageBlockPageComponent;
-
-  @query('affine-edgeless-image')
-  private _edgelessImage?: ImageBlockEdgelessComponent;
-
-  @query('embed-card-caption')
-  captionElement!: EmbedCardCaption;
-
-  private _isInSurface = false;
-
   get isInSurface() {
     return this._isInSurface;
   }
@@ -90,10 +54,44 @@ export class ImageBlockComponent extends BlockElement<
     return this._imageCard;
   }
 
+  @query('affine-image-block-card')
+  private accessor _imageCard: AffineImageCard | null = null;
+
+  @query('affine-page-image')
+  private accessor _pageImage: ImageBlockPageComponent | null = null;
+
+  @query('affine-edgeless-image')
+  private accessor _edgelessImage: ImageBlockEdgelessComponent | null = null;
+
+  private _isInSurface = false;
+
+  override accessor useCaptionEditor = true;
+
+  @property({ attribute: false })
+  accessor loading = false;
+
+  @property({ attribute: false })
+  accessor error = false;
+
+  @property({ attribute: false })
+  accessor downloading = false;
+
+  @property({ attribute: false })
+  accessor retryCount = 0;
+
+  @property({ attribute: false })
+  accessor blob: Blob | undefined = undefined;
+
+  @property({ attribute: false })
+  accessor blobUrl: string | undefined = undefined;
+
+  @state()
+  accessor lastSourceId!: string;
+
   private _selectBlock() {
     const selectionManager = this.host.selection;
     const blockSelection = selectionManager.create('block', {
-      path: this.path,
+      blockId: this.blockId,
     });
     selectionManager.setGroup('note', [blockSelection]);
   }
@@ -144,6 +142,10 @@ export class ImageBlockComponent extends BlockElement<
     const parent = this.host.doc.getParent(this.model);
     this._isInSurface = parent?.flavour === 'affine:surface';
 
+    this.blockContainerStyles = this._isInSurface
+      ? undefined
+      : { margin: '18px 0' };
+
     this.model.propsUpdated.on(({ key }) => {
       if (key === 'sourceId') {
         this.refreshData();
@@ -166,7 +168,6 @@ export class ImageBlockComponent extends BlockElement<
     let containerStyleMap = styleMap({
       position: 'relative',
       width: '100%',
-      margin: '18px 0px',
     });
 
     if (this.isInSurface) {
@@ -200,10 +201,6 @@ export class ImageBlockComponent extends BlockElement<
                 }}
               ></affine-edgeless-image>`
             : html`<affine-page-image .block=${this}></affine-page-image>`}
-
-        <embed-card-caption .block=${this}></embed-card-caption>
-
-        <affine-block-selection .block=${this}></affine-block-selection>
       </div>
 
       ${this.isInSurface ? nothing : Object.values(this.widgets)}

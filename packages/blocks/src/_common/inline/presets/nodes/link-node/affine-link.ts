@@ -20,11 +20,6 @@ import { toggleLinkPopup } from './link-popup/toggle-link-popup.js';
 
 @customElement('affine-link')
 export class AffineLink extends ShadowlessElement {
-  @property({ type: Object })
-  delta: DeltaInsert<AffineTextAttributes> = {
-    insert: ZERO_WIDTH_SPACE,
-  };
-
   get link() {
     const link = this.delta.attributes?.link;
     if (!link) {
@@ -62,52 +57,48 @@ export class AffineLink extends ShadowlessElement {
   }
 
   static override styles = css`
-    affine-link > a {
-      white-space: nowrap;
-      word-break: break-word;
-      color: var(--affine-link-color);
-      fill: var(--affine-link-color);
-      text-decoration: none;
-      cursor: pointer;
-    }
-
     affine-link > a:hover [data-v-text='true'] {
       text-decoration: underline;
     }
-
-    affine-link > a > v-text {
-      white-space: break-spaces;
-    }
   `;
 
-  private _whenHover = new HoverController(this, ({ abortController }) => {
-    if (this.blockElement.doc.readonly) {
-      return null;
-    }
+  private _whenHover = new HoverController(
+    this,
+    ({ abortController }) => {
+      if (this.blockElement.doc.readonly) {
+        return null;
+      }
 
-    const selection = this.std.selection;
-    const textSelection = selection.find('text');
-    if (
-      !!textSelection &&
-      (!!textSelection.to || !!textSelection.from.length)
-    ) {
-      return null;
-    }
+      const selection = this.std.selection;
+      const textSelection = selection.find('text');
+      if (
+        !!textSelection &&
+        (!!textSelection.to || !!textSelection.from.length)
+      ) {
+        return null;
+      }
 
-    const blockSelections = selection.filter('block');
-    if (blockSelections.length) {
-      return null;
-    }
+      const blockSelections = selection.filter('block');
+      if (blockSelections.length) {
+        return null;
+      }
 
-    return {
-      template: toggleLinkPopup(
-        this.inlineEditor,
-        'view',
-        this.selfInlineRange,
-        abortController
-      ),
-    };
-  });
+      return {
+        template: toggleLinkPopup(
+          this.inlineEditor,
+          'view',
+          this.selfInlineRange,
+          abortController
+        ),
+      };
+    },
+    { enterDelay: 500 }
+  );
+
+  @property({ type: Object })
+  accessor delta: DeltaInsert<AffineTextAttributes> = {
+    insert: ZERO_WIDTH_SPACE,
+  };
 
   // Workaround for links not working in contenteditable div
   // see also https://stackoverflow.com/questions/12059211/how-to-make-clickable-anchor-in-contenteditable-div
@@ -129,7 +120,12 @@ export class AffineLink extends ShadowlessElement {
 
   override render() {
     const style = this.delta.attributes
-      ? affineTextStyles(this.delta.attributes)
+      ? affineTextStyles(this.delta.attributes, {
+          color: 'var(--affine-link-color)',
+          fill: 'var(--affine-link-color)',
+          'text-decoration': 'none',
+          cursor: 'pointer',
+        })
       : styleMap({});
 
     return html`<a

@@ -1,4 +1,4 @@
-import { assertEquals } from '@blocksuite/global/utils';
+import { sha } from '@blocksuite/global/utils';
 import type { DeltaInsert } from '@blocksuite/inline';
 import type {
   FromBlockSnapshotPayload,
@@ -10,23 +10,26 @@ import type {
   ToBlockSnapshotPayload,
   ToDocSnapshotPayload,
 } from '@blocksuite/store';
+import type {
+  BlockSnapshot,
+  DocSnapshot,
+  SliceSnapshot,
+} from '@blocksuite/store';
 import {
   type AssetsManager,
   BlockSnapshotSchema,
   getAssetName,
   nanoid,
-  sha,
 } from '@blocksuite/store';
 import { ASTWalker, BaseAdapter } from '@blocksuite/store';
-import {
-  type BlockSnapshot,
-  type DocSnapshot,
-  type SliceSnapshot,
-} from '@blocksuite/store';
 import type { ElementContent, Root, Text } from 'hast';
 import rehypeParse from 'rehype-parse';
 import rehypeStringify from 'rehype-stringify';
-import { type BundledLanguage, type ThemedToken } from 'shiki';
+import {
+  type BundledLanguage,
+  bundledLanguagesInfo,
+  type ThemedToken,
+} from 'shiki';
 import { unified } from 'unified';
 
 import { isPlaintext } from '../../code-block/utils/code-languages.js';
@@ -36,6 +39,7 @@ import {
   highlightCache,
   type highlightCacheKey,
 } from '../../code-block/utils/highlight-cache.js';
+import type { AffineTextAttributes } from '../inline/presets/affine-inline-specs.js';
 import { NoteDisplayMode } from '../types.js';
 import { getFilenameFromContentDisposition } from '../utils/header-value-parser.js';
 import {
@@ -62,184 +66,6 @@ type HtmlToSliceSnapshotPayload = {
 };
 
 export class HtmlAdapter extends BaseAdapter<Html> {
-  override async fromDocSnapshot(
-    payload: FromDocSnapshotPayload
-  ): Promise<FromDocSnapshotResult<string>> {
-    const { file, assetsIds } = await this.fromBlockSnapshot({
-      snapshot: payload.snapshot.blocks,
-      assets: payload.assets,
-    });
-    return {
-      file: file.replace(
-        '<!--BlockSuiteDocTitlePlaceholder-->',
-        `<h1>${payload.snapshot.meta.title}</h1>`
-      ),
-      assetsIds,
-    };
-  }
-  override async fromBlockSnapshot(
-    payload: FromBlockSnapshotPayload
-  ): Promise<FromBlockSnapshotResult<string>> {
-    const root: Root = {
-      type: 'root',
-      children: [
-        {
-          type: 'doctype',
-        },
-      ],
-    };
-    const { ast, assetsIds } = await this._traverseSnapshot(
-      payload.snapshot,
-      root,
-      payload.assets
-    );
-    return {
-      file: this._astToHtml(ast),
-      assetsIds,
-    };
-  }
-  override async fromSliceSnapshot(
-    payload: FromSliceSnapshotPayload
-  ): Promise<FromSliceSnapshotResult<string>> {
-    let buffer = '';
-    const sliceAssetsIds: string[] = [];
-    for (const contentSlice of payload.snapshot.content) {
-      const root: Root = {
-        type: 'root',
-        children: [],
-      };
-      const { ast, assetsIds } = await this._traverseSnapshot(
-        contentSlice,
-        root,
-        payload.assets
-      );
-      sliceAssetsIds.push(...assetsIds);
-      buffer += this._astToHtml(ast);
-    }
-    const html = buffer;
-    return {
-      file: html,
-      assetsIds: sliceAssetsIds,
-    };
-  }
-  override async toDocSnapshot(
-    payload: ToDocSnapshotPayload<string>
-  ): Promise<DocSnapshot> {
-    const htmlAst = this._htmlToAst(payload.file);
-    const titleAst = hastQuerySelector(htmlAst, 'title');
-    const blockSnapshotRoot = {
-      type: 'block',
-      id: nanoid(),
-      flavour: 'affine:note',
-      props: {
-        xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
-        index: 'a0',
-        hidden: false,
-        displayMode: NoteDisplayMode.DocAndEdgeless,
-      },
-      children: [],
-    };
-    return {
-      type: 'page',
-      meta: {
-        id: nanoid(),
-        title: hastGetTextContent(titleAst, 'Untitled'),
-        createDate: Date.now(),
-        tags: [],
-      },
-      blocks: {
-        type: 'block',
-        id: nanoid(),
-        flavour: 'affine:page',
-        props: {
-          title: {
-            '$blocksuite:internal:text$': true,
-            delta: this._hastToDelta(
-              titleAst ?? {
-                type: 'text',
-                value: 'Untitled',
-              }
-            ),
-          },
-        },
-        children: [
-          {
-            type: 'block',
-            id: nanoid(),
-            flavour: 'affine:surface',
-            props: {
-              elements: {},
-            },
-            children: [],
-          },
-          await this._traverseHtml(
-            htmlAst,
-            blockSnapshotRoot as BlockSnapshot,
-            payload.assets
-          ),
-        ],
-      },
-    };
-  }
-  override toBlockSnapshot(
-    payload: ToBlockSnapshotPayload<string>
-  ): Promise<BlockSnapshot> {
-    const htmlAst = this._htmlToAst(payload.file);
-    const blockSnapshotRoot = {
-      type: 'block',
-      id: nanoid(),
-      flavour: 'affine:note',
-      props: {
-        xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
-        index: 'a0',
-        hidden: false,
-        displayMode: NoteDisplayMode.DocAndEdgeless,
-      },
-      children: [],
-    };
-    return this._traverseHtml(
-      htmlAst,
-      blockSnapshotRoot as BlockSnapshot,
-      payload.assets
-    );
-  }
-  override async toSliceSnapshot(
-    payload: HtmlToSliceSnapshotPayload
-  ): Promise<SliceSnapshot | null> {
-    const htmlAst = this._htmlToAst(payload.file);
-    const blockSnapshotRoot = {
-      type: 'block',
-      id: nanoid(),
-      flavour: 'affine:note',
-      props: {
-        xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
-        index: 'a0',
-        hidden: false,
-        displayMode: NoteDisplayMode.DocAndEdgeless,
-      },
-      children: [],
-    };
-    const contentSlice = (await this._traverseHtml(
-      htmlAst,
-      blockSnapshotRoot as BlockSnapshot,
-      payload.assets
-    )) as BlockSnapshot;
-    if (contentSlice.children.length === 0) {
-      return null;
-    }
-    return {
-      type: 'slice',
-      content: [contentSlice],
-      pageVersion: payload.pageVersion,
-      workspaceVersion: payload.workspaceVersion,
-      workspaceId: payload.workspaceId,
-      pageId: payload.pageId,
-    };
-  }
-
   private _astToHtml = (ast: Root) => {
     return unified().use(rehypeStringify).stringify(ast);
   };
@@ -354,6 +180,9 @@ export class HtmlAdapter extends BaseAdapter<Html> {
           break;
         }
         case 'affine:code': {
+          if (typeof o.node.props.language == 'string') {
+            o.node.props.language = o.node.props.language.toLowerCase();
+          }
           context
             .openNode(
               {
@@ -371,7 +200,7 @@ export class HtmlAdapter extends BaseAdapter<Html> {
                 properties: {
                   className: [`code-${o.node.props.language}`],
                 },
-                children: await this._deltaToHigglightHasts(
+                children: await this._deltaToHighlightHasts(
                   text.delta,
                   o.node.props.language
                 ),
@@ -640,6 +469,7 @@ export class HtmlAdapter extends BaseAdapter<Html> {
                 properties: {
                   src: `assets/${blobName}`,
                   alt: blobName,
+                  title: (o.node.props.caption as string | undefined) ?? null,
                   ...widthStyle,
                 },
                 children: [],
@@ -830,8 +660,8 @@ export class HtmlAdapter extends BaseAdapter<Html> {
         case 'div': {
           if (
             // Check if it is a paragraph like div
-            o.parent?.type === 'element' &&
-            o.parent.tagName !== 'li' &&
+            o.parent?.node.type === 'element' &&
+            o.parent.node.tagName !== 'li' &&
             (hastGetElementChildren(o.node).every(child =>
               [
                 'span',
@@ -1029,8 +859,8 @@ export class HtmlAdapter extends BaseAdapter<Html> {
       switch (o.node.tagName) {
         case 'div': {
           if (
-            o.parent?.type === 'element' &&
-            o.parent.tagName !== 'li' &&
+            o.parent?.node.type === 'element' &&
+            o.parent.node.tagName !== 'li' &&
             Array.isArray(o.node.properties?.className)
           ) {
             if (
@@ -1050,23 +880,16 @@ export class HtmlAdapter extends BaseAdapter<Html> {
         }
         case 'p': {
           if (
-            o.parent &&
-            o.parent.type === 'element' &&
-            o.parent.children.length > o.index! + 1
+            o.next?.type === 'element' &&
+            o.next.tagName === 'div' &&
+            Array.isArray(o.next.properties?.className) &&
+            (o.next.properties.className.includes(
+              'affine-block-children-container'
+            ) ||
+              o.next.properties.className.includes('indented'))
           ) {
-            const next = o.parent.children[o.index! + 1];
-            if (
-              next.type === 'element' &&
-              next.tagName === 'div' &&
-              Array.isArray(next.properties?.className) &&
-              (next.properties.className.includes(
-                'affine-block-children-container'
-              ) ||
-                next.properties.className.includes('indented'))
-            ) {
-              // Close the node when leaving div indented
-              break;
-            }
+            // Close the node when leaving div indented
+            break;
           }
           context.closeNode();
           break;
@@ -1080,21 +903,39 @@ export class HtmlAdapter extends BaseAdapter<Html> {
     return walker.walk(html, snapshot);
   };
 
-  private _deltaToHigglightHasts = async (
+  private _deltaToHighlightHasts = async (
     deltas: DeltaInsert[],
     rawLang: unknown
   ) => {
     deltas = deltas.reduce((acc, cur) => {
       return mergeDeltas(acc, cur, { force: true });
     }, [] as DeltaInsert<object>[]);
-    assertEquals(deltas.length, 1, 'Delta length should be 1 in code block');
+    if (!deltas.length) {
+      return [
+        {
+          type: 'element',
+          tagName: 'span',
+          children: [
+            {
+              type: 'text',
+              value: '',
+            },
+          ],
+        },
+      ] as ElementContent[];
+    }
+
     const delta = deltas[0];
+    if (typeof rawLang == 'string') {
+      rawLang = rawLang.toLowerCase();
+    }
     if (
       !rawLang ||
       typeof rawLang !== 'string' ||
       isPlaintext(rawLang) ||
       // The rawLang should not be 'Text' here
-      rawLang === 'Text'
+      rawLang === 'Text' ||
+      !bundledLanguagesInfo.map(({ id }) => id).includes(rawLang as string)
     ) {
       return [
         {
@@ -1146,12 +987,23 @@ export class HtmlAdapter extends BaseAdapter<Html> {
     });
   };
 
-  private _deltaToHast = (deltas: DeltaInsert[]) => {
+  private _deltaToHast = (deltas: DeltaInsert<AffineTextAttributes>[]) => {
     return deltas.map(delta => {
       let hast: HtmlAST = {
         type: 'text',
         value: delta.insert,
       };
+      if (delta.attributes?.reference) {
+        const title = this.configs.get(
+          'title:' + delta.attributes.reference.pageId
+        );
+        if (typeof title === 'string') {
+          hast = {
+            type: 'text',
+            value: title,
+          };
+        }
+      }
       if (delta.attributes) {
         if (delta.attributes.bold) {
           hast = {
@@ -1330,4 +1182,187 @@ export class HtmlAdapter extends BaseAdapter<Html> {
       return mergeDeltas(acc, cur);
     }, [] as DeltaInsert<object>[]);
   };
+
+  override async fromDocSnapshot(
+    payload: FromDocSnapshotPayload
+  ): Promise<FromDocSnapshotResult<string>> {
+    const { file, assetsIds } = await this.fromBlockSnapshot({
+      snapshot: payload.snapshot.blocks,
+      assets: payload.assets,
+    });
+    return {
+      file: file.replace(
+        '<!--BlockSuiteDocTitlePlaceholder-->',
+        `<h1>${payload.snapshot.meta.title}</h1>`
+      ),
+      assetsIds,
+    };
+  }
+
+  override async fromBlockSnapshot(
+    payload: FromBlockSnapshotPayload
+  ): Promise<FromBlockSnapshotResult<string>> {
+    const root: Root = {
+      type: 'root',
+      children: [
+        {
+          type: 'doctype',
+        },
+      ],
+    };
+    const { ast, assetsIds } = await this._traverseSnapshot(
+      payload.snapshot,
+      root,
+      payload.assets
+    );
+    return {
+      file: this._astToHtml(ast),
+      assetsIds,
+    };
+  }
+
+  override async fromSliceSnapshot(
+    payload: FromSliceSnapshotPayload
+  ): Promise<FromSliceSnapshotResult<string>> {
+    let buffer = '';
+    const sliceAssetsIds: string[] = [];
+    for (const contentSlice of payload.snapshot.content) {
+      const root: Root = {
+        type: 'root',
+        children: [],
+      };
+      const { ast, assetsIds } = await this._traverseSnapshot(
+        contentSlice,
+        root,
+        payload.assets
+      );
+      sliceAssetsIds.push(...assetsIds);
+      buffer += this._astToHtml(ast);
+    }
+    const html = buffer;
+    return {
+      file: html,
+      assetsIds: sliceAssetsIds,
+    };
+  }
+
+  override async toDocSnapshot(
+    payload: ToDocSnapshotPayload<string>
+  ): Promise<DocSnapshot> {
+    const htmlAst = this._htmlToAst(payload.file);
+    const titleAst = hastQuerySelector(htmlAst, 'title');
+    const blockSnapshotRoot = {
+      type: 'block',
+      id: nanoid(),
+      flavour: 'affine:note',
+      props: {
+        xywh: '[0,0,800,95]',
+        background: '--affine-background-secondary-color',
+        index: 'a0',
+        hidden: false,
+        displayMode: NoteDisplayMode.DocAndEdgeless,
+      },
+      children: [],
+    };
+    return {
+      type: 'page',
+      meta: {
+        id: nanoid(),
+        title: hastGetTextContent(titleAst, 'Untitled'),
+        createDate: Date.now(),
+        tags: [],
+      },
+      blocks: {
+        type: 'block',
+        id: nanoid(),
+        flavour: 'affine:page',
+        props: {
+          title: {
+            '$blocksuite:internal:text$': true,
+            delta: this._hastToDelta(
+              titleAst ?? {
+                type: 'text',
+                value: 'Untitled',
+              }
+            ),
+          },
+        },
+        children: [
+          {
+            type: 'block',
+            id: nanoid(),
+            flavour: 'affine:surface',
+            props: {
+              elements: {},
+            },
+            children: [],
+          },
+          await this._traverseHtml(
+            htmlAst,
+            blockSnapshotRoot as BlockSnapshot,
+            payload.assets
+          ),
+        ],
+      },
+    };
+  }
+
+  override toBlockSnapshot(
+    payload: ToBlockSnapshotPayload<string>
+  ): Promise<BlockSnapshot> {
+    const htmlAst = this._htmlToAst(payload.file);
+    const blockSnapshotRoot = {
+      type: 'block',
+      id: nanoid(),
+      flavour: 'affine:note',
+      props: {
+        xywh: '[0,0,800,95]',
+        background: '--affine-background-secondary-color',
+        index: 'a0',
+        hidden: false,
+        displayMode: NoteDisplayMode.DocAndEdgeless,
+      },
+      children: [],
+    };
+    return this._traverseHtml(
+      htmlAst,
+      blockSnapshotRoot as BlockSnapshot,
+      payload.assets
+    );
+  }
+
+  override async toSliceSnapshot(
+    payload: HtmlToSliceSnapshotPayload
+  ): Promise<SliceSnapshot | null> {
+    const htmlAst = this._htmlToAst(payload.file);
+    const blockSnapshotRoot = {
+      type: 'block',
+      id: nanoid(),
+      flavour: 'affine:note',
+      props: {
+        xywh: '[0,0,800,95]',
+        background: '--affine-background-secondary-color',
+        index: 'a0',
+        hidden: false,
+        displayMode: NoteDisplayMode.DocAndEdgeless,
+      },
+      children: [],
+    };
+    const contentSlice = (await this._traverseHtml(
+      htmlAst,
+      blockSnapshotRoot as BlockSnapshot,
+      payload.assets
+    )) as BlockSnapshot;
+    if (contentSlice.children.length === 0) {
+      return null;
+    }
+    return {
+      type: 'slice',
+      content: [contentSlice],
+      pageVersion: payload.pageVersion,
+      workspaceVersion: payload.workspaceVersion,
+      workspaceId: payload.workspaceId,
+      pageId: payload.pageId,
+    };
+  }
 }

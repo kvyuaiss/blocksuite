@@ -1,20 +1,16 @@
 import type { EventName, UIEventHandler } from '@blocksuite/block-std';
-import {
-  PathFinder,
-  ShadowlessElement,
-  WithDisposable,
-} from '@blocksuite/block-std';
+import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
 import type { Disposable } from '@blocksuite/global/utils';
 import { assertExists, Slot } from '@blocksuite/global/utils';
 import type { PropertyValues } from 'lit';
 import { css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
+import { createModal } from '../../../_common/components/index.js';
 import { CrossIcon, ExpandWideIcon } from '../../../_common/icons/index.js';
 import { DatabaseSelection } from '../../data-view/common/selection.js';
 import type { DataViewRendererConfig } from '../../data-view/data-view.js';
 import type { DataViewSelection } from '../../data-view/types.js';
-import { createModal } from '../../data-view/utils/menu/index.js';
 import { renderTemplate } from '../../data-view/utils/uni-component/render-template.js';
 import { WidgetBase } from '../../data-view/widget/widget-base.js';
 import type { DatabaseBlockComponent } from '../../database-block.js';
@@ -83,13 +79,6 @@ export function showDatabasePreviewModal(database: DatabaseBlockComponent) {
 
 @customElement('expand-database-block-modal')
 export class ExpandDatabaseBlockModal extends WidgetBase {
-  expandDatabase = () => {
-    const database = this.closest('affine-database');
-    if (database) {
-      showDatabasePreviewModal(database);
-    }
-  };
-
   get database() {
     return this.closest('affine-database');
   }
@@ -109,6 +98,13 @@ export class ExpandDatabaseBlockModal extends WidgetBase {
       ${ExpandWideIcon}
     </div>`;
   }
+
+  expandDatabase = () => {
+    const database = this.closest('affine-database');
+    if (database) {
+      showDatabasePreviewModal(database);
+    }
+  };
 }
 
 @customElement('database-block-modal-preview')
@@ -123,23 +119,13 @@ export class DatabaseBlockModalPreview extends WithDisposable(
       overflow: hidden;
     }
   `;
-  path = ['modal', 'preview'];
-  @property({ attribute: false })
-  database!: DatabaseBlockComponent;
 
-  public override connectedCallback() {
-    super.connectedCallback();
-    this.database.selection.slots.changed.on(selections => {
-      const selection = selections.find(v => {
-        return PathFinder.equals(v.path, this.path);
-      });
-      if (selection && selection instanceof DatabaseSelection) {
-        this.selectionUpdated.emit(selection.viewSelection);
-      } else {
-        this.selectionUpdated.emit(undefined);
-      }
-    });
-  }
+  blockId = 'database-modal-preview';
+
+  @property({ attribute: false })
+  accessor database!: DatabaseBlockComponent;
+
+  selectionUpdated = new Slot<DataViewSelection | undefined>();
 
   protected override firstUpdated(_changedProperties: PropertyValues) {
     super.firstUpdated(_changedProperties);
@@ -147,33 +133,6 @@ export class DatabaseBlockModalPreview extends WithDisposable(
       this.querySelector('affine-data-view-renderer')?.focusFirstCell();
     });
   }
-
-  selectionUpdated: Slot<DataViewSelection | undefined> = new Slot();
-  setSelection: (selection?: DataViewSelection) => void = selection => {
-    this.database.host.selection.set(
-      selection
-        ? [new DatabaseSelection({ path: this.path, viewSelection: selection })]
-        : []
-    );
-  };
-  bindHotkey: (hotkeys: Record<string, UIEventHandler>) => Disposable =
-    hotkeys => {
-      return {
-        dispose: this.database.host.event.bindHotkey(hotkeys, {
-          path: [],
-        }),
-      };
-    };
-  handleEvent: (name: EventName, handler: UIEventHandler) => Disposable = (
-    name,
-    handler
-  ) => {
-    return {
-      dispose: this.database.host.event.add(name, handler, {
-        path: [],
-      }),
-    };
-  };
 
   protected override render(): unknown {
     const config: DataViewRendererConfig = {
@@ -193,4 +152,51 @@ export class DatabaseBlockModalPreview extends WithDisposable(
       ></affine-data-view-renderer>
     `;
   }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.database.selection.slots.changed.on(selections => {
+      const selection = selections.find(v => {
+        return v.blockId === this.blockId;
+      });
+      if (selection && selection instanceof DatabaseSelection) {
+        this.selectionUpdated.emit(selection.viewSelection);
+      } else {
+        this.selectionUpdated.emit(undefined);
+      }
+    });
+  }
+
+  setSelection: (selection?: DataViewSelection) => void = selection => {
+    this.database.host.selection.set(
+      selection
+        ? [
+            new DatabaseSelection({
+              blockId: this.blockId,
+              viewSelection: selection,
+            }),
+          ]
+        : []
+    );
+  };
+
+  bindHotkey: (hotkeys: Record<string, UIEventHandler>) => Disposable =
+    hotkeys => {
+      return {
+        dispose: this.database.host.event.bindHotkey(hotkeys, {
+          path: [],
+        }),
+      };
+    };
+
+  handleEvent: (name: EventName, handler: UIEventHandler) => Disposable = (
+    name,
+    handler
+  ) => {
+    return {
+      dispose: this.database.host.event.add(name, handler, {
+        path: [],
+      }),
+    };
+  };
 }

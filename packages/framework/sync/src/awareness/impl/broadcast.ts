@@ -14,9 +14,10 @@ type ChannelMessage =
 
 export class BroadcastChannelAwarenessSource implements AwarenessSource {
   channel: BroadcastChannel | null = null;
+
   awareness: Awareness | null = null;
 
-  constructor(readonly channelName: string = 'blocksuite:awareness') {}
+  constructor(readonly channelName: string) {}
 
   connect(awareness: Awareness): void {
     this.channel = new BroadcastChannel(this.channelName);
@@ -32,6 +33,7 @@ export class BroadcastChannelAwarenessSource implements AwarenessSource {
       }
     );
   }
+
   disconnect(): void {
     this.awareness?.off('update', this.handleAwarenessUpdate);
     this.channel?.close();

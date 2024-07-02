@@ -1,17 +1,15 @@
 import { assertExists, type Disposable, Slot } from '@blocksuite/global/utils';
 
-import { type ColumnMeta } from '../column/column-config.js';
-import type { ColumnConfig } from '../column/index.js';
-import { type CellRenderer } from '../column/index.js';
+import type { ColumnMeta } from '../column/column-config.js';
+import type { CellRenderer, ColumnConfig } from '../column/index.js';
 import type { FilterGroup, Variable } from '../common/ast.js';
 import type { DataSource, DetailSlots } from '../common/data-source/base.js';
-import { ColumnDataStats } from '../common/data-stats.js';
+import type { DataViewContextKey } from '../common/data-source/context.js';
 import type { SingleViewSource } from '../common/index.js';
 import type { TType } from '../logical/typesystem.js';
 import type { ColumnDataUpdater, InsertToPosition } from '../types.js';
 import type { UniComponent } from '../utils/uni-component/index.js';
 import type { DataViewDataType } from './data-view.js';
-import type { StatCalcOpType } from './presets/table/types.js';
 
 export interface DataViewManager {
   get id(): string;
@@ -34,9 +32,21 @@ export interface DataViewManager {
 
   get filterVisible(): boolean;
 
-  filterSetVisible(visible: boolean): void;
-
   get vars(): Variable[];
+
+  get allColumnConfig(): ColumnConfig[];
+
+  get isDeleted(): boolean;
+
+  get detailSlots(): DetailSlots;
+
+  slots: {
+    update: Slot<{
+      viewId: string;
+    }>;
+  };
+
+  filterSetVisible(visible: boolean): void;
 
   updateFilter(filter: FilterGroup): void;
 
@@ -82,8 +92,6 @@ export interface DataViewManager {
 
   columnGetName(columnId: string): string;
 
-  columnGetStatCalcOp(columnId: string): StatCalcOpType;
-
   columnGetType(columnId: string): string;
 
   columnGetHide(columnId: string): boolean;
@@ -100,26 +108,13 @@ export interface DataViewManager {
 
   columnUpdateName(columnId: string, name: string): void;
 
-  columnUpdateStatCalcOp(columnId: string, op: StatCalcOpType): void;
-
   columnUpdateHide(columnId: string, hide: boolean): void;
 
   columnUpdateType(columnId: string, type: string): void;
 
   columnUpdateData(columnId: string, data: Record<string, unknown>): void;
 
-  get allColumnConfig(): ColumnConfig[];
-
   getIcon(type: string): UniComponent | undefined;
-
-  /**
-   * @deprecated
-   */
-  captureSync(): void;
-
-  slots: {
-    update: Slot;
-  };
 
   onCellUpdate(
     rowId: string,
@@ -133,9 +128,7 @@ export interface DataViewManager {
   duplicateView(): void;
   deleteView(): void;
 
-  get isDeleted(): boolean;
-
-  get detailSlots(): DetailSlots;
+  getContext<T>(key: DataViewContextKey<T>): T | undefined;
 }
 
 export interface DataViewColumnManager<
@@ -184,8 +177,6 @@ export interface DataViewColumnManager<
 
   updateName(name: string): void;
 
-  updateStatCalcOp(op: StatCalcOpType): void;
-
   get updateType(): undefined | ((type: string) => void);
 
   get delete(): undefined | (() => void);
@@ -195,11 +186,6 @@ export interface DataViewColumnManager<
   get icon(): UniComponent | undefined;
 
   onCellUpdate(rowId: string, callback: () => void): Disposable;
-
-  /**
-   * @deprecated
-   */
-  captureSync(): void;
 }
 
 export abstract class DataViewManagerBase<ViewData extends DataViewDataType>
@@ -209,33 +195,78 @@ export abstract class DataViewManagerBase<ViewData extends DataViewDataType>
     assertExists(this._dataSource, 'data source is not set');
     return this._dataSource;
   }
+
   protected get viewSource(): SingleViewSource<ViewData> {
     assertExists(this._viewSource, 'view source is not set');
     return this._viewSource;
   }
-  private _viewSource?: SingleViewSource<ViewData>;
-  private _dataSource?: DataSource;
-
-  private searchString = '';
-  private _filterVisible?: boolean;
 
   get rows(): string[] {
     return this.filteredRows(this.searchString);
   }
 
-  init(dataSource: DataSource, viewSource: SingleViewSource<ViewData>) {
-    this._dataSource = dataSource;
-    this._viewSource = viewSource;
-    this._dataSource.slots.update.pipe(this.slots.update);
-    this._viewSource.updateSlot.pipe(this.slots.update);
+  get columnManagerList(): ReturnType<this['columnGet']>[] {
+    return this.columns.map(
+      id => this.columnGet(id) as ReturnType<this['columnGet']>
+    );
   }
 
-  setSearch(str: string): void {
-    this.searchString = str;
-    this.slots.update.emit();
+  get readonly(): boolean {
+    return false;
   }
 
-  public abstract isShow(rowId: string): boolean;
+  abstract get columns(): string[];
+
+  abstract get detailColumns(): string[];
+
+  abstract get columnsWithoutFilter(): string[];
+
+  abstract get id(): string;
+
+  abstract get type(): string;
+
+  get allColumnConfig(): ColumnConfig[] {
+    return this.dataSource.addPropertyConfigList;
+  }
+
+  abstract get isDeleted(): boolean;
+
+  get detailSlots(): DetailSlots {
+    return this.dataSource.detailSlots;
+  }
+
+  abstract get filter(): FilterGroup;
+
+  get vars(): Variable[] {
+    return this.columnsWithoutFilter.map(id => {
+      const v = this.columnGet(id);
+      const propertyMeta = this.dataSource.getPropertyMeta(v.type);
+      return {
+        id: v.id,
+        name: v.name,
+        type: propertyMeta.model.dataType(v.data),
+        icon: v.icon,
+      };
+    });
+  }
+
+  get filterVisible(): boolean {
+    return this._filterVisible ?? this.filter.conditions.length > 0;
+  }
+
+  private _viewSource?: SingleViewSource<ViewData>;
+
+  private _dataSource?: DataSource;
+
+  private searchString = '';
+
+  private _filterVisible?: boolean;
+
+  slots = {
+    update: new Slot<{
+      viewId: string;
+    }>(),
+  };
 
   private filteredRows(searchString: string) {
     return this.dataSource.rows.filter(id => {
@@ -253,19 +284,25 @@ export abstract class DataViewManagerBase<ViewData extends DataViewDataType>
     });
   }
 
-  get columnManagerList(): ReturnType<this['columnGet']>[] {
-    return this.columns.map(
-      id => this.columnGet(id) as ReturnType<this['columnGet']>
-    );
+  getContext<T>(key: DataViewContextKey<T>): T | undefined {
+    return this.dataSource.getContext(key);
   }
 
-  get readonly(): boolean {
-    return false;
+  init(dataSource: DataSource, viewSource: SingleViewSource<ViewData>) {
+    this._dataSource = dataSource;
+    this._viewSource = viewSource;
+    this._dataSource.slots.update
+      .flatMap(() => ({ viewId: this.id }))
+      .pipe(this.slots.update);
+    this._viewSource.updateSlot.pipe(this.slots.update);
   }
 
-  public slots = {
-    update: new Slot(),
-  };
+  setSearch(str: string): void {
+    this.searchString = str;
+    this.slots.update.emit({ viewId: this.id });
+  }
+
+  abstract isShow(rowId: string): boolean;
 
   onCellUpdate(
     rowId: string,
@@ -275,7 +312,7 @@ export abstract class DataViewManagerBase<ViewData extends DataViewDataType>
     return this.dataSource.onCellUpdate(rowId, columnId, callback);
   }
 
-  public cellGetValue(rowId: string, columnId: string): unknown {
+  cellGetValue(rowId: string, columnId: string): unknown {
     return this.dataSource
       .getPropertyMeta(this.columnGetType(columnId))
       .model.formatValue(
@@ -284,7 +321,7 @@ export abstract class DataViewManagerBase<ViewData extends DataViewDataType>
       );
   }
 
-  public cellGetJsonValue(rowId: string, columnId: string): unknown {
+  cellGetJsonValue(rowId: string, columnId: string): unknown {
     return this.dataSource
       .getPropertyMeta(this.columnGetType(columnId))
       .model.toJson(
@@ -293,11 +330,11 @@ export abstract class DataViewManagerBase<ViewData extends DataViewDataType>
       );
   }
 
-  public cellGetRenderValue(rowId: string, columnId: string): unknown {
+  cellGetRenderValue(rowId: string, columnId: string): unknown {
     return this.dataSource.cellGetRenderValue(rowId, columnId);
   }
 
-  public cellGetStringValue(rowId: string, columnId: string): string {
+  cellGetStringValue(rowId: string, columnId: string): string {
     return (
       this.dataSource
         .getPropertyMeta(this.columnGetType(columnId))
@@ -308,11 +345,11 @@ export abstract class DataViewManagerBase<ViewData extends DataViewDataType>
     );
   }
 
-  public cellGetExtra(rowId: string, columnId: string): unknown {
+  cellGetExtra(rowId: string, columnId: string): unknown {
     return this.dataSource.cellGetExtra(rowId, columnId);
   }
 
-  public cellSetValueFromString(columnId: string, cellData: string) {
+  cellSetValueFromString(columnId: string, cellData: string) {
     return (
       this.dataSource
         .getPropertyMeta(this.columnGetType(columnId))
@@ -320,33 +357,25 @@ export abstract class DataViewManagerBase<ViewData extends DataViewDataType>
     );
   }
 
-  public cellUpdateRenderValue(
-    rowId: string,
-    columnId: string,
-    value: unknown
-  ): void {
+  cellUpdateRenderValue(rowId: string, columnId: string, value: unknown): void {
     this.dataSource.cellChangeValue(rowId, columnId, value);
   }
 
-  public cellUpdateValue(
-    rowId: string,
-    columnId: string,
-    value: unknown
-  ): void {
+  cellUpdateValue(rowId: string, columnId: string, value: unknown): void {
     this.dataSource.cellChangeValue(rowId, columnId, value);
   }
 
-  public columnAdd(position: InsertToPosition, type?: string): string {
+  columnAdd(position: InsertToPosition, type?: string): string {
     const id = this.dataSource.propertyAdd(position, type);
     this.columnMove(id, position);
     return id;
   }
 
-  public columnDelete(columnId: string): void {
+  columnDelete(columnId: string): void {
     this.dataSource.propertyDelete(columnId);
   }
 
-  public columnDuplicate(columnId: string): void {
+  columnDuplicate(columnId: string): void {
     const id = this.dataSource.propertyDuplicate(columnId);
     this.columnMove(id, {
       before: false,
@@ -354,163 +383,103 @@ export abstract class DataViewManagerBase<ViewData extends DataViewDataType>
     });
   }
 
-  public abstract columnGet(columnId: string): DataViewColumnManager;
+  abstract columnGet(columnId: string): DataViewColumnManager;
 
-  public columnGetMeta(type: string): ColumnMeta {
+  columnGetMeta(type: string): ColumnMeta {
     return this.dataSource.getPropertyMeta(type);
   }
 
-  public columnGetData(columnId: string): Record<string, unknown> {
+  columnGetData(columnId: string): Record<string, unknown> {
     return this.dataSource.propertyGetData(columnId);
   }
 
-  public columnGetDataType(columnId: string): TType {
+  columnGetDataType(columnId: string): TType {
     return this.dataSource
       .getPropertyMeta(this.columnGetType(columnId))
       .model.dataType(this.columnGetData(columnId));
   }
 
-  public abstract columnGetHide(columnId: string): boolean;
+  abstract columnGetHide(columnId: string): boolean;
 
-  public abstract columnUpdateHide(columnId: string, hide: boolean): void;
+  abstract columnUpdateHide(columnId: string, hide: boolean): void;
 
-  public columnGetIdByIndex(index: number): string {
+  columnGetIdByIndex(index: number): string {
     return this.columns[index];
   }
 
-  public columnGetReadonly(columnId: string): boolean {
+  columnGetReadonly(columnId: string): boolean {
     return this.dataSource.propertyGetReadonly(columnId);
   }
 
-  public columnGetIndex(columnId: string): number {
+  columnGetIndex(columnId: string): number {
     return this.columns.indexOf(columnId);
   }
 
-  public columnGetName(columnId: string): string {
+  columnGetName(columnId: string): string {
     return this.dataSource.propertyGetName(columnId);
   }
 
-  public columnGetStatCalcOp(columnId: string): StatCalcOpType {
-    return this.dataSource.propertyGetStatCalcOp(columnId);
-  }
-
-  public columnGetNextColumn(
-    columnId: string
-  ): DataViewColumnManager | undefined {
+  columnGetNextColumn(columnId: string): DataViewColumnManager | undefined {
     return this.columnGet(
       this.columnGetIdByIndex(this.columnGetIndex(columnId) + 1)
     );
   }
 
-  public columnGetPreColumn(
-    columnId: string
-  ): DataViewColumnManager | undefined {
+  columnGetPreColumn(columnId: string): DataViewColumnManager | undefined {
     return this.columnGet(
       this.columnGetIdByIndex(this.columnGetIndex(columnId) - 1)
     );
   }
 
-  public columnGetType(columnId: string): string {
+  columnGetType(columnId: string): string {
     return this.dataSource.propertyGetType(columnId);
   }
 
-  public columnUpdateData(
-    columnId: string,
-    data: Record<string, unknown>
-  ): void {
+  columnUpdateData(columnId: string, data: Record<string, unknown>): void {
     this.dataSource.propertyChangeData(columnId, data);
   }
 
-  public columnUpdateName(columnId: string, name: string): void {
+  columnUpdateName(columnId: string, name: string): void {
     this.dataSource.propertyChangeName(columnId, name);
   }
 
-  public columnUpdateStatCalcOp(columnId: string, op: StatCalcOpType): void {
-    this.dataSource.propertyChangeStatCalcOp(columnId, op);
-  }
-
-  public columnUpdateType(columnId: string, type: string): void {
+  columnUpdateType(columnId: string, type: string): void {
     this.dataSource.propertyChangeType(columnId, type);
   }
 
-  public abstract get columns(): string[];
-
-  public abstract get detailColumns(): string[];
-
-  public abstract get columnsWithoutFilter(): string[];
-
-  public rowAdd(insertPosition: InsertToPosition | number): string {
+  rowAdd(insertPosition: InsertToPosition | number): string {
     return this.dataSource.rowAdd(insertPosition);
   }
 
-  public rowDelete(ids: string[]): void {
+  rowDelete(ids: string[]): void {
     this.dataSource.rowDelete(ids);
   }
 
-  public captureSync(): void {
-    this.dataSource.captureSync();
-  }
-
-  public abstract get id(): string;
-
-  public abstract get type(): string;
-
-  public get allColumnConfig(): ColumnConfig[] {
-    return this.dataSource.allPropertyConfig;
-  }
-
-  public getIcon(type: string): UniComponent | undefined {
+  getIcon(type: string): UniComponent | undefined {
     return this.dataSource.getPropertyMeta(type).renderer.icon;
   }
 
   abstract columnMove(columnId: string, position: InsertToPosition): void;
 
-  public abstract deleteView(): void;
-
-  public abstract get isDeleted(): boolean;
-
-  public get detailSlots(): DetailSlots {
-    return this.dataSource.detailSlots;
-  }
-
-  abstract get filter(): FilterGroup;
+  abstract deleteView(): void;
 
   abstract updateFilter(filter: FilterGroup): void;
 
-  get vars(): Variable[] {
-    return this.columnsWithoutFilter.map(id => {
-      const v = this.columnGet(id);
-      const propertyMeta = this.dataSource.getPropertyMeta(v.type);
-      return {
-        id: v.id,
-        name: v.name,
-        type: propertyMeta.model.dataType(v.data),
-        icon: v.icon,
-      };
-    });
-  }
-
   filterSetVisible(visible: boolean): void {
     this._filterVisible = visible;
-    this.slots.update.emit();
+    this.slots.update.emit({ viewId: this.id });
   }
 
-  get filterVisible(): boolean {
-    return this._filterVisible ?? this.filter.conditions.length > 0;
-  }
-
-  public rowMove(rowId: string, position: InsertToPosition): void {
+  rowMove(rowId: string, position: InsertToPosition): void {
     this.dataSource.rowMove(rowId, position);
   }
 
-  public abstract duplicateView(): void;
+  abstract duplicateView(): void;
 }
 
 export abstract class DataViewColumnManagerBase
   implements DataViewColumnManager
 {
-  public readonly stats = new ColumnDataStats(this);
-
   protected constructor(
     protected propertyId: string,
     public dataViewManager: DataViewManager
@@ -545,10 +514,6 @@ export abstract class DataViewColumnManagerBase
 
   get name(): string {
     return this.dataViewManager.columnGetName(this.id);
-  }
-
-  get statCalcOp(): StatCalcOpType {
-    return this.dataViewManager.columnGetStatCalcOp(this.id);
   }
 
   get renderer(): CellRenderer {
@@ -598,10 +563,6 @@ export abstract class DataViewColumnManagerBase
     this.dataViewManager.columnUpdateName(this.id, name);
   }
 
-  updateStatCalcOp(op: StatCalcOpType): void {
-    this.dataViewManager.columnUpdateStatCalcOp(this.id, op);
-  }
-
   get delete(): (() => void) | undefined {
     return () => this.dataViewManager.columnDelete(this.id);
   }
@@ -621,10 +582,6 @@ export abstract class DataViewColumnManagerBase
     );
   }
 
-  captureSync(): void {
-    this.dataViewManager.captureSync();
-  }
-
   getJsonValue(rowId: string): unknown {
     return this.dataViewManager.cellGetJsonValue(rowId, this.id);
   }
@@ -642,7 +599,7 @@ export abstract class DataViewColumnManagerBase
     return result.value;
   }
 
-  public get icon(): UniComponent | undefined {
+  get icon(): UniComponent | undefined {
     if (!this.type) return undefined;
     return this.dataViewManager.getIcon(this.type);
   }

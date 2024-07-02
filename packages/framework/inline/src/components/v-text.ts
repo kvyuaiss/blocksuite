@@ -7,12 +7,15 @@ import { ZERO_WIDTH_SPACE } from '../consts.js';
 @customElement('v-text')
 export class VText extends LitElement {
   @property({ attribute: false })
-  str: string = ZERO_WIDTH_SPACE;
+  accessor str: string = ZERO_WIDTH_SPACE;
 
   @property({ attribute: false })
-  styles: StyleInfo = {
+  accessor styles: StyleInfo = {
     'word-break': 'break-word',
-    'white-space': 'pre-wrap',
+    // In most cases, break-spaces should be used.
+    // When replacing, pay attention to the differences in handling spaces for different keywords.
+    // https://developer.mozilla.org/en-US/docs/Web/CSS/white-space
+    'white-space': 'break-spaces',
     cursor: 'text',
   };
 

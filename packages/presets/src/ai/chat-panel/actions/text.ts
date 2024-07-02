@@ -1,21 +1,19 @@
 import './action-wrapper.js';
 
 import type { EditorHost } from '@blocksuite/block-std';
-import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
-import { css, html } from 'lit';
+import { WithDisposable } from '@blocksuite/block-std';
+import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { styleMap } from 'lit/directives/style-map.js';
 
 import { createTextRenderer } from '../../messages/text.js';
-import type { ChatAction } from '../index.js';
+import type { ChatAction } from '../chat-context.js';
 
 @customElement('action-text')
-export class ActionText extends WithDisposable(ShadowlessElement) {
+export class ActionText extends WithDisposable(LitElement) {
   static override styles = css`
     .original-text {
-      width: 100%;
-      padding: 0px 16px;
       border-radius: 4px;
-      border: 1px solid var(--affine-border-color);
       margin-bottom: 12px;
       font-size: var(--affine-font-sm);
       line-height: 22px;
@@ -23,17 +21,30 @@ export class ActionText extends WithDisposable(ShadowlessElement) {
   `;
 
   @property({ attribute: false })
-  item!: ChatAction;
+  accessor item!: ChatAction;
 
   @property({ attribute: false })
-  host!: EditorHost;
+  accessor host!: EditorHost;
+
+  @property({ attribute: false })
+  accessor isCode = false;
 
   protected override render() {
     const originalText = this.item.messages[1].content;
+    const { isCode } = this;
 
-    return html`<action-wrapper .host=${this.host} .item=${this.item}>
-      <div class="original-text">
-        ${createTextRenderer(this.host)(originalText)}
+    return html` <action-wrapper .host=${this.host} .item=${this.item}>
+      <div
+        style=${styleMap({
+          padding: isCode ? '0' : '10px 16px',
+          border: isCode ? 'none' : '1px solid var(--affine-border-color)',
+        })}
+        class="original-text"
+      >
+        ${createTextRenderer(this.host, {
+          customHeading: true,
+          maxHeight: 160,
+        })(originalText)}
       </div>
     </action-wrapper>`;
   }

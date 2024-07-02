@@ -4,9 +4,9 @@ import { isPlainObject, recursive } from 'merge';
 import { z } from 'zod';
 
 import {
-  DEFAULT_NOTE_COLOR,
-  NOTE_SHADOWS,
-  NoteColorsSchema,
+  DEFAULT_NOTE_BACKGROUND_COLOR,
+  DEFAULT_NOTE_SHADOW,
+  NoteBackgroundColorsSchema,
   NoteShadowsSchema,
 } from '../../_common/edgeless/note/consts.js';
 import { LineWidth, NoteDisplayMode } from '../../_common/types.js';
@@ -17,18 +17,19 @@ import {
   LineColorsSchema,
 } from '../../root-block/edgeless/components/panel/color-panel.js';
 import {
-  CanvasTextFontFamily,
-  CanvasTextFontStyle,
-  CanvasTextFontWeight,
+  FontFamily,
+  FontStyle,
+  FontWeight,
   ShapeStyle,
   StrokeStyle,
+  TextAlign,
+  TextVerticalAlign,
 } from '../consts.js';
-import type { EdgelessElementType } from '../edgeless-types.js';
 import {
+  ConnectorMode,
   DEFAULT_FRONT_END_POINT_STYLE,
   DEFAULT_REAR_END_POINT_STYLE,
 } from '../element-model/connector.js';
-import { TextAlign, TextVerticalAlign } from '../elements/consts.js';
 import {
   DEFAULT_SHAPE_FILL_COLOR,
   DEFAULT_SHAPE_STROKE_COLOR,
@@ -50,9 +51,9 @@ const StrokeStyleSchema = z.nativeEnum(StrokeStyle);
 const LineWidthSchema = z.nativeEnum(LineWidth);
 const ShapeStyleSchema = z.nativeEnum(ShapeStyle);
 const ShapeTextFontSizeSchema = z.nativeEnum(SHAPE_TEXT_FONT_SIZE);
-const CanvasTextFontFamilySchema = z.nativeEnum(CanvasTextFontFamily);
-const CanvasTextFontWeightSchema = z.nativeEnum(CanvasTextFontWeight);
-const CanvasTextFontStyleSchema = z.nativeEnum(CanvasTextFontStyle);
+const FontFamilySchema = z.nativeEnum(FontFamily);
+const FontWeightSchema = z.nativeEnum(FontWeight);
+const FontStyleSchema = z.nativeEnum(FontStyle);
 const TextAlignSchema = z.nativeEnum(TextAlign);
 const TextVerticalAlignSchema = z.nativeEnum(TextVerticalAlign);
 const ShapeTypeSchema = z.nativeEnum(ShapeType);
@@ -83,9 +84,9 @@ const LastPropsSchema = z.object({
     strokeStyle: StrokeStyleSchema.optional(),
     color: z.string().optional(),
     fontSize: ShapeTextFontSizeSchema.optional(),
-    fontFamily: CanvasTextFontFamilySchema.optional(),
-    fontWeight: CanvasTextFontWeightSchema.optional(),
-    fontStyle: CanvasTextFontStyleSchema.optional(),
+    fontFamily: FontFamilySchema.optional(),
+    fontWeight: FontWeightSchema.optional(),
+    fontStyle: FontStyleSchema.optional(),
     textAlign: TextAlignSchema.optional(),
     textHorizontalAlign: TextAlignSchema.optional(),
     textVerticalAlign: TextVerticalAlignSchema.optional(),
@@ -93,15 +94,14 @@ const LastPropsSchema = z.object({
   }),
   text: z.object({
     color: z.string(),
-    fontFamily: CanvasTextFontFamilySchema,
+    fontFamily: FontFamilySchema,
     textAlign: TextAlignSchema,
-    fontWeight: CanvasTextFontWeightSchema,
-    fontStyle: CanvasTextFontStyleSchema,
+    fontWeight: FontWeightSchema,
+    fontStyle: FontStyleSchema,
     fontSize: z.number(),
-    hasMaxWidth: z.boolean(),
   }),
   'affine:note': z.object({
-    background: NoteColorsSchema,
+    background: NoteBackgroundColorsSchema,
     displayMode: NoteDisplayModeSchema.optional(),
     edgeless: z.object({
       style: z.object({
@@ -132,21 +132,36 @@ const SessionPropsSchema = z.object({
         .optional(),
     }),
   ]),
-  presentBlackBackground: z.boolean(),
-  presentFillScreen: z.boolean(),
-  presentHideToolbar: z.boolean(),
   templateCache: z.string(),
   remoteColor: z.string(),
   showBidirectional: z.boolean(),
 });
 
+const LocalPropsSchema = z.object({
+  presentBlackBackground: z.boolean(),
+  presentFillScreen: z.boolean(),
+  presentHideToolbar: z.boolean(),
+
+  autoHideEmbedHTMLFullScreenToolbar: z.boolean(),
+});
+
 type SessionProps = z.infer<typeof SessionPropsSchema>;
+type LocalProps = z.infer<typeof LocalPropsSchema>;
+type StorageProps = SessionProps & LocalProps;
+
+function isLocalProp(key: string): key is keyof LocalProps {
+  return key in LocalPropsSchema.shape;
+}
+
+function isSessionProp(key: string): key is keyof SessionProps {
+  return key in SessionPropsSchema.shape;
+}
 
 export type SerializedViewport = z.infer<
   typeof SessionPropsSchema.shape.viewport
 >;
 
-export class EditSessionStorage {
+export class EditPropsStore {
   private _lastProps: LastProps = {
     connector: {
       frontEndpointStyle: DEFAULT_FRONT_END_POINT_STYLE,
@@ -155,6 +170,7 @@ export class EditSessionStorage {
       strokeStyle: StrokeStyle.Solid,
       strokeWidth: LineWidth.Two,
       rough: false,
+      mode: ConnectorMode.Curve,
     },
     brush: {
       color: GET_DEFAULT_LINE_COLOR(),
@@ -173,22 +189,21 @@ export class EditSessionStorage {
     },
     text: {
       color: GET_DEFAULT_TEXT_COLOR(),
-      fontFamily: CanvasTextFontFamily.Inter,
+      fontFamily: FontFamily.Inter,
       textAlign: TextAlign.Left,
-      fontWeight: CanvasTextFontWeight.Regular,
-      fontStyle: CanvasTextFontStyle.Normal,
+      fontWeight: FontWeight.Regular,
+      fontStyle: FontStyle.Normal,
       fontSize: 24,
-      hasMaxWidth: false,
     },
     'affine:note': {
-      background: DEFAULT_NOTE_COLOR,
+      background: DEFAULT_NOTE_BACKGROUND_COLOR,
       displayMode: NoteDisplayMode.DocAndEdgeless,
       edgeless: {
         style: {
-          borderRadius: 8,
+          borderRadius: 0,
           borderSize: 4,
-          borderStyle: StrokeStyle.Solid,
-          shadowType: NOTE_SHADOWS[1],
+          borderStyle: StrokeStyle.None,
+          shadowType: DEFAULT_NOTE_SHADOW,
         },
       },
     },
@@ -200,6 +215,10 @@ export class EditSessionStorage {
     lastPropsUpdated: new Slot<{
       type: keyof LastProps;
       props: Record<string, unknown>;
+    }>(),
+    itemUpdated: new Slot<{
+      key: keyof StorageProps;
+      value: StorageProps[keyof StorageProps];
     }>(),
   };
 
@@ -213,35 +232,7 @@ export class EditSessionStorage {
     }
   }
 
-  getLastProps<T extends keyof LastProps>(type: T) {
-    return this._lastProps[type] as LastProps[T];
-  }
-
-  record(
-    type: EdgelessElementType,
-    recordProps: Partial<LastProps[keyof LastProps]>
-  ) {
-    if (!isLastPropType(type)) return;
-
-    const props = this._lastProps[type];
-    const overrideProps = extractProps(
-      recordProps,
-      LastPropsSchema.shape[type]
-    );
-    if (Object.keys(overrideProps).length === 0) return;
-
-    recursive(props, overrideProps);
-    this.slots.lastPropsUpdated.emit({ type, props: overrideProps });
-  }
-
-  apply(type: EdgelessElementType, props: Record<string, unknown>) {
-    if (!isLastPropType(type)) return;
-
-    const lastProps = this._lastProps[type];
-    deepAssign(props, lastProps);
-  }
-
-  private _getKey<T extends keyof SessionProps>(key: T) {
+  private _getKey<T extends keyof StorageProps>(key: T) {
     const id = this._service.doc.id;
     switch (key) {
       case 'viewport':
@@ -258,22 +249,68 @@ export class EditSessionStorage {
         return 'blocksuite:remote-color';
       case 'showBidirectional':
         return 'blocksuite:' + id + ':showBidirectional';
+      case 'autoHideEmbedHTMLFullScreenToolbar':
+        return 'blocksuite:embedHTML:autoHideFullScreenToolbar';
       default:
         return key;
     }
   }
 
-  setItem<T extends keyof SessionProps>(key: T, value: SessionProps[T]) {
-    sessionStorage.setItem(this._getKey(key), JSON.stringify(value));
+  private _getStorage<T extends keyof StorageProps>(key: T) {
+    return isSessionProp(key) ? sessionStorage : localStorage;
   }
 
-  getItem<T extends keyof SessionProps>(key: T) {
+  getLastProps<T extends keyof LastProps>(type: T) {
+    return this._lastProps[type] as LastProps[T];
+  }
+
+  record(
+    type: BlockSuite.EdgelessModelKeyType,
+    recordProps: Partial<LastProps[keyof LastProps]>
+  ) {
+    if (!isLastPropType(type)) return;
+
+    const props = this._lastProps[type];
+    const overrideProps = extractProps(
+      recordProps,
+      LastPropsSchema.shape[type]
+    );
+    if (Object.keys(overrideProps).length === 0) return;
+
+    recursive(props, overrideProps);
+    this.slots.lastPropsUpdated.emit({ type, props: overrideProps });
+  }
+
+  apply(type: BlockSuite.EdgelessModelKeyType, props: Record<string, unknown>) {
+    if (!isLastPropType(type)) return;
+
+    const lastProps = this._lastProps[type];
+    deepAssign(props, lastProps);
+  }
+
+  setItem<T extends keyof StorageProps>(key: T, value: StorageProps[T]) {
+    const oldValue = this.getItem(key);
+    this._getStorage(key).setItem(this._getKey(key), JSON.stringify(value));
+    if (oldValue === value) return;
+    this.slots.itemUpdated.emit({ key, value });
+  }
+
+  getItem<T extends keyof StorageProps>(key: T) {
     try {
-      const value = sessionStorage.getItem(this._getKey(key));
+      const storage = this._getStorage(key);
+      const value = storage.getItem(this._getKey(key));
       if (!value) return null;
-      return SessionPropsSchema.shape[key].parse(
-        JSON.parse(value)
-      ) as SessionProps[T];
+      if (isLocalProp(key)) {
+        return LocalPropsSchema.shape[key].parse(
+          JSON.parse(value)
+        ) as StorageProps[T];
+      } else if (isSessionProp(key)) {
+        return SessionPropsSchema.shape[key].parse(
+          JSON.parse(value)
+        ) as StorageProps[T];
+      } else {
+        return null;
+      }
     } catch {
       return null;
     }
@@ -306,7 +343,9 @@ function extractProps(
   return result;
 }
 
-function isLastPropType(type: EdgelessElementType): type is keyof LastProps {
+function isLastPropType(
+  type: BlockSuite.EdgelessModelKeyType
+): type is keyof LastProps {
   return Object.keys(LastPropsSchema.shape).includes(type);
 }
 

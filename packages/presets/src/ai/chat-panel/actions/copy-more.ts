@@ -4,14 +4,19 @@ import type {
   TextSelection,
 } from '@blocksuite/block-std';
 import { WithDisposable } from '@blocksuite/block-std';
-import { createButtonPopper } from '@blocksuite/blocks';
-import { css, html, LitElement, nothing } from 'lit';
+import { type AIError, createButtonPopper, Tooltip } from '@blocksuite/blocks';
+import { noop } from '@blocksuite/global/utils';
+import { css, html, LitElement, nothing, type PropertyValues } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
-import { CopyIcon, MoreIcon } from '../../_common/icons.js';
+import { CopyIcon, MoreIcon, RetryIcon } from '../../_common/icons.js';
+import { AIProvider } from '../../provider.js';
 import { copyText } from '../../utils/editor-actions.js';
-import { EditorActions } from './actions-handle.js';
+import type { ChatContextValue, ChatMessage } from '../chat-context.js';
+import { PageEditorActions } from './actions-handle.js';
+
+noop(Tooltip);
 
 @customElement('chat-copy-more')
 export class ChatCopyMore extends WithDisposable(LitElement) {
@@ -27,6 +32,15 @@ export class ChatCopyMore extends WithDisposable(LitElement) {
 
       div {
         cursor: pointer;
+        border-radius: 4px;
+      }
+
+      div:hover {
+        background-color: var(--affine-hover-color);
+      }
+
+      svg {
+        color: var(--affine-icon-color);
       }
     }
 
@@ -40,8 +54,9 @@ export class ChatCopyMore extends WithDisposable(LitElement) {
       gap: 4px;
       position: absolute;
       z-index: 1;
+      user-select: none;
 
-      div {
+      > div {
         height: 30px;
         display: flex;
         gap: 8px;
@@ -52,39 +67,104 @@ export class ChatCopyMore extends WithDisposable(LitElement) {
           margin-left: 12px;
         }
       }
+
+      > div:hover {
+        background-color: var(--affine-hover-color);
+      }
     }
   `;
 
-  @property({ attribute: false })
-  host!: EditorHost;
-
-  @property({ attribute: false })
-  content!: string;
-
-  @property({ attribute: false })
-  isLast!: boolean;
-
-  @property({ attribute: false })
-  curTextSelection?: TextSelection;
-
-  @property({ attribute: false })
-  curBlockSelections?: BlockSelection[];
-
   @state()
-  private _showMoreMenu = false;
+  private accessor _showMoreMenu = false;
 
   @query('.more-button')
-  private _moreButton!: HTMLDivElement;
+  private accessor _moreButton!: HTMLDivElement;
+
   @query('.more-menu')
-  private _moreMenu!: HTMLDivElement;
+  private accessor _moreMenu!: HTMLDivElement;
+
   private _morePopper: ReturnType<typeof createButtonPopper> | null = null;
 
-  protected override firstUpdated() {
-    this._morePopper = createButtonPopper(
-      this._moreButton,
-      this._moreMenu,
-      ({ display }) => (this._showMoreMenu = display === 'show')
-    );
+  @property({ attribute: false })
+  accessor host!: EditorHost;
+
+  @property({ attribute: false })
+  accessor content!: string;
+
+  @property({ attribute: false })
+  accessor isLast!: boolean;
+
+  @property({ attribute: false })
+  accessor curTextSelection: TextSelection | undefined = undefined;
+
+  @property({ attribute: false })
+  accessor curBlockSelections: BlockSelection[] | undefined = undefined;
+
+  @property({ attribute: false })
+  accessor chatContextValue!: ChatContextValue;
+
+  @property({ attribute: false })
+  accessor updateContext!: (context: Partial<ChatContextValue>) => void;
+
+  private _toggle() {
+    this._morePopper?.toggle();
+  }
+
+  private async _retry() {
+    const { doc } = this.host;
+    try {
+      const abortController = new AbortController();
+
+      const items = [...this.chatContextValue.items];
+      const last = items[items.length - 1];
+      if ('content' in last) {
+        last.content = '';
+        last.createdAt = new Date().toISOString();
+      }
+      this.updateContext({ items, status: 'loading', error: null });
+
+      const stream = AIProvider.actions.chat?.({
+        retry: true,
+        docId: doc.id,
+        workspaceId: doc.collection.id,
+        host: this.host,
+        stream: true,
+        signal: abortController.signal,
+        where: 'chat-panel',
+        control: 'chat-send',
+      });
+
+      if (stream) {
+        this.updateContext({ abortController });
+        for await (const text of stream) {
+          const items = [...this.chatContextValue.items];
+          const last = items[items.length - 1] as ChatMessage;
+          last.content += text;
+          this.updateContext({ items, status: 'transmitting' });
+        }
+
+        this.updateContext({ status: 'success' });
+      }
+    } catch (error) {
+      this.updateContext({ status: 'error', error: error as AIError });
+    } finally {
+      this.updateContext({ abortController: null });
+    }
+  }
+
+  protected override updated(changed: PropertyValues): void {
+    if (changed.has('isLast')) {
+      if (this.isLast) {
+        this._morePopper?.dispose();
+        this._morePopper = null;
+      } else if (!this._morePopper) {
+        this._morePopper = createButtonPopper(
+          this._moreButton,
+          this._moreMenu,
+          ({ display }) => (this._showMoreMenu = display === 'show')
+        );
+      }
+    }
   }
 
   override render() {
@@ -95,13 +175,21 @@ export class ChatCopyMore extends WithDisposable(LitElement) {
         }
       </style>
       <div class="copy-more">
-        <div @click=${() => copyText(host, content)}>${CopyIcon}</div>
+        ${content
+          ? html`<div @click=${() => copyText(host, content)}>
+              ${CopyIcon}
+              <affine-tooltip>Copy</affine-tooltip>
+            </div>`
+          : nothing}
+        ${isLast
+          ? html`<div @click=${() => this._retry()}>
+              ${RetryIcon}
+              <affine-tooltip>Retry</affine-tooltip>
+            </div>`
+          : nothing}
         ${isLast
           ? nothing
-          : html`<div
-              class="more-button"
-              @click=${() => this._morePopper?.toggle()}
-            >
+          : html`<div class="more-button" @click=${this._toggle}>
               ${MoreIcon}
             </div> `}
       </div>
@@ -109,7 +197,7 @@ export class ChatCopyMore extends WithDisposable(LitElement) {
       <div class="more-menu">
         ${this._showMoreMenu
           ? repeat(
-              EditorActions,
+              PageEditorActions,
               action => action.title,
               action => {
                 return html`<div

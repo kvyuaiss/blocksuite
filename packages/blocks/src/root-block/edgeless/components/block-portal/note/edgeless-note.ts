@@ -1,21 +1,26 @@
 import '../../note-slicer/index.js';
 
+import type { BlockElement } from '@blocksuite/block-std';
 import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
+import type { BlockModel } from '@blocksuite/store';
 import { css, html, nothing } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
 import { EDGELESS_BLOCK_CHILD_PADDING } from '../../../../../_common/consts.js';
-import { DEFAULT_NOTE_COLOR } from '../../../../../_common/edgeless/note/consts.js';
+import { DEFAULT_NOTE_BACKGROUND_COLOR } from '../../../../../_common/edgeless/note/consts.js';
 import { MoreIndicatorIcon } from '../../../../../_common/icons/edgeless.js';
 import { NoteDisplayMode } from '../../../../../_common/types.js';
 import { almostEqual, clamp } from '../../../../../_common/utils/math.js';
+import { matchFlavours } from '../../../../../_common/utils/model.js';
+import { getClosestBlockElementByPoint } from '../../../../../_common/utils/query.js';
+import { Point } from '../../../../../_common/utils/rect.js';
 import { handleNativeRangeAtPoint } from '../../../../../_common/utils/selection.js';
-import { type NoteBlockModel } from '../../../../../note-block/note-model.js';
+import type { NoteBlockModel } from '../../../../../note-block/note-model.js';
 import { Bound, StrokeStyle } from '../../../../../surface-block/index.js';
 import type { SurfaceBlockComponent } from '../../../../../surface-block/surface-block.js';
-import type { EdgelessBlockModel } from '../../../type.js';
+import type { EdgelessBlockModel } from '../../../edgeless-block-model.js';
 import { EdgelessPortalBase } from '../edgeless-portal-base.js';
 
 const ACTIVE_NOTE_EXTRA_PADDING = 20;
@@ -29,13 +34,13 @@ export class EdgelessNoteMask extends WithDisposable(ShadowlessElement) {
   `;
 
   @property({ attribute: false })
-  surface!: SurfaceBlockComponent;
+  accessor surface!: SurfaceBlockComponent;
 
   @property({ attribute: false })
-  model!: NoteBlockModel;
+  accessor model!: NoteBlockModel;
 
   @property({ attribute: false })
-  display!: boolean;
+  accessor display!: boolean;
 
   get edgeless() {
     return this.surface.edgeless;
@@ -49,7 +54,8 @@ export class EdgelessNoteMask extends WithDisposable(ShadowlessElement) {
           const bound = Bound.deserialize(this.model.xywh);
           const scale = this.model.edgeless.scale ?? 1;
           const height = entry.contentRect.height * scale;
-          if (almostEqual(bound.h, height)) {
+
+          if (!height || almostEqual(bound.h, height)) {
             return;
           }
 
@@ -141,22 +147,22 @@ export class EdgelessBlockPortalNote extends EdgelessPortalBase<NoteBlockModel> 
   `;
 
   @state()
-  private _isSelected = false;
+  private accessor _isSelected = false;
 
   @state()
-  private _editing = false;
+  private accessor _editing = false;
 
   @state()
-  private _isResizing = false;
+  private accessor _isResizing = false;
 
   @state()
-  private _isHover = false;
+  private accessor _isHover = false;
 
   @state()
-  private _noteFullHeight = 0;
+  private accessor _noteFullHeight = 0;
 
   @query('affine-note')
-  private _affineNote!: HTMLDivElement;
+  private accessor _affineNote!: HTMLDivElement;
 
   get _zoom() {
     return this.edgeless.service.viewport.zoom;
@@ -188,6 +194,64 @@ export class EdgelessBlockPortalNote extends EdgelessPortalBase<NoteBlockModel> 
     const x = clamp(e.x, rect.left + offsetX, rect.right - offsetX);
     const y = clamp(e.y, rect.top + offsetY, rect.bottom - offsetY);
     handleNativeRangeAtPoint(x, y);
+
+    if (this.surface.doc.readonly) return;
+    this._tryAddParagraph(x, y);
+  }
+
+  private _tryAddParagraph(x: number, y: number) {
+    const nearest = getClosestBlockElementByPoint(
+      new Point(x, y)
+    ) as BlockElement | null;
+    if (!nearest) return;
+
+    const nearestBBox = nearest.getBoundingClientRect();
+    const yRel = y - nearestBBox.top;
+
+    const insertPos: 'before' | 'after' =
+      yRel < nearestBBox.height / 2 ? 'before' : 'after';
+
+    const nearestModel = nearest.model as BlockModel;
+    const nearestModelIdx = this.model.children.indexOf(nearestModel);
+
+    const children = this.model.children;
+    const siblingModel =
+      children[
+        clamp(
+          nearestModelIdx + (insertPos === 'before' ? -1 : 1),
+          0,
+          children.length
+        )
+      ];
+
+    if (
+      (!nearestModel.text ||
+        !matchFlavours(nearestModel, ['affine:paragraph', 'affine:list'])) &&
+      (!siblingModel ||
+        !siblingModel.text ||
+        !matchFlavours(siblingModel, ['affine:paragraph', 'affine:list']))
+    ) {
+      const [pId] = this.surface.doc.addSiblingBlocks(
+        nearestModel,
+        [{ flavour: 'affine:paragraph' }],
+        insertPos
+      );
+
+      this.updateComplete
+        .then(() => {
+          this.surface.selection.setGroup('note', [
+            this.surface.selection.create('text', {
+              from: {
+                blockId: pId,
+                index: 0,
+                length: 0,
+              },
+              to: null,
+            }),
+          ]);
+        })
+        .catch(console.error);
+    }
   }
 
   private _setCollapse(event: MouseEvent) {
@@ -259,7 +323,9 @@ export class EdgelessBlockPortalNote extends EdgelessPortalBase<NoteBlockModel> 
 
     _disposables.add(
       edgeless.slots.elementResizeStart.on(() => {
-        if (selection.elements.includes(this.model as EdgelessBlockModel)) {
+        if (
+          selection.selectedElements.includes(this.model as EdgelessBlockModel)
+        ) {
           this._isResizing = true;
         }
       })
@@ -343,9 +409,9 @@ export class EdgelessBlockPortalNote extends EdgelessPortalBase<NoteBlockModel> 
       transition: this._editing
         ? 'left 0.3s, top 0.3s, width 0.3s, height 0.3s'
         : 'none',
-      background: `var(${background ?? DEFAULT_NOTE_COLOR})`,
+      background: `var(${background ?? DEFAULT_NOTE_BACKGROUND_COLOR})`,
       border: `${borderSize}px ${
-        borderStyle === StrokeStyle.Dashed ? 'dashed' : borderStyle
+        borderStyle === StrokeStyle.Dash ? 'dashed' : borderStyle
       } var(--affine-black-10)`,
       boxShadow: this._editing
         ? 'var(--affine-active-shadow)'
@@ -365,7 +431,7 @@ export class EdgelessBlockPortalNote extends EdgelessPortalBase<NoteBlockModel> 
 
     return html`
       <div
-        class="edgeless-block-portal-note blocksuite-overlay"
+        class="edgeless-block-portal-note"
         style=${styleMap(style)}
         data-model-height="${bound.h}"
         @mouseleave=${this._leaved}

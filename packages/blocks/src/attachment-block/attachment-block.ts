@@ -1,16 +1,14 @@
-import '../_common/components/block-selection.js';
-import '../_common/components/embed-card/embed-card-caption.js';
-
-import { BlockElement } from '@blocksuite/block-std';
 import { flip, offset } from '@floating-ui/dom';
 import { html, nothing } from 'lit';
-import { customElement, property, query, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { ref } from 'lit/directives/ref.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-import type { EmbedCardCaption } from '../_common/components/embed-card/embed-card-caption.js';
-import { HoverController } from '../_common/components/index.js';
+import {
+  BlockComponent,
+  HoverController,
+} from '../_common/components/index.js';
 import { EMBED_CARD_HEIGHT, EMBED_CARD_WIDTH } from '../_common/consts.js';
 import {
   AttachmentIcon16,
@@ -24,50 +22,17 @@ import {
   type AttachmentBlockModel,
   AttachmentBlockStyles,
 } from './attachment-model.js';
-import type { AttachmentService } from './attachment-service.js';
+import type { AttachmentBlockService } from './attachment-service.js';
 import { AttachmentOptionsTemplate } from './components/options.js';
 import { renderEmbedView } from './embed.js';
 import { styles } from './styles.js';
 import { checkAttachmentBlob, downloadAttachmentBlob } from './utils.js';
 
 @customElement('affine-attachment')
-export class AttachmentBlockComponent extends BlockElement<
+export class AttachmentBlockComponent extends BlockComponent<
   AttachmentBlockModel,
-  AttachmentService
+  AttachmentBlockService
 > {
-  static override styles = styles;
-
-  @property({ attribute: false })
-  loading = false;
-
-  @property({ attribute: false })
-  error = false;
-
-  @property({ attribute: false })
-  downloading = false;
-
-  @property({ attribute: false })
-  blobUrl?: string;
-
-  @property({ attribute: false })
-  allowEmbed = false;
-
-  @query('embed-card-caption')
-  captionElement!: EmbedCardCaption;
-
-  @state()
-  private _showOverlay = true;
-
-  private _isSelected = false;
-
-  private _isDragging = false;
-
-  private _isResizing = false;
-
-  private readonly _themeObserver = new ThemeObserver();
-
-  private _isInSurface = false;
-
   get isInSurface() {
     return this._isInSurface;
   }
@@ -81,8 +46,23 @@ export class AttachmentBlockComponent extends BlockElement<
 
   private get _embedView() {
     if (this.isInSurface || !this.model.embed || !this.blobUrl) return;
-    return renderEmbedView(this.model, this.blobUrl);
+    return renderEmbedView(this.model, this.blobUrl, this.service.maxFileSize);
   }
+
+  static override styles = styles;
+
+  @state()
+  private accessor _showOverlay = true;
+
+  private _isSelected = false;
+
+  private _isDragging = false;
+
+  private _isResizing = false;
+
+  private readonly _themeObserver = new ThemeObserver();
+
+  private _isInSurface = false;
 
   private _whenHover = new HoverController(this, ({ abortController }) => {
     const selection = this.host.selection;
@@ -97,7 +77,8 @@ export class AttachmentBlockComponent extends BlockElement<
     const blockSelections = selection.filter('block');
     if (
       blockSelections.length > 1 ||
-      (blockSelections.length === 1 && blockSelections[0].path !== this.path)
+      (blockSelections.length === 1 &&
+        blockSelections[0].blockId !== this.blockId)
     ) {
       return null;
     }
@@ -106,7 +87,7 @@ export class AttachmentBlockComponent extends BlockElement<
       template: AttachmentOptionsTemplate({
         anchor: this,
         model: this.model,
-        showCaption: () => this.captionElement.show(),
+        showCaption: () => this.captionEditor.show(),
         downloadAttachment: this.download,
         abortController,
       }),
@@ -119,10 +100,27 @@ export class AttachmentBlockComponent extends BlockElement<
     };
   });
 
+  override accessor useCaptionEditor = true;
+
+  @property({ attribute: false })
+  accessor loading = false;
+
+  @property({ attribute: false })
+  accessor error = false;
+
+  @property({ attribute: false })
+  accessor downloading = false;
+
+  @property({ attribute: false })
+  accessor blobUrl: string | undefined = undefined;
+
+  @property({ attribute: false })
+  accessor allowEmbed = false;
+
   private _selectBlock() {
     const selectionManager = this.host.selection;
     const blockSelection = selectionManager.create('block', {
-      path: this.path,
+      blockId: this.blockId,
     });
     selectionManager.setGroup('note', [blockSelection]);
   }
@@ -315,10 +313,6 @@ export class AttachmentBlockComponent extends BlockElement<
 
               <div class="affine-attachment-banner">${FileTypeIcon}</div>
             </div>`}
-
-        <embed-card-caption .block=${this}></embed-card-caption>
-
-        <affine-block-selection .block=${this}></affine-block-selection>
       </div>
     `;
   }

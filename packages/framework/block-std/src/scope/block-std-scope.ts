@@ -9,24 +9,31 @@ import { ViewStore } from '../view/index.js';
 
 export interface BlockStdOptions {
   host: HTMLElement;
-  collection: DocCollection;
   doc: Doc;
 }
 
 export class BlockStdScope {
   readonly doc: Doc;
+
   readonly collection: DocCollection;
+
   readonly event: UIEventDispatcher;
+
   readonly selection: SelectionManager;
+
   readonly command: CommandManager;
+
   readonly host: HTMLElement;
+
   readonly spec: SpecStore;
+
   readonly view: ViewStore;
+
   readonly clipboard: Clipboard;
 
   constructor(options: BlockStdOptions) {
     this.host = options.host;
-    this.collection = options.collection;
+    this.collection = options.doc.collection;
     this.doc = options.doc;
     this.event = new UIEventDispatcher(this);
     this.selection = new SelectionManager(this);

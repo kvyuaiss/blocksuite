@@ -5,11 +5,11 @@ import { classMap } from 'lit/directives/class-map.js';
 import { createRef } from 'lit/directives/ref.js';
 import { html } from 'lit/static-html.js';
 
+import { popMenu } from '../../../../_common/components/index.js';
 import type {
   CellRenderProps,
   DataViewCellLifeCycle,
 } from '../../column/index.js';
-import { popMenu } from '../../utils/menu/index.js';
 import { renderUniLit } from '../../utils/uni-component/uni-component.js';
 import type {
   DataViewColumnManager,
@@ -25,6 +25,14 @@ import {
 
 @customElement('affine-data-view-record-field')
 export class RecordField extends WithDisposable(ShadowlessElement) {
+  private get readonly() {
+    return this.view.readonly;
+  }
+
+  get cell(): DataViewCellLifeCycle | undefined {
+    return this._cell.value;
+  }
+
   static override styles = css`
     affine-data-view-record-field {
       display: flex;
@@ -79,6 +87,11 @@ export class RecordField extends WithDisposable(ShadowlessElement) {
       border: 1px solid transparent;
     }
 
+    .field-content .affine-database-number {
+      text-align: left;
+      justify-content: start;
+    }
+
     .field-content:hover {
       background-color: var(--affine-hover-color);
     }
@@ -92,27 +105,24 @@ export class RecordField extends WithDisposable(ShadowlessElement) {
     }
   `;
 
-  @property({ attribute: false })
-  view!: DataViewManager;
-  @property({ attribute: false })
-  column!: DataViewColumnManager;
-  @property({ attribute: false })
-  rowId!: string;
-  @state()
-  isFocus = false;
-  @state()
-  editing = false;
   private _cell = createRef<DataViewCellLifeCycle>();
 
-  private get readonly() {
-    return this.view.readonly;
-  }
+  @property({ attribute: false })
+  accessor view!: DataViewManager;
 
-  public get cell(): DataViewCellLifeCycle | undefined {
-    return this._cell.value;
-  }
+  @property({ attribute: false })
+  accessor column!: DataViewColumnManager;
 
-  public changeEditing = (editing: boolean) => {
+  @property({ attribute: false })
+  accessor rowId!: string;
+
+  @state()
+  accessor isFocus = false;
+
+  @state()
+  accessor editing = false;
+
+  changeEditing = (editing: boolean) => {
     const selection = this.closest('affine-data-view-record-detail')?.selection;
     if (selection) {
       selection.selection = {
@@ -122,13 +132,14 @@ export class RecordField extends WithDisposable(ShadowlessElement) {
     }
   };
 
-  public _click = (e: MouseEvent) => {
+  _click = (e: MouseEvent) => {
     e.stopPropagation();
     if (this.readonly) return;
 
     this.changeEditing(true);
   };
-  public _clickLeft = (e: MouseEvent) => {
+
+  _clickLeft = (e: MouseEvent) => {
     if (this.readonly) return;
     const ele = e.currentTarget as HTMLElement;
     const columns = this.view.detailColumns;

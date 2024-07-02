@@ -1,6 +1,6 @@
 import { ShadowlessElement } from '@blocksuite/block-std';
 import { type DeltaInsert, ZERO_WIDTH_SPACE } from '@blocksuite/inline';
-import { css, html } from 'lit';
+import { html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { type StyleInfo, styleMap } from 'lit/directives/style-map.js';
 
@@ -23,11 +23,11 @@ export function affineTextStyles(
     inlineCodeStyle = {
       'font-family': 'var(--affine-font-code-family)',
       background: 'var(--affine-background-code-block)',
+      border: '1px solid var(--affine-border-color)',
+      'border-radius': '4px',
       color: 'var(--affine-text-primary-color)',
-      'border-radius': '2px',
-      padding: '3px 6px 4px',
       'font-variant-ligatures': 'none',
-      'line-height': 'var(--affine-font-base)',
+      'line-height': 'auto',
     };
   }
 
@@ -44,15 +44,8 @@ export function affineTextStyles(
 
 @customElement('affine-text')
 export class AffineText extends ShadowlessElement {
-  static override styles = css`
-    affine-text {
-      white-space: break-spaces;
-      word-break: break-word;
-    }
-  `;
-
   @property({ type: Object })
-  delta: DeltaInsert<AffineTextAttributes> = {
+  accessor delta: DeltaInsert<AffineTextAttributes> = {
     insert: ZERO_WIDTH_SPACE,
   };
 

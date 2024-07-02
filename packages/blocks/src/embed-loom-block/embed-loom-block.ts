@@ -1,51 +1,44 @@
-import '../_common/components/block-selection.js';
-import '../_common/components/embed-card/embed-card-caption.js';
-
 import { assertExists } from '@blocksuite/global/utils';
-import { html, nothing } from 'lit';
-import { customElement, property, query, state } from 'lit/decorators.js';
+import { html } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 
-import type { EmbedCardCaption } from '../_common/components/embed-card/embed-card-caption.js';
 import { EMBED_CARD_HEIGHT, EMBED_CARD_WIDTH } from '../_common/consts.js';
 import { EmbedBlockElement } from '../_common/embed-block-helper/embed-block-element.js';
 import { OpenIcon } from '../_common/icons/text.js';
 import { getEmbedCardIcons } from '../_common/utils/url.js';
 import type { EmbedLoomStyles } from './embed-loom-model.js';
 import { type EmbedLoomModel, loomUrlRegex } from './embed-loom-model.js';
-import type { EmbedLoomService } from './embed-loom-service.js';
+import type { EmbedLoomBlockService } from './embed-loom-service.js';
 import { LoomIcon, styles } from './styles.js';
 import { refreshEmbedLoomUrlData } from './utils.js';
 
 @customElement('affine-embed-loom-block')
 export class EmbedLoomBlockComponent extends EmbedBlockElement<
   EmbedLoomModel,
-  EmbedLoomService
+  EmbedLoomBlockService
 > {
   static override styles = styles;
 
-  override _cardStyle: (typeof EmbedLoomStyles)[number] = 'video';
-
-  @property({ attribute: false })
-  loading = false;
+  @state()
+  private accessor _isSelected = false;
 
   @state()
-  private _isSelected = false;
-
-  @state()
-  private _showOverlay = true;
-
-  @query('embed-card-caption')
-  captionElement!: EmbedCardCaption;
+  private accessor _showOverlay = true;
 
   private _isDragging = false;
 
   private _isResizing = false;
 
+  override _cardStyle: (typeof EmbedLoomStyles)[number] = 'video';
+
+  @property({ attribute: false })
+  accessor loading = false;
+
   private _selectBlock() {
     const selectionManager = this.host.selection;
     const blockSelection = selectionManager.create('block', {
-      path: this.path,
+      blockId: this.blockId,
     });
     selectionManager.setGroup('note', [blockSelection]);
   }
@@ -71,7 +64,9 @@ export class EmbedLoomBlockComponent extends EmbedBlockElement<
   };
 
   refreshData = () => {
-    refreshEmbedLoomUrlData(this).catch(console.error);
+    refreshEmbedLoomUrlData(this, this.fetchAbortController.signal).catch(
+      console.error
+    );
   };
 
   override connectedCallback() {
@@ -219,13 +214,7 @@ export class EmbedLoomBlockComponent extends EmbedBlockElement<
               </div>
             </div>
           </div>
-
-          <embed-card-caption .block=${this}></embed-card-caption>
-
-          <affine-block-selection .block=${this}></affine-block-selection>
         </div>
-
-        ${this.isInSurface ? nothing : Object.values(this.widgets)}
       `
     );
   }

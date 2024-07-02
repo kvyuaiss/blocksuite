@@ -17,12 +17,12 @@ import {
 @customElement('affine-code-line')
 export class AffineCodeLine extends ShadowlessElement {
   @property({ type: Object })
-  delta: DeltaInsert<AffineTextAttributes> = {
+  accessor delta: DeltaInsert<AffineTextAttributes> = {
     insert: ZERO_WIDTH_SPACE,
   };
 
   @property({ attribute: false })
-  highlightOptionsGetter: HighlightOptionsGetter | null = null;
+  accessor highlightOptionsGetter: HighlightOptionsGetter | null = null;
 
   override render() {
     assertExists(
@@ -32,15 +32,7 @@ export class AffineCodeLine extends ShadowlessElement {
     const { lang, highlighter } = this.highlightOptionsGetter();
 
     if (!highlighter || !highlighter.getLoadedLanguages().includes(lang)) {
-      return html`<span
-        ><v-text
-          .str=${this.delta.insert}
-          .styles=${{
-            'word-wrap': 'break-word',
-            'white-space': 'break-spaces',
-          }}
-        ></v-text
-      ></span>`;
+      return html`<span><v-text .str=${this.delta.insert}></v-text></span>`;
     }
 
     const mode = getThemeMode();
@@ -66,8 +58,6 @@ export class AffineCodeLine extends ShadowlessElement {
       return html`<v-text
         .str=${token.content}
         .styles=${{
-          'word-wrap': 'break-word',
-          'white-space': 'break-spaces',
           color: token.color,
         }}
       ></v-text>`;

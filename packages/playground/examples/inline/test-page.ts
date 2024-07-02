@@ -46,8 +46,6 @@ function inlineTextStyles(
   }
 
   return styleMap({
-    'word-wrap': 'break-word',
-    'white-space': 'break-spaces',
     'font-weight': props.bold ? 'bold' : 'normal',
     'font-style': props.italic ? 'italic' : 'normal',
     'text-decoration': textDecorations.length > 0 ? textDecorations : 'none',
@@ -73,10 +71,7 @@ const attributeRenderer: AttributeRenderer = (
 
   const style = delta.attributes
     ? inlineTextStyles(delta.attributes)
-    : styleMap({
-        'white-space': 'break-spaces',
-        'word-wrap': 'break-word',
-      });
+    : styleMap({});
 
   return html`<span style=${style}
     ><v-text .str=${delta.insert}></v-text
@@ -114,7 +109,7 @@ function toggleStyle(
     Object.entries(attrs).map(([k, v]) => {
       if (
         typeof v === 'boolean' &&
-        v === (oldAttributes as { [k: string]: unknown })[k]
+        v === (oldAttributes as Record<string, unknown>)[k]
       ) {
         return [k, null];
       } else {
@@ -134,13 +129,13 @@ function toggleStyle(
 @customElement('test-rich-text')
 export class TestRichText extends ShadowlessElement {
   @query('.rich-text-container')
-  private _container!: HTMLDivElement;
+  private accessor _container!: HTMLDivElement;
 
   @property({ attribute: false })
-  inlineEditor!: InlineEditor;
+  accessor inlineEditor!: InlineEditor;
 
   @property({ attribute: false })
-  undoManager!: Y.UndoManager;
+  accessor undoManager!: Y.UndoManager;
 
   override firstUpdated() {
     this.contentEditable = 'true';
@@ -204,8 +199,6 @@ export class TestRichText extends ShadowlessElement {
 
         .rich-text-container {
           outline: none;
-          word-break: break-word;
-          white-space: break-spaces;
         }
 
         code {
@@ -262,10 +255,10 @@ export class CustomToolbar extends ShadowlessElement {
   `;
 
   @property({ attribute: false })
-  inlineEditor!: InlineEditor;
+  accessor inlineEditor!: InlineEditor;
 
   @property({ attribute: false })
-  undoManager!: Y.UndoManager;
+  accessor undoManager!: Y.UndoManager;
 
   override firstUpdated() {
     const boldButton = this.querySelector('.bold');
@@ -402,8 +395,11 @@ export class TestPage extends ShadowlessElement {
   `;
 
   private _editorA: InlineEditor | null = null;
+
   private _editorB: InlineEditor | null = null;
+
   private _undoManagerA: Y.UndoManager | null = null;
+
   private _undoManagerB: Y.UndoManager | null = null;
 
   override firstUpdated() {

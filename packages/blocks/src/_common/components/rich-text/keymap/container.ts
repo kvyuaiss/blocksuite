@@ -1,5 +1,4 @@
 import type { BlockElement, UIEventStateContext } from '@blocksuite/block-std';
-import { PathFinder } from '@blocksuite/block-std';
 import { IS_MAC } from '@blocksuite/global/env';
 import { assertExists } from '@blocksuite/global/utils';
 import {
@@ -36,8 +35,8 @@ export const bindContainerHotkey = (blockElement: BlockElement) => {
   const _selectBlock = () => {
     selection.update(selList => {
       return selList.map(sel => {
-        if (PathFinder.equals(sel.path, blockElement.path)) {
-          return selection.create('block', { path: blockElement.path });
+        if (sel.blockId === blockElement.blockId) {
+          return selection.create('block', { blockId: blockElement.blockId });
         }
         return sel;
       });
@@ -48,10 +47,10 @@ export const bindContainerHotkey = (blockElement: BlockElement) => {
   const _selectText = (start: boolean) => {
     selection.update(selList => {
       return selList.map(sel => {
-        if (PathFinder.equals(sel.path, blockElement.path)) {
+        if (sel.blockId === blockElement.blockId) {
           return selection.create('text', {
             from: {
-              path: blockElement.path,
+              blockId: blockElement.blockId,
               index: start ? 0 : blockElement.model.text?.length ?? 0,
               length: 0,
             },
@@ -97,12 +96,12 @@ export const bindContainerHotkey = (blockElement: BlockElement) => {
   const _selectAllText = () => {
     selection.update(selList => {
       return selList.map(sel => {
-        if (!PathFinder.equals(sel.path, blockElement.path)) {
+        if (sel.blockId !== blockElement.blockId) {
           return sel;
         }
         return selection.create('text', {
           from: {
-            path: blockElement.path,
+            blockId: blockElement.blockId,
             index: 0,
             length: blockElement.model.text?.length ?? 0,
           },
@@ -114,6 +113,20 @@ export const bindContainerHotkey = (blockElement: BlockElement) => {
   };
 
   blockElement.bindHotKey({
+    ArrowUp: () => {
+      if (!blockElement.selected?.is('text')) return false;
+
+      const inlineEditor = _getInlineEditor();
+      const inlineRange = inlineEditor.getInlineRange();
+      return !inlineEditor.isFirstLine(inlineRange);
+    },
+    ArrowDown: () => {
+      if (!blockElement.selected?.is('text')) return false;
+
+      const inlineEditor = _getInlineEditor();
+      const inlineRange = inlineEditor.getInlineRange();
+      return !inlineEditor.isLastLine(inlineRange);
+    },
     Escape: () => {
       if (blockElement.selected?.is('text')) {
         return _selectBlock();
@@ -122,20 +135,15 @@ export const bindContainerHotkey = (blockElement: BlockElement) => {
     },
     Enter: ctx => {
       _preventDefault(ctx);
-
       if (blockElement.selected?.is('block')) return _selectText(false);
-
       const target = ctx.get('defaultState').event.target as Node;
       if (!blockElement.host.contains(target)) return;
-
       if (!blockElement.selected?.is('text')) return;
-
       blockElement.doc.captureSync();
 
       const inlineEditor = _getInlineEditor();
       const inlineRange = inlineEditor.getInlineRange();
       assertExists(inlineRange);
-
       if (
         !tryConvertBlock(
           blockElement,
@@ -146,7 +154,6 @@ export const bindContainerHotkey = (blockElement: BlockElement) => {
       ) {
         return true;
       }
-
       const state = ctx.get('keyboardState');
       hardEnter(editorHost, model, inlineRange, inlineEditor, state.raw);
 
@@ -202,9 +209,9 @@ export const bindContainerHotkey = (blockElement: BlockElement) => {
         const textModels = context.selectedModels;
         if (textModels && textModels.length === 1) {
           const inlineEditor = _getInlineEditor();
-          const inilneRange = inlineEditor.getInlineRange();
-          assertExists(inilneRange);
-          handleIndent(blockElement.host, model, inilneRange.index);
+          const inlineRange = inlineEditor.getInlineRange();
+          assertExists(inlineRange);
+          handleIndent(blockElement.host, model, inlineRange.index);
           _preventDefault(ctx);
 
           return true;

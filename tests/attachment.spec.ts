@@ -1,6 +1,7 @@
+import { sleep } from '@global/utils.js';
 import { expect, type Page } from '@playwright/test';
 
-import { moveToImage } from './utils/actions/drag.js';
+import { popImageMoreMenu } from './utils/actions/drag.js';
 import {
   pressArrowUp,
   pressBackspace,
@@ -16,12 +17,12 @@ import {
   enterPlaygroundRoom,
   focusRichText,
   initEmptyParagraphState,
+  resetHistory,
   waitNextFrame,
 } from './utils/actions/misc.js';
 import {
   assertBlockCount,
   assertBlockSelections,
-  assertImageOption,
   assertKeyboardWorkInInput,
   assertRichImage,
   assertRichTextInlineRange,
@@ -56,12 +57,16 @@ function getAttachment(page: Page) {
     const slashMenu = page.locator(`.slash-menu`);
     await waitNextFrame(page);
     await type(page, '/');
+    await resetHistory(page);
     await expect(slashMenu).toBeVisible();
     await type(page, 'file', 100);
     await expect(slashMenu).toBeVisible();
 
+    const fileChooser = page.waitForEvent('filechooser');
     await pressEnter(page);
-    await page.setInputFiles("input[type='file']", FILE_PATH);
+    await sleep(100);
+    await (await fileChooser).setFiles(FILE_PATH);
+
     // Try to break the undo redo test
     await captureHistory(page);
 
@@ -107,13 +112,8 @@ function getAttachment(page: Page) {
 
     // external
     turnImageToCard: async () => {
-      await moveToImage(page);
-      await assertImageOption(page);
-      const btn = page
-        .locator('icon-button')
-        .filter({ hasText: 'Turn into Card view' });
-      await expect(btn).toBeVisible();
-      await btn.click();
+      const { turnIntoCardButton } = await popImageMoreMenu(page);
+      await turnIntoCardButton.click();
       await expect(attachment).toBeVisible();
     },
   };
@@ -139,15 +139,15 @@ test('can insert attachment from slash menu', async ({ page }) => {
     page,
     `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -184,15 +184,15 @@ test('should undo/redo works for attachment', async ({ page }) => {
   await assertStoreMatchJSX(
     page,
     `  <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -214,20 +214,21 @@ test('should undo/redo works for attachment', async ({ page }) => {
   );
 
   await undoByKeyboard(page);
+  await waitNextFrame(page);
   // The loading/error state should not be restored after undo
   await assertStoreMatchJSX(
     page,
     `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -235,6 +236,7 @@ test('should undo/redo works for attachment', async ({ page }) => {
   prop:index="a0"
 >
   <affine:paragraph
+    prop:text="/"
     prop:type="text"
   />
 </affine:note>`,
@@ -242,19 +244,20 @@ test('should undo/redo works for attachment', async ({ page }) => {
   );
 
   await redoByKeyboard(page);
+  await waitNextFrame(page);
   await assertStoreMatchJSX(
     page,
     `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -332,15 +335,15 @@ test('should turn attachment to image works', async ({ page }) => {
     page,
     `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -364,15 +367,15 @@ test('should turn attachment to image works', async ({ page }) => {
     page,
     `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -411,15 +414,15 @@ test('should attachment can be deleted', async ({ page }) => {
     page,
     `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -453,15 +456,15 @@ test(`support dragging attachment block directly`, async ({ page }) => {
   await assertStoreMatchJSX(
     page,
     `  <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -507,15 +510,15 @@ test(`support dragging attachment block directly`, async ({ page }) => {
     page,
     /*xml*/ `<affine:page>
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -561,15 +564,15 @@ test(`support dragging attachment block directly`, async ({ page }) => {
     page,
     /*xml*/ `<affine:page>
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -621,6 +624,40 @@ test('press backspace after bookmark block can select bookmark block', async ({
   await assertBlockCount(page, 'paragraph', 1);
   await assertRichTextInlineRange(page, 0, 0);
   await pressBackspace(page);
-  await assertBlockSelections(page, [['0', '1', '4']]);
+  await assertBlockSelections(page, ['4']);
   await assertBlockCount(page, 'paragraph', 0);
+});
+
+test('cancel file picker with input element resolves', async ({ page }) => {
+  await enterPlaygroundRoom(page);
+  await initEmptyParagraphState(page);
+
+  const { attachment } = getAttachment(page);
+
+  await focusRichText(page);
+  await pressEnter(page);
+  await pressArrowUp(page);
+
+  await page.evaluate(() => {
+    // Force fallback to input[type=file]
+    window.showOpenFilePicker = undefined;
+  });
+
+  const slashMenu = page.locator(`.slash-menu`);
+  await waitNextFrame(page);
+  await type(page, '/file', 100);
+  await expect(slashMenu).toBeVisible();
+
+  const fileChooser = page.waitForEvent('filechooser');
+  await pressEnter(page);
+  const inputFile = page.locator("input[type='file']");
+  await expect(inputFile).toHaveCount(1);
+
+  // This does not trigger `cancel` event and,
+  // therefore, the test isn't representative.
+  // Waiting for https://github.com/microsoft/playwright/issues/27524
+  await (await fileChooser).setFiles([]);
+
+  await expect(attachment).toHaveCount(0);
+  await expect(inputFile).toHaveCount(0);
 });

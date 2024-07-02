@@ -4,7 +4,7 @@ import { defineEmbedModel } from '../_common/embed-block-helper/embed-block-mode
 import type { EmbedCardStyle } from '../_common/types.js';
 
 export const figmaUrlRegex: RegExp =
-  /^(?:https:\/\/)?(?:www\.)?figma\.com\/(file|proto)\/([0-9a-zA-Z]{22,128})(?:\/.*)?$/;
+  /https:\/\/[\w.-]+\.?figma.com\/([\w-]+)\/([0-9a-zA-Z]{22,128})(?:\/.*)?$/;
 
 export type EmbedFigmaBlockUrlData = {
   title: string | null;
@@ -22,3 +22,11 @@ export type EmbedFigmaBlockProps = {
 export class EmbedFigmaModel extends defineEmbedModel<EmbedFigmaBlockProps>(
   BlockModel
 ) {}
+
+declare global {
+  namespace BlockSuite {
+    interface EdgelessBlockModelMap {
+      'affine:embed-figma': EmbedFigmaModel;
+    }
+  }
+}

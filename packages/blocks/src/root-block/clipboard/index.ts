@@ -12,49 +12,39 @@ import {
 import {
   defaultImageProxyMiddleware,
   replaceIdMiddleware,
+  titleMiddleware,
 } from '../../_common/transformers/middlewares.js';
 import { ClipboardAdapter } from './adapter.js';
 import { copyMiddleware, pasteMiddleware } from './middlewares/index.js';
 
 export class PageClipboard {
-  protected _disposables = new DisposableGroup();
-  host: BlockElement;
-
   private get _std() {
     return this.host.std;
   }
 
-  private _clipboardAdapter = new ClipboardAdapter();
-  private _mixtextAdapter = new MixTextAdapter();
-  private _htmlAdapter = new HtmlAdapter();
-  private _imageAdapter = new ImageAdapter();
-  private _attachmentAdapter = new AttachmentAdapter();
+  protected _disposables = new DisposableGroup();
+
+  host: BlockElement;
 
   constructor(host: BlockElement) {
     this.host = host;
   }
 
-  hostConnected() {
-    if (this._disposables.disposed) {
-      this._disposables = new DisposableGroup();
-    }
-    this.host.handleEvent('copy', this.onPageCopy);
-    this.host.handleEvent('paste', this.onPagePaste);
-    this.host.handleEvent('cut', this.onPageCut);
-    this._init();
-  }
-
-  hostDisconnected() {
-    this._disposables.dispose();
-  }
+  private _copySelected = (onCopy?: () => void) => {
+    return this._std.command
+      .chain()
+      .with({ onCopy })
+      .getSelectedModels()
+      .copySelectedModels();
+  };
 
   protected _init = () => {
     this._std.clipboard.registerAdapter(
       ClipboardAdapter.MIME,
-      this._clipboardAdapter,
+      ClipboardAdapter,
       100
     );
-    this._std.clipboard.registerAdapter('text/html', this._htmlAdapter, 90);
+    this._std.clipboard.registerAdapter('text/html', HtmlAdapter, 90);
     [
       'image/apng',
       'image/avif',
@@ -63,16 +53,15 @@ export class PageClipboard {
       'image/png',
       'image/svg+xml',
       'image/webp',
-    ].map(type =>
-      this._std.clipboard.registerAdapter(type, this._imageAdapter, 80)
-    );
-    this._std.clipboard.registerAdapter('text/plain', this._mixtextAdapter, 70);
-    this._std.clipboard.registerAdapter('*/*', this._attachmentAdapter, 60);
+    ].map(type => this._std.clipboard.registerAdapter(type, ImageAdapter, 80));
+    this._std.clipboard.registerAdapter('text/plain', MixTextAdapter, 70);
+    this._std.clipboard.registerAdapter('*/*', AttachmentAdapter, 60);
     const copy = copyMiddleware(this._std);
     const paste = pasteMiddleware(this._std);
     this._std.clipboard.use(copy);
     this._std.clipboard.use(paste);
     this._std.clipboard.use(replaceIdMiddleware);
+    this._std.clipboard.use(titleMiddleware);
     this._std.clipboard.use(defaultImageProxyMiddleware);
 
     this._disposables.add({
@@ -93,27 +82,34 @@ export class PageClipboard {
         this._std.clipboard.unuse(copy);
         this._std.clipboard.unuse(paste);
         this._std.clipboard.unuse(replaceIdMiddleware);
+        this._std.clipboard.unuse(titleMiddleware);
         this._std.clipboard.unuse(defaultImageProxyMiddleware);
       },
     });
   };
 
-  private _copySelected = (onCopy?: () => void) => {
-    return this._std.command
-      .chain()
-      .with({ onCopy })
-      .getSelectedModels()
-      .copySelectedModels();
-  };
+  hostConnected() {
+    if (this._disposables.disposed) {
+      this._disposables = new DisposableGroup();
+    }
+    this.host.handleEvent('copy', this.onPageCopy);
+    this.host.handleEvent('paste', this.onPagePaste);
+    this.host.handleEvent('cut', this.onPageCut);
+    this._init();
+  }
 
-  public onPageCopy: UIEventHandler = ctx => {
+  hostDisconnected() {
+    this._disposables.dispose();
+  }
+
+  onPageCopy: UIEventHandler = ctx => {
     const e = ctx.get('clipboardState').raw;
     e.preventDefault();
 
     this._copySelected().run();
   };
 
-  public onPageCut: UIEventHandler = ctx => {
+  onPageCut: UIEventHandler = ctx => {
     const e = ctx.get('clipboardState').raw;
     e.preventDefault();
 
@@ -128,7 +124,7 @@ export class PageClipboard {
     }).run();
   };
 
-  public onPagePaste: UIEventHandler = ctx => {
+  onPagePaste: UIEventHandler = ctx => {
     const e = ctx.get('clipboardState').raw;
     e.preventDefault();
 
@@ -140,7 +136,7 @@ export class PageClipboard {
           const textSelection = ctx.currentTextSelection;
           assertExists(textSelection);
           const end = textSelection.to ?? textSelection.from;
-          next({ currentSelectionPath: end.path });
+          next({ currentSelectionPath: end.blockId });
         }),
         cmd.getBlockSelections().inline<'currentSelectionPath'>((ctx, next) => {
           const currentBlockSelections = ctx.currentBlockSelections;
@@ -149,7 +145,7 @@ export class PageClipboard {
           if (!blockSelection) {
             return;
           }
-          next({ currentSelectionPath: blockSelection.path });
+          next({ currentSelectionPath: blockSelection.blockId });
         }),
       ])
       .getBlockIndex()
@@ -169,7 +165,7 @@ export class PageClipboard {
       .run();
   };
 
-  public onBlockSnapshotPaste = (
+  onBlockSnapshotPaste = (
     snapshot: BlockSnapshot,
     doc: Doc,
     parent?: string,

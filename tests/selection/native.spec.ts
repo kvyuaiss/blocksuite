@@ -142,15 +142,15 @@ test('native range delete with indent', async ({ page }) => {
     page,
     `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -203,15 +203,15 @@ test('native range delete with indent', async ({ page }) => {
     page,
     `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -237,15 +237,15 @@ test('native range delete with indent', async ({ page }) => {
     page,
     `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -288,15 +288,15 @@ test('native range delete with indent', async ({ page }) => {
     page,
     `
 <affine:note
-  prop:background="--affine-background-secondary-color"
+  prop:background="--affine-note-background-blue"
   prop:displayMode="both"
   prop:edgeless={
     Object {
       "style": Object {
-        "borderRadius": 8,
+        "borderRadius": 0,
         "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
+        "borderStyle": "none",
+        "shadowType": "--affine-note-shadow-sticker",
       },
     }
   }
@@ -945,13 +945,13 @@ test('Delete the blank line between two dividers', async ({ page }) => {
   await assertRichTexts(page, ['', '']);
 
   await pressArrowUp(page);
-  await assertBlockSelections(page, [['0', '1', '5']]);
+  await assertBlockSelections(page, ['5']);
   await pressArrowUp(page);
   await assertBlockSelections(page, []);
   await assertRichTextInlineRange(page, 0, 0);
   await pressBackspace(page);
   await assertRichTexts(page, ['']);
-  await assertBlockSelections(page, [['0', '1', '3']]);
+  await assertBlockSelections(page, ['3']);
   await assertDivider(page, 2);
 });
 
@@ -1298,15 +1298,15 @@ test('should ndent native multi-selection block', async ({ page }) => {
     `
 <affine:page>
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -1353,15 +1353,15 @@ test('should unindent native multi-selection block', async ({ page }) => {
     `
 <affine:page>
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -1401,15 +1401,15 @@ test('should unindent native multi-selection block', async ({ page }) => {
     `
 <affine:page>
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -1636,9 +1636,7 @@ test('should not show option menu of image on native selection', async ({
   await initImageState(page);
   await activeEmbed(page);
 
-  await expect(
-    page.locator('.affine-embed-editing-state-container')
-  ).toHaveCount(1);
+  await expect(page.locator('.affine-image-toolbar-container')).toHaveCount(1);
 
   await pressEscape(page);
   await pressEnter(page);
@@ -1674,9 +1672,7 @@ test('should not show option menu of image on native selection', async ({
   await copyByKeyboard(page);
   assertClipItems(page, 'text/plain', '123');
 
-  await expect(
-    page.locator('.affine-embed-editing-state-container')
-  ).toHaveCount(0);
+  await expect(page.locator('.affine-image-toolbar-container')).toHaveCount(0);
 });
 
 test.skip('should be cleared when dragging block card from BlockHub', async ({
@@ -1942,16 +1938,16 @@ test('Use arrow up and down to select two types of block', async ({ page }) => {
   await assertRichTextInlineRange(page, 2, 3);
   await pressArrowUp(page);
   await assertNativeSelectionRangeCount(page, 0);
-  await assertBlockSelections(page, [['0', '1', '7']]);
+  await assertBlockSelections(page, ['7']);
   await pressArrowUp(page);
   await assertNativeSelectionRangeCount(page, 1);
   await assertRichTextInlineRange(page, 1, 3);
   await pressArrowUp(page);
   await assertNativeSelectionRangeCount(page, 0);
-  await assertBlockSelections(page, [['0', '1', '5']]);
+  await assertBlockSelections(page, ['5']);
   await pressArrowUp(page);
   await assertNativeSelectionRangeCount(page, 0);
-  await assertBlockSelections(page, [['0', '1', '4']]);
+  await assertBlockSelections(page, ['4']);
   await pressArrowUp(page);
   await assertNativeSelectionRangeCount(page, 1);
   await assertRichTextInlineRange(page, 0, 3);
@@ -1959,16 +1955,16 @@ test('Use arrow up and down to select two types of block', async ({ page }) => {
   // from top to bottom
   await pressArrowDown(page);
   await assertNativeSelectionRangeCount(page, 0);
-  await assertBlockSelections(page, [['0', '1', '4']]);
+  await assertBlockSelections(page, ['4']);
   await pressArrowDown(page);
   await assertNativeSelectionRangeCount(page, 0);
-  await assertBlockSelections(page, [['0', '1', '5']]);
+  await assertBlockSelections(page, ['5']);
   await pressArrowDown(page);
   await assertNativeSelectionRangeCount(page, 1);
   await assertRichTextInlineRange(page, 1, 0);
   await pressArrowDown(page);
   await assertNativeSelectionRangeCount(page, 0);
-  await assertBlockSelections(page, [['0', '1', '7']]);
+  await assertBlockSelections(page, ['7']);
   await pressArrowDown(page);
   await assertNativeSelectionRangeCount(page, 1);
   await assertRichTextInlineRange(page, 2, 0);

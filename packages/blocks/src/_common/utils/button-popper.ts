@@ -1,5 +1,12 @@
-import { type Disposable } from '@blocksuite/global/utils';
-import { computePosition, flip, offset, shift } from '@floating-ui/dom';
+import type { Disposable } from '@blocksuite/global/utils';
+import {
+  autoPlacement,
+  computePosition,
+  offset,
+  type Rect,
+  shift,
+  size,
+} from '@floating-ui/dom';
 
 export function listenClickAway(
   element: HTMLElement,
@@ -21,6 +28,8 @@ export function listenClickAway(
   };
 }
 
+type Display = 'show' | 'hidden';
+
 const ATTR_SHOW = 'data-show';
 /**
  * Using attribute 'data-show' to control popper visibility.
@@ -37,51 +46,69 @@ const ATTR_SHOW = 'data-show';
 export function createButtonPopper(
   reference: HTMLElement,
   popperElement: HTMLElement,
-  stateUpdated: (state: { display: 'show' | 'hidden' }) => void = () => {
+  stateUpdated: (state: { display: Display }) => void = () => {
     /** DEFAULT EMPTY FUNCTION */
   },
   mainAxis?: number,
-  crossAxis?: number
+  crossAxis?: number,
+  rootBoundary?: Rect | (() => Rect | undefined)
 ) {
+  let display: Display = 'hidden';
+
+  const originMaxHeight = window.getComputedStyle(popperElement).maxHeight;
+
   function compute() {
+    const overflowOptions = {
+      rootBoundary:
+        typeof rootBoundary === 'function' ? rootBoundary() : rootBoundary,
+    };
+
     computePosition(reference, popperElement, {
-      placement: 'top',
       middleware: [
         offset({
           mainAxis: mainAxis ?? 14,
           crossAxis: crossAxis ?? 0,
         }),
-        flip({
-          fallbackPlacements: ['bottom'],
+        autoPlacement({
+          allowedPlacements: ['top', 'bottom'],
+          ...overflowOptions,
         }),
-        shift({
-          padding: 10,
+        shift(overflowOptions),
+        size({
+          ...overflowOptions,
+          apply({ availableHeight }) {
+            popperElement.style.maxHeight = originMaxHeight
+              ? `min(${originMaxHeight}, ${availableHeight}px)`
+              : `${availableHeight}px`;
+          },
         }),
       ],
     })
-      .then(({ x, y }) => {
+      .then(({ x, y, middlewareData: data }) => {
         Object.assign(popperElement.style, {
           position: 'absolute',
           zIndex: 1,
-          left: `${x}px`,
-          top: `${y}px`,
+          left: `${x + (data.shift?.x ?? 0)}px`,
+          top: `${y + (data.shift?.y ?? 0)}px`,
         });
       })
       .catch(console.error);
   }
 
   const show = () => {
+    if (display === 'show') return;
     popperElement.setAttribute(ATTR_SHOW, '');
+    display = 'show';
+    stateUpdated({ display });
     compute();
-    stateUpdated({ display: 'show' });
   };
 
   const hide = () => {
-    if (!popperElement) return;
+    if (display === 'hidden') return;
     popperElement.removeAttribute(ATTR_SHOW);
-
+    display = 'hidden';
+    stateUpdated({ display });
     compute();
-    stateUpdated({ display: 'hidden' });
   };
 
   const toggle = () => {
@@ -95,6 +122,9 @@ export function createButtonPopper(
   const clickAway = listenClickAway(reference, () => hide());
 
   return {
+    get state() {
+      return display;
+    },
     show,
     hide,
     toggle,

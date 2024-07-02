@@ -9,13 +9,15 @@ const CursorSelectionSchema = z.object({
 
 export class CursorSelection extends BaseSelection {
   static override type = 'cursor';
+
   static override group = 'edgeless';
 
   readonly x: number;
+
   readonly y: number;
 
   constructor(x: number, y: number) {
-    super({ path: [] });
+    super({ blockId: '[edgeless-cursor]' });
     this.x = x;
     this.y = y;
   }

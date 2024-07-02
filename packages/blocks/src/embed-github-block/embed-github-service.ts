@@ -8,31 +8,35 @@ import {
 } from './embed-github-model.js';
 import { queryEmbedGithubApiData, queryEmbedGithubData } from './utils.js';
 
-export class EmbedGithubService extends BlockService<EmbedGithubModel> {
+export class EmbedGithubBlockService extends BlockService<EmbedGithubModel> {
   private static readonly linkPreviewer = new LinkPreviewer();
 
-  queryUrlData = (embedGithubModel: EmbedGithubModel) => {
+  static setLinkPreviewEndpoint =
+    EmbedGithubBlockService.linkPreviewer.setEndpoint;
+
+  queryUrlData = (embedGithubModel: EmbedGithubModel, signal?: AbortSignal) => {
     return queryEmbedGithubData(
       embedGithubModel,
-      EmbedGithubService.linkPreviewer
+      EmbedGithubBlockService.linkPreviewer,
+      signal
     );
   };
 
-  queryApiData = (embedGithubModel: EmbedGithubModel) => {
-    return queryEmbedGithubApiData(embedGithubModel);
+  queryApiData = (embedGithubModel: EmbedGithubModel, signal?: AbortSignal) => {
+    return queryEmbedGithubApiData(embedGithubModel, signal);
   };
 
   override mounted() {
     super.mounted();
 
-    const rootService = this.std.spec.getService('affine:page');
-    rootService.registerEmbedBlockOptions({
-      flavour: this.flavour,
-      urlRegex: githubUrlRegex,
-      styles: EmbedGithubStyles,
-      viewType: 'card',
+    this.std.spec.slots.afterApply.once(() => {
+      const rootService = this.std.spec.getService('affine:page');
+      rootService.registerEmbedBlockOptions({
+        flavour: this.flavour,
+        urlRegex: githubUrlRegex,
+        styles: EmbedGithubStyles,
+        viewType: 'card',
+      });
     });
   }
-
-  static setLinkPreviewEndpoint = EmbedGithubService.linkPreviewer.setEndpoint;
 }

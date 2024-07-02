@@ -56,8 +56,9 @@ export class DetailSelection {
     if (!container) {
       return;
     }
+
     container.isFocus = false;
-    const cell = container?.cell;
+    const cell = container.cell;
 
     if (selection.isEditing) {
       cell?.onExitEditMode();
@@ -76,7 +77,7 @@ export class DetailSelection {
       return;
     }
     container.isFocus = true;
-    const cell = container?.cell;
+    const cell = container.cell;
     if (selection.isEditing) {
       cell?.onEnterEditMode();
       if (cell?.focusCell()) {
@@ -104,7 +105,7 @@ export class DetailSelection {
     ) as RecordField | undefined;
   }
 
-  public focusUp() {
+  focusUp() {
     const selection = this.selection;
     if (!selection || selection?.isEditing) {
       return;
@@ -119,7 +120,7 @@ export class DetailSelection {
     }
   }
 
-  public focusDown() {
+  focusDown() {
     const selection = this.selection;
     if (!selection || selection?.isEditing) {
       return;
@@ -134,7 +135,7 @@ export class DetailSelection {
     }
   }
 
-  public deleteProperty() {
+  deleteProperty() {
     //
   }
 

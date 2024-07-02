@@ -1,8 +1,7 @@
 import type { EditorHost } from '@blocksuite/block-std';
 import { assertExists } from '@blocksuite/global/utils';
 import type { Doc } from '@blocksuite/store';
-import { type BlockModel } from '@blocksuite/store';
-import { Text } from '@blocksuite/store';
+import { type BlockModel, Text } from '@blocksuite/store';
 
 import {
   isInsideBlockByFlavour,
@@ -24,7 +23,7 @@ import {
 import type { ListBlockModel } from '../../../list-block/index.js';
 import type { RootBlockModel } from '../../../root-block/index.js';
 import { EMBED_BLOCK_FLAVOUR_LIST } from '../../consts.js';
-import { type ExtendedModel } from '../../types.js';
+import type { ExtendedModel } from '../../types.js';
 
 /**
  * Whether the block supports rendering its children.
@@ -583,11 +582,24 @@ function handleEmbedDividerCodeSibling(
 function handleNoPreviousSibling(editorHost: EditorHost, model: ExtendedModel) {
   const doc = model.doc;
   const text = model.text;
+  const parent = doc.getParent(model);
+  assertExists(parent);
   const titleElement = getDocTitleByEditorHost(
     editorHost
   ) as HTMLTextAreaElement | null;
   // Probably no title, e.g. in edgeless mode
-  if (!titleElement) return false;
+  if (!titleElement) {
+    if (
+      matchFlavours(parent, ['affine:edgeless-text']) ||
+      model.children.length > 0
+    ) {
+      doc.deleteBlock(model, {
+        bringChildrenTo: parent,
+      });
+      return true;
+    }
+    return false;
+  }
 
   const rootModel = model.doc.root as RootBlockModel;
   const title = rootModel.title;
@@ -658,7 +670,7 @@ function handleParagraphDeleteActions(
     );
     assertExists(previousSiblingElement);
     const selection = editorHost.selection.create('block', {
-      path: previousSiblingElement.path,
+      blockId: previousSiblingElement.blockId,
     });
     editorHost.selection.setGroup('note', [selection]);
 
@@ -668,6 +680,8 @@ function handleParagraphDeleteActions(
       });
     }
 
+    return true;
+  } else if (matchFlavours(previousSibling, ['affine:edgeless-text'])) {
     return true;
   }
 
@@ -846,7 +860,7 @@ function handleParagraphBlockForwardDelete(
         assertExists(nextSiblingComponent);
         editorHost.selection.setGroup('note', [
           editorHost.selection.create('block', {
-            path: nextSiblingComponent.path,
+            blockId: nextSiblingComponent.blockId,
           }),
         ]);
         return true;

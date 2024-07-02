@@ -91,15 +91,15 @@ test('basic link', async ({ page }) => {
     `
 <affine:page>
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -120,6 +120,34 @@ test('basic link', async ({ page }) => {
   </affine:note>
 </affine:page>`
   );
+});
+
+test('add link when dragging from empty line', async ({ page }) => {
+  const linkText = 'linkText\n\n';
+  const link = 'http://example.com';
+  await enterPlaygroundRoom(page);
+  await initEmptyParagraphState(page);
+  await focusRichText(page);
+  await type(page, linkText);
+
+  // Create link
+  await dragBetweenIndices(page, [2, 0], [0, 0], {
+    x: 1,
+    y: 2,
+  });
+  await pressCreateLinkShortCut(page);
+  await page.mouse.move(0, 0);
+
+  const createLinkPopoverLocator = page.locator('.affine-link-popover.create');
+  await expect(createLinkPopoverLocator).toBeVisible();
+  const linkPopoverInput = page.locator('.affine-link-popover-input');
+  await expect(linkPopoverInput).toBeVisible();
+  await type(page, link);
+  await pressEnter(page);
+  await expect(createLinkPopoverLocator).not.toBeVisible();
+
+  const linkLocator = page.locator('affine-link a');
+  await expect(linkLocator).toHaveAttribute('href', link);
 });
 
 async function createLinkBlock(page: Page, str: string, link: string) {
@@ -329,7 +357,7 @@ test('link bar should not be appear when the range is collapsed', async ({
   await type(page, 'bbb');
   await dragBetweenIndices(page, [0, 1], [0, 5]);
   await pressCreateLinkShortCut(page);
-  await expect(linkPopoverLocator).not.toBeVisible();
+  await expect(linkPopoverLocator).toBeVisible();
 
   await focusRichTextEnd(page);
   await pressEnter(page);
@@ -416,15 +444,15 @@ test('convert link to card', async ({ page }) => {
     `
 <affine:page>
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
@@ -508,15 +536,15 @@ test.skip('convert link to embed', async ({ page }) => {
     `
 <affine:page>
   <affine:note
-    prop:background="--affine-background-secondary-color"
+    prop:background="--affine-note-background-blue"
     prop:displayMode="both"
     prop:edgeless={
       Object {
         "style": Object {
-          "borderRadius": 8,
+          "borderRadius": 0,
           "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
+          "borderStyle": "none",
+          "shadowType": "--affine-note-shadow-sticker",
         },
       }
     }
