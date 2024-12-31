@@ -1,19 +1,19 @@
-import '../declare-test-window.js';
+import type { NoteBlockModel, NoteDisplayMode } from '@blocks/index.js';
+import type { IPoint, IVec } from '@blocksuite/global/utils';
+import type { Locator, Page } from '@playwright/test';
 
-import type { CssVariableName } from '@blocks/_common/theme/css-variables.js';
-import type { IPoint, NoteDisplayMode } from '@blocks/_common/types.js';
-import { type NoteBlockModel } from '@blocks/note-block/index.js';
-import { type IVec } from '@blocks/surface-block/index.js';
-import { assertExists, sleep } from '@global/utils/index.js';
-import type { Page } from '@playwright/test';
+import { assertExists, sleep } from '@blocksuite/global/utils';
 import { expect } from '@playwright/test';
 
-import { type Bound } from '../asserts.js';
+import type { Bound } from '../asserts.js';
+
+import '../declare-test-window.js';
 import { clickView } from './click.js';
 import { dragBetweenCoords } from './drag.js';
 import {
   pressBackspace,
   pressEnter,
+  pressEscape,
   selectAllByKeyboard,
   SHIFT_KEY,
   SHORT_KEY,
@@ -23,6 +23,7 @@ import {
   enterPlaygroundRoom,
   getEditorLocator,
   initEmptyEdgelessState,
+  resetHistory,
   waitNextFrame,
 } from './misc.js';
 
@@ -45,16 +46,22 @@ const AWAIT_TIMEOUT = 500;
 export const ZOOM_BAR_RESPONSIVE_SCREEN_WIDTH = 1200;
 export type Point = { x: number; y: number };
 export enum Shape {
-  Square = 'Square',
-  Ellipse = 'Ellipse',
   Diamond = 'Diamond',
-  Triangle = 'Triangle',
+  Ellipse = 'Ellipse',
   'Rounded rectangle' = 'Rounded rectangle',
+  Square = 'Square',
+  Triangle = 'Triangle',
 }
 
 export enum LassoMode {
   FreeHand = 'freehand',
   Polygonal = 'polygonal',
+}
+
+export enum ConnectorMode {
+  Straight,
+  Orthogonal,
+  Curve,
 }
 
 export async function getNoteRect(page: Page, noteId: string) {
@@ -109,15 +116,43 @@ export async function toggleFramePanel(page: Page) {
   await waitNextFrame(page);
 }
 
+export async function toggleMultipleEditors(page: Page) {
+  await page.click('sl-button:text("Test Operations")');
+  await page.click('sl-menu-item:text("Toggle Multiple Editors")');
+  await waitNextFrame(page);
+}
+
 export async function switchEditorMode(page: Page) {
   await page.click('sl-tooltip[content="Switch Editor"]');
   // FIXME: listen to editor loaded event
   await waitNextFrame(page);
 }
 
+export async function switchMultipleEditorsMode(page: Page) {
+  await page.evaluate(() => {
+    const containers = document.querySelectorAll('affine-editor-container');
+    const mode = containers[0].mode === 'edgeless' ? 'page' : 'edgeless';
+
+    containers.forEach(container => {
+      container.mode = mode;
+    });
+  });
+}
+
 export async function switchEditorEmbedMode(page: Page) {
   await page.click('sl-button:text("Test Operations")');
   await page.click('sl-menu-item:text("Switch Offset Mode")');
+}
+
+export async function enterPresentationMode(page: Page) {
+  await page.click('sl-tooltip[content="Enter presentation mode"]');
+  await waitNextFrame(page);
+}
+
+export async function toggleEditorReadonly(page: Page) {
+  await page.click('sl-button:text("Test Operations")');
+  await page.click('sl-menu-item:text("Toggle Readonly")');
+  await waitNextFrame(page);
 }
 
 type EdgelessTool =
@@ -135,7 +170,29 @@ type EdgelessTool =
 type ZoomToolType = 'zoomIn' | 'zoomOut' | 'fitToScreen';
 type ComponentToolType = 'shape' | 'thin' | 'thick' | 'brush' | 'more';
 
-export function locatorEdgelessToolButton(
+type PresentationToolType = 'previous' | 'next';
+
+const locatorEdgelessToolButtonSenior = async (
+  page: Page,
+  selector: string
+): Promise<Locator> => {
+  const target = page.locator(selector);
+  const visible = await target.isVisible();
+  if (visible) return target;
+  // try to click next page
+  const nextButton = page.locator(
+    '.senior-nav-button-wrapper.next > icon-button'
+  );
+  const nextExists = await nextButton.count();
+  const isDisabled =
+    (await nextButton.getAttribute('data-test-disabled')) === 'true';
+  if (!nextExists || isDisabled) return target;
+  await nextButton.click();
+  await page.waitForTimeout(200);
+  return locatorEdgelessToolButtonSenior(page, selector);
+};
+
+export async function locatorEdgelessToolButton(
   page: Page,
   type: EdgelessTool,
   innerContainer = true
@@ -146,7 +203,7 @@ export function locatorEdgelessToolButton(
     shape: '.edgeless-shape-button',
     brush: '.edgeless-brush-button',
     eraser: '.edgeless-eraser-button',
-    text: '.edgeless-text-button',
+    text: '.edgeless-mindmap-button',
     connector: '.edgeless-connector-button',
     note: '.edgeless-note-button',
     frame: '.edgeless-frame-button',
@@ -160,19 +217,24 @@ export function locatorEdgelessToolButton(
     case 'text':
     case 'eraser':
     case 'shape':
+    case 'note':
       buttonType = 'edgeless-toolbar-button';
       break;
     default:
       buttonType = 'edgeless-tool-icon-button';
   }
-  const button = page.locator(`edgeless-toolbar ${buttonType}${selector}`);
+  // TODO: quickTool locator is different
+  const button = await locatorEdgelessToolButtonSenior(
+    page,
+    `edgeless-toolbar-widget ${buttonType}${selector}`
+  );
 
   return innerContainer ? button.locator('.icon-container') : button;
 }
 
 export async function toggleZoomBarWhenSmallScreenWidth(page: Page) {
   const toggleZoomBarButton = page.locator(
-    '.toggle-button edgeless-tool-icon-button.non-actived'
+    '.toggle-button edgeless-tool-icon-button'
   );
   const isClosed = (await toggleZoomBarButton.count()) === 1;
   if (isClosed) {
@@ -224,12 +286,29 @@ export function locatorEdgelessComponentToolButton(
     more: 'More',
   }[type];
   const button = page
-    .locator('edgeless-element-toolbar-widget edgeless-tool-icon-button')
+    .locator('edgeless-element-toolbar-widget editor-icon-button')
     .filter({
       hasText: text,
     });
 
   return innerContainer ? button.locator('.icon-container') : button;
+}
+
+export function locatorPresentationToolbarButton(
+  page: Page,
+  type: PresentationToolType
+) {
+  const text = {
+    previous: 'Previous',
+    next: 'Next',
+  }[type];
+  const button = page
+    .locator('presentation-toolbar edgeless-tool-icon-button')
+    .filter({
+      hasText: text,
+    });
+
+  return button;
 }
 
 export async function setEdgelessTool(
@@ -238,8 +317,12 @@ export async function setEdgelessTool(
   shape = Shape.Square
 ) {
   switch (mode) {
+    // text tool is removed, use shortcut to trigger
+    case 'text':
+      await page.keyboard.press('t', { delay: 100 });
+      break;
     case 'default': {
-      const button = locatorEdgelessToolButton(page, 'default', false);
+      const button = await locatorEdgelessToolButton(page, 'default', false);
       const classes = (await button.getAttribute('class'))?.split(' ');
       if (!classes?.includes('default')) {
         await button.click();
@@ -248,7 +331,7 @@ export async function setEdgelessTool(
       break;
     }
     case 'pan': {
-      const button = locatorEdgelessToolButton(page, 'default', false);
+      const button = await locatorEdgelessToolButton(page, 'default', false);
       const classes = (await button.getAttribute('class'))?.split(' ');
       if (classes?.includes('default')) {
         await button.click();
@@ -262,22 +345,26 @@ export async function setEdgelessTool(
       break;
     }
     case 'lasso':
-    case 'text':
     case 'note':
     case 'brush':
     case 'eraser':
     case 'frame':
     case 'connector': {
-      const button = locatorEdgelessToolButton(page, mode, false);
+      const button = await locatorEdgelessToolButton(page, mode, false);
       await button.click();
       break;
     }
     case 'shape': {
-      const shapeToolButton = locatorEdgelessToolButton(page, 'shape', false);
-      await shapeToolButton.click();
+      const shapeToolButton = await locatorEdgelessToolButton(
+        page,
+        'shape',
+        false
+      );
+      // Avoid clicking on the shape-element (will trigger dragging mode)
+      await shapeToolButton.click({ position: { x: 5, y: 5 } });
 
       const squareShapeButton = page
-        .locator('edgeless-tool-icon-button')
+        .locator('edgeless-slide-menu edgeless-tool-icon-button')
         .filter({ hasText: shape });
       await squareShapeButton.click();
       break;
@@ -297,17 +384,10 @@ export async function assertEdgelessShapeType(page: Page, type: ShapeName) {
     if (!container) {
       throw new Error('Missing edgeless page');
     }
-    if (container.edgelessTool.type !== 'shape')
-      throw new Error('Expected shape tool');
+    const tool = container.gfx.tool.currentToolOption$.peek();
+    if (tool.type !== 'shape') throw new Error('Expected shape tool');
 
-    const shapeType = container.edgelessTool.shapeType;
-    if (
-      shapeType === 'rect' &&
-      container.service.editSession.getLastProps('shape').radius > 0
-    )
-      return 'roundedRect';
-
-    return container.edgelessTool.shapeType;
+    return tool.shapeName;
   });
 
   expect(type).toEqual(curType);
@@ -319,9 +399,26 @@ export async function assertEdgelessTool(page: Page, mode: EdgelessTool) {
     if (!container) {
       throw new Error('Missing edgeless page');
     }
-    return container.edgelessTool.type;
+    return container.gfx.tool.currentToolOption$.peek().type;
   });
   expect(type).toEqual(mode);
+}
+
+export async function assertEdgelessConnectorToolMode(
+  page: Page,
+  mode: ConnectorMode
+) {
+  const tool = await page.evaluate(() => {
+    const container = document.querySelector('affine-edgeless-root');
+    if (!container) {
+      throw new Error('Missing edgeless page');
+    }
+    return container.gfx.tool.currentToolOption$.peek();
+  });
+  if (tool.type !== 'connector') {
+    throw new Error('Expected connector tool');
+  }
+  expect(tool.mode).toEqual(mode);
 }
 
 export async function assertEdgelessLassoToolMode(page: Page, mode: LassoMode) {
@@ -330,7 +427,7 @@ export async function assertEdgelessLassoToolMode(page: Page, mode: LassoMode) {
     if (!container) {
       throw new Error('Missing edgeless page');
     }
-    return container.edgelessTool;
+    return container.gfx.tool.currentToolOption$.peek();
   });
   if (tool.type !== 'lasso') {
     throw new Error('Expected lasso tool');
@@ -339,7 +436,7 @@ export async function assertEdgelessLassoToolMode(page: Page, mode: LassoMode) {
 }
 
 export async function getEdgelessBlockChild(page: Page) {
-  const block = page.locator('.edgeless-block-portal-note');
+  const block = page.locator('affine-edgeless-note');
   const blockBox = await block.boundingBox();
   if (blockBox === null) throw new Error('Missing edgeless block child rect');
   return blockBox;
@@ -413,6 +510,7 @@ export async function addBasicShapeElement(
 ) {
   await setEdgelessTool(page, 'shape', shape);
   await dragBetweenCoords(page, start, end, { steps: 50 });
+  return (await getSelectedIds(page))[0];
 }
 
 export async function addBasicConnectorElement(
@@ -422,6 +520,30 @@ export async function addBasicConnectorElement(
 ) {
   await setEdgelessTool(page, 'connector');
   await dragBetweenCoords(page, start, end, { steps: 100 });
+}
+
+export async function addBasicFrameElement(
+  page: Page,
+  start: Point,
+  end: Point
+) {
+  await setEdgelessTool(page, 'frame');
+  await dragBetweenCoords(page, start, end, { steps: 50 });
+}
+
+export async function addBasicEdgelessText(
+  page: Page,
+  text: string,
+  x: number,
+  y: number
+) {
+  await setEdgelessTool(page, 'text');
+  await page.mouse.click(x, y);
+  await page.locator('affine-edgeless-text').waitFor({ state: 'visible' });
+  await waitNextFrame(page, 100);
+  await type(page, text, 20);
+  await pressEscape(page, 2);
+  await setEdgelessTool(page, 'default');
 }
 
 export async function addNote(page: Page, text: string, x: number, y: number) {
@@ -524,7 +646,7 @@ export async function rotateElementByHandle(
   );
 }
 
-export async function selectBrushColor(page: Page, color: CssVariableName) {
+export async function selectBrushColor(page: Page, color: string) {
   const colorButton = page.locator(
     `edgeless-brush-menu .color-unit[aria-label="${color.toLowerCase()}"]`
   );
@@ -532,7 +654,7 @@ export async function selectBrushColor(page: Page, color: CssVariableName) {
 }
 
 export async function selectBrushSize(page: Page, size: string) {
-  const sizeIndexMap: { [key: string]: number } = {
+  const sizeIndexMap: Record<string, number> = {
     two: 1,
     four: 2,
     six: 3,
@@ -576,7 +698,9 @@ export async function pickColorAtPoints(page: Page, points: number[][]) {
 
 export async function getNoteBoundBoxInEdgeless(page: Page, noteId: string) {
   const editor = getEditorLocator(page);
-  const note = editor.locator(`affine-note[data-block-id="${noteId}"]`);
+  const note = editor.locator(
+    `affine-edgeless-note[data-block-id="${noteId}"]`
+  );
   const bound = await note.boundingBox();
   if (!bound) {
     throw new Error(`Missing note: ${noteId}`);
@@ -588,6 +712,22 @@ export async function getAllNoteIds(page: Page) {
   return page.evaluate(() => {
     return Array.from(document.querySelectorAll('affine-note')).map(
       note => note.model.id
+    );
+  });
+}
+
+export async function getAllEdgelessNoteIds(page: Page) {
+  return page.evaluate(() => {
+    return Array.from(document.querySelectorAll('affine-edgeless-note')).map(
+      note => note.model.id
+    );
+  });
+}
+
+export async function getAllEdgelessTextIds(page: Page) {
+  return page.evaluate(() => {
+    return Array.from(document.querySelectorAll('affine-edgeless-text')).map(
+      text => text.model.id
     );
   });
 }
@@ -611,7 +751,7 @@ export async function activeNoteInEdgeless(page: Page, noteId: string) {
 
 export async function selectNoteInEdgeless(page: Page, noteId: string) {
   const bound = await getNoteBoundBoxInEdgeless(page, noteId);
-  await page.mouse.click(bound.x, bound.y);
+  await page.mouse.click(bound.x + bound.width / 2, bound.y + bound.height / 2);
 }
 
 export function locatorNoteDisplayModeButton(
@@ -622,6 +762,10 @@ export function locatorNoteDisplayModeButton(
     .locator('edgeless-change-note-button')
     .locator('note-display-mode-panel')
     .locator(`.item.${mode}`);
+}
+
+export function locatorScalePanelButton(page: Page, scale: number) {
+  return page.locator('edgeless-scale-panel').locator(`.scale-${scale}`);
 }
 
 export async function changeNoteDisplayMode(page: Page, mode: NoteDisplayMode) {
@@ -653,11 +797,9 @@ export async function updateExistedBrushElementSize(
 }
 
 export async function openComponentToolbarMoreMenu(page: Page) {
-  const btn = page
-    .locator('edgeless-element-toolbar-widget edgeless-tool-icon-button')
-    .filter({
-      hasText: 'More',
-    });
+  const btn = page.locator(
+    'edgeless-element-toolbar-widget edgeless-more-button editor-menu-button'
+  );
 
   await btn.click();
 }
@@ -671,7 +813,7 @@ export async function clickComponentToolbarMoreMenuButton(
   }[button];
 
   const btn = locatorComponentToolbarMoreButton(page)
-    .locator('.action-item')
+    .locator('editor-menu-action')
     .filter({ hasText: text });
 
   await btn.click();
@@ -688,6 +830,101 @@ export async function zoomByMouseWheel(
   await page.keyboard.down(SHORT_KEY);
   await page.mouse.wheel(stepX, stepY);
   await page.keyboard.up(SHORT_KEY);
+}
+
+// touch screen is not supported by Playwright now
+// use pointer event mock instead
+// https://github.com/microsoft/playwright/issues/2903
+export async function multiTouchDown(page: Page, points: Point[]) {
+  await page.evaluate(points => {
+    const target = document.querySelector('affine-edgeless-root');
+    if (!target) {
+      throw new Error('Missing edgeless page');
+    }
+    points.forEach((point, index) => {
+      const clientX = point.x;
+      const clientY = point.y;
+
+      target.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          clientX,
+          clientY,
+          bubbles: true,
+          pointerType: 'touch',
+          pointerId: index,
+          isPrimary: index === 0,
+        })
+      );
+    });
+  }, points);
+}
+
+export async function multiTouchMove(
+  page: Page,
+  from: Point[],
+  to: Point[],
+  step = 5
+) {
+  await page.evaluate(
+    async ({ from, to, step }) => {
+      const target = document.querySelector('affine-edgeless-root');
+      if (!target) {
+        throw new Error('Missing edgeless page');
+      }
+
+      if (from.length !== to.length) {
+        throw new Error('from and to should have the same length');
+      }
+
+      if (step !== 0) {
+        for (const [i] of Array.from({ length: step }).entries()) {
+          from.forEach((point, index) => {
+            const clientX =
+              point.x + ((to[index].x - point.x) / step) * (i + 1);
+            const clientY =
+              point.y + ((to[index].y - point.y) / step) * (i + 1);
+
+            target.dispatchEvent(
+              new PointerEvent('pointermove', {
+                clientX,
+                clientY,
+                bubbles: true,
+                pointerType: 'touch',
+                pointerId: index,
+                isPrimary: index === 0,
+              })
+            );
+          });
+          await new Promise(resolve => setTimeout(resolve, 16));
+        }
+      }
+    },
+    { from, to, step }
+  );
+}
+
+export async function multiTouchUp(page: Page, points: Point[]) {
+  await page.evaluate(points => {
+    const target = document.querySelector('affine-edgeless-root');
+    if (!target) {
+      throw new Error('Missing edgeless page');
+    }
+    points.forEach((point, index) => {
+      const clientX = point.x;
+      const clientY = point.y;
+
+      target.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX,
+          clientY,
+          bubbles: true,
+          pointerType: 'touch',
+          pointerId: index,
+          isPrimary: index === 0,
+        })
+      );
+    });
+  }, points);
 }
 
 export async function zoomFitByKeyboard(page: Page) {
@@ -722,7 +959,7 @@ export async function getZoomLevel(page: Page) {
   const span = page.locator(
     `.edgeless-zoom-toolbar-container.${zoomBarClass} .zoom-percent`
   );
-  await waitNextFrame(page, 60 / 0.25);
+  await waitNextFrame(page);
   const text = await span.textContent();
   if (!text) {
     throw new Error('Missing .zoom-percent');
@@ -779,7 +1016,7 @@ export function locatorComponentToolbar(page: Page) {
   return page.locator('edgeless-element-toolbar-widget');
 }
 
-function locatorComponentToolbarMoreButton(page: Page) {
+export function locatorComponentToolbarMoreButton(page: Page) {
   const moreButton = locatorComponentToolbar(page).locator(
     'edgeless-more-button'
   );
@@ -798,8 +1035,11 @@ type Action =
   | 'changeShapeStrokeStyles'
   | 'changeConnectorStrokeColor'
   | 'changeConnectorStrokeStyles'
+  | 'changeConnectorShape'
   | 'addFrame'
   | 'addGroup'
+  | 'addMindmap'
+  | 'createGroupOnMoreOption'
   | 'ungroup'
   | 'releaseFromGroup'
   | 'createFrameOnMoreOption'
@@ -807,7 +1047,17 @@ type Action =
   | 'renameGroup'
   | 'autoSize'
   | 'changeNoteDisplayMode'
-  | 'changeNoteSlicerSetting';
+  | 'changeNoteSlicerSetting'
+  | 'changeNoteScale'
+  | 'addText'
+  | 'quickConnect'
+  | 'turnIntoLinkedDoc'
+  | 'createLinkedDoc'
+  | 'openLinkedDoc'
+  | 'toCardView'
+  | 'toEmbedView'
+  | 'autoArrange'
+  | 'autoResize';
 
 export async function triggerComponentToolbarAction(
   page: Page,
@@ -819,7 +1069,7 @@ export async function triggerComponentToolbarAction(
       await moreButton.click();
 
       const actionButton = moreButton
-        .locator('.more-actions-container .action-item')
+        .locator('.more-actions-container editor-menu-action')
         .filter({
           hasText: 'Bring to Front',
         });
@@ -831,7 +1081,7 @@ export async function triggerComponentToolbarAction(
       await moreButton.click();
 
       const actionButton = moreButton
-        .locator('.more-actions-container .action-item')
+        .locator('.more-actions-container editor-menu-action')
         .filter({
           hasText: 'Bring Forward',
         });
@@ -843,7 +1093,7 @@ export async function triggerComponentToolbarAction(
       await moreButton.click();
 
       const actionButton = moreButton
-        .locator('.more-actions-container .action-item')
+        .locator('.more-actions-container editor-menu-action')
         .filter({
           hasText: 'Send Backward',
         });
@@ -855,7 +1105,7 @@ export async function triggerComponentToolbarAction(
       await moreButton.click();
 
       const actionButton = moreButton
-        .locator('.more-actions-container .action-item')
+        .locator('.more-actions-container editor-menu-action')
         .filter({
           hasText: 'Send to Back',
         });
@@ -867,7 +1117,7 @@ export async function triggerComponentToolbarAction(
       await moreButton.click();
 
       const actionButton = moreButton
-        .locator('.more-actions-container .action-item')
+        .locator('.more-actions-container editor-menu-action')
         .filter({
           hasText: 'Copy as PNG',
         });
@@ -879,7 +1129,7 @@ export async function triggerComponentToolbarAction(
       await moreButton.click();
 
       const actionButton = moreButton
-        .locator('.more-actions-container .action-item')
+        .locator('.more-actions-container editor-menu-action')
         .filter({
           hasText: 'Frame Section',
         });
@@ -891,59 +1141,59 @@ export async function triggerComponentToolbarAction(
       await moreButton.click();
 
       const actionButton = moreButton
-        .locator('.more-actions-container .action-item')
+        .locator('.more-actions-container editor-menu-action')
         .filter({
           hasText: 'Duplicate',
         });
       await actionButton.click();
       break;
     }
-    case 'changeNoteColor': {
-      const button = locatorComponentToolbar(page).locator(
-        'edgeless-change-note-button .fill-color-button'
-      );
-      await button.click();
-      break;
-    }
     case 'changeShapeFillColor': {
       const button = locatorComponentToolbar(page)
         .locator('edgeless-change-shape-button')
-        .locator('.fill-color-button');
+        .getByRole('button', { name: 'Fill color' });
       await button.click();
       break;
     }
     case 'changeShapeStrokeColor': {
       const button = locatorComponentToolbar(page)
         .locator('edgeless-change-shape-button')
-        .locator('.stroke-color-button');
+        .getByRole('button', { name: 'Border style' });
       await button.click();
       break;
     }
     case 'changeShapeStrokeStyles': {
       const button = locatorComponentToolbar(page)
         .locator('edgeless-change-shape-button')
-        .locator('.line-styles-button');
+        .getByRole('button', { name: 'Border style' });
       await button.click();
       break;
     }
     case 'changeShapeStyle': {
       const button = locatorComponentToolbar(page)
         .locator('edgeless-change-shape-button')
-        .locator('.shape-style-button');
+        .getByRole('button', { name: /^Style$/ });
       await button.click();
       break;
     }
     case 'changeConnectorStrokeColor': {
-      const button = locatorComponentToolbar(page)
+      const button = page
         .locator('edgeless-change-connector-button')
-        .locator('.connector-color-button');
+        .getByRole('button', { name: 'Stroke style' });
       await button.click();
       break;
     }
     case 'changeConnectorStrokeStyles': {
       const button = locatorComponentToolbar(page)
         .locator('edgeless-change-connector-button')
-        .locator('.line-styles-button');
+        .getByRole('button', { name: 'Stroke style' });
+      await button.click();
+      break;
+    }
+    case 'changeConnectorShape': {
+      const button = locatorComponentToolbar(page)
+        .locator('edgeless-change-connector-button')
+        .getByRole('button', { name: 'Shape' });
       await button.click();
       break;
     }
@@ -961,17 +1211,36 @@ export async function triggerComponentToolbarAction(
       await button.click();
       break;
     }
+    case 'addMindmap': {
+      const button = page.locator('edgeless-mindmap-tool-button');
+      await button.click();
+      await page.mouse.move(400, 400);
+      await page.mouse.click(400, 400);
+      break;
+    }
+    case 'createGroupOnMoreOption': {
+      const moreButton = locatorComponentToolbarMoreButton(page);
+      await moreButton.click();
+
+      const actionButton = moreButton
+        .locator('.more-actions-container editor-menu-action')
+        .filter({
+          hasText: 'Group Section',
+        });
+      await actionButton.click();
+      break;
+    }
     case 'ungroup': {
       const button = locatorComponentToolbar(page)
         .locator('edgeless-change-group-button')
-        .locator('.edgeless-component-toolbar-ungroup-button');
+        .getByRole('button', { name: 'Ungroup' });
       await button.click();
       break;
     }
     case 'renameGroup': {
       const button = locatorComponentToolbar(page)
         .locator('edgeless-change-group-button')
-        .locator('.edgeless-component-toolbar-group-rename-button');
+        .getByRole('button', { name: 'Rename' });
       await button.click();
       break;
     }
@@ -982,55 +1251,172 @@ export async function triggerComponentToolbarAction(
       await button.click();
       break;
     }
-    case 'autoSize': {
-      const button = locatorComponentToolbar(page).locator(
-        'edgeless-change-note-button .edgeless-auto-height-button'
-      );
+    case 'changeNoteColor': {
+      const button = locatorComponentToolbar(page)
+        .locator('edgeless-change-note-button')
+        .getByRole('button', { name: 'Background' });
       await button.click();
       break;
     }
     case 'changeNoteDisplayMode': {
-      const button = locatorComponentToolbar(page).locator(
-        'edgeless-change-note-button .display-mode-button'
-      );
+      const button = locatorComponentToolbar(page)
+        .locator('edgeless-change-note-button')
+        .getByRole('button', { name: 'Mode' });
       await button.click();
       break;
     }
     case 'changeNoteSlicerSetting': {
+      const button = locatorComponentToolbar(page)
+        .locator('edgeless-change-note-button')
+        .getByRole('button', { name: 'Slicer' });
+      await button.click();
+      break;
+    }
+    case 'changeNoteScale': {
+      const button = locatorComponentToolbar(page)
+        .locator('edgeless-change-note-button')
+        .getByRole('button', { name: 'Scale' });
+      await button.click();
+      break;
+    }
+    case 'autoSize': {
+      const button = locatorComponentToolbar(page)
+        .locator('edgeless-change-note-button')
+        .getByRole('button', { name: 'Size' });
+      await button.click();
+      break;
+    }
+    case 'addText': {
+      const button = locatorComponentToolbar(page).getByRole('button', {
+        name: 'Add text',
+      });
+      await button.click();
+      break;
+    }
+    case 'quickConnect': {
+      const button = locatorComponentToolbar(page).getByRole('button', {
+        name: 'Draw connector',
+      });
+      await button.click();
+      break;
+    }
+    case 'turnIntoLinkedDoc': {
+      const moreButton = locatorComponentToolbarMoreButton(page);
+      await moreButton.click();
+
+      const actionButton = moreButton
+        .locator('.more-actions-container editor-menu-action')
+        .filter({
+          hasText: 'Turn into linked doc',
+        });
+      await actionButton.click();
+      break;
+    }
+    case 'createLinkedDoc': {
+      const moreButton = locatorComponentToolbarMoreButton(page);
+      await moreButton.click();
+
+      const actionButton = moreButton
+        .locator('.more-actions-container editor-menu-action')
+        .filter({
+          hasText: 'Create linked doc',
+        });
+      await actionButton.click();
+      break;
+    }
+    case 'openLinkedDoc': {
+      const openButton = locatorComponentToolbar(page).getByRole('button', {
+        name: 'Open',
+      });
+      await openButton.click();
+
+      const button = locatorComponentToolbar(page).getByRole('button', {
+        name: 'Open this doc',
+      });
+      await button.click();
+      break;
+    }
+    case 'toCardView': {
+      const button = locatorComponentToolbar(page)
+        .locator('edgeless-tool-icon-button')
+        .filter({
+          hasText: 'Card view',
+        });
+      await button.click();
+      break;
+    }
+    case 'toEmbedView': {
+      const button = locatorComponentToolbar(page)
+        .locator('edgeless-tool-icon-button')
+        .filter({
+          hasText: 'Embed view',
+        });
+      await button.click();
+      break;
+    }
+    case 'autoArrange': {
       const button = locatorComponentToolbar(page).locator(
-        'edgeless-change-note-button .edgeless-note-slicer-button'
+        'edgeless-align-button'
       );
       await button.click();
+      const arrange = button.locator('editor-icon-button').filter({
+        hasText: 'Auto arrange',
+      });
+      await arrange.click();
+      break;
+    }
+    case 'autoResize': {
+      const button = locatorComponentToolbar(page).locator(
+        'edgeless-align-button'
+      );
+      await button.click();
+      const resize = button.locator('editor-icon-button').filter({
+        hasText: 'Resize & Align',
+      });
+      await resize.click();
       break;
     }
   }
 }
 
-export async function changeEdgelessNoteBackground(
-  page: Page,
-  color: CssVariableName
-) {
-  const colorButton = page.locator(
-    `edgeless-change-note-button .color-unit[aria-label="${color}"]`
-  );
-  await colorButton.click();
-}
-
-export async function changeShapeFillColor(page: Page, color: CssVariableName) {
+export async function changeEdgelessNoteBackground(page: Page, color: string) {
   const colorButton = page
-    .locator('edgeless-change-shape-button')
-    .locator('.color-panel-container.fill-color')
+    .locator('edgeless-change-note-button')
     .locator(`.color-unit[aria-label="${color}"]`);
   await colorButton.click();
 }
 
-export async function changeShapeStrokeColor(
-  page: Page,
-  color: CssVariableName
-) {
+export async function changeShapeFillColor(page: Page, color: string) {
   const colorButton = page
     .locator('edgeless-change-shape-button')
-    .locator('.color-panel-container.stroke-color')
+    .locator('edgeless-color-picker-button.fill-color')
+    .locator('edgeless-color-panel')
+    .locator(`.color-unit[aria-label="${color}"]`);
+  await colorButton.click({ force: true });
+}
+
+export async function changeShapeFillColorToTransparent(page: Page) {
+  const colorButton = page
+    .locator('edgeless-change-shape-button')
+    .locator('edgeless-color-picker-button.fill-color')
+    .locator('edgeless-color-panel')
+    .locator('edgeless-color-custom-button');
+  await colorButton.click({ force: true });
+
+  const input = page.locator('edgeless-color-picker').locator('label.alpha');
+  await input.focus();
+  await input.press('ArrowRight');
+  await input.press('ArrowRight');
+  await input.press('ArrowRight');
+  await input.press('Backspace');
+  await input.press('Backspace');
+  await input.press('Backspace');
+}
+
+export async function changeShapeStrokeColor(page: Page, color: string) {
+  const colorButton = page
+    .locator('edgeless-change-shape-button')
+    .locator('edgeless-color-picker-button.border-style')
     .locator(`.color-unit[aria-label="${color}"]`);
   await colorButton.click();
 }
@@ -1059,8 +1445,8 @@ export async function resizeConnectorByStartCapitalHandler(
 export function getEdgelessLineWidthPanel(page: Page) {
   return page
     .locator('edgeless-change-shape-button')
-    .locator('.line-style-panel')
-    .locator(`edgeless-line-width-panel`);
+    .locator('edgeless-line-width-panel')
+    .locator('.line-width-panel');
 }
 export async function changeShapeStrokeWidth(page: Page) {
   const lineWidthPanel = getEdgelessLineWidthPanel(page);
@@ -1078,8 +1464,7 @@ export function locatorShapeStrokeStyleButton(
 ) {
   return page
     .locator('edgeless-change-shape-button')
-    .locator('.line-style-panel')
-    .locator(`.edgeless-component-line-style-button.mode-${mode}`);
+    .locator(`.line-style-button.mode-${mode}`);
 }
 
 export async function changeShapeStrokeStyle(
@@ -1097,7 +1482,7 @@ export function locatorShapeStyleButton(
   return page
     .locator('edgeless-change-shape-button')
     .locator('edgeless-shape-style-panel')
-    .locator(`edgeless-tool-icon-button.${style}-shape-button`);
+    .getByRole('button', { name: style });
 }
 
 export async function changeShapeStyle(
@@ -1108,14 +1493,11 @@ export async function changeShapeStyle(
   await button.click();
 }
 
-export async function changeConnectorStrokeColor(
-  page: Page,
-  color: CssVariableName
-) {
+export async function changeConnectorStrokeColor(page: Page, color: string) {
   const colorButton = page
     .locator('edgeless-change-connector-button')
     .locator('edgeless-color-panel')
-    .locator(`.color-unit[aria-label="${color}"]`);
+    .getByLabel(color);
   await colorButton.click();
 }
 
@@ -1142,7 +1524,7 @@ export function locatorConnectorStrokeStyleButton(
 ) {
   return page
     .locator('edgeless-change-connector-button')
-    .locator(`.edgeless-component-line-style-button-${mode}`);
+    .locator(`.line-style-button.mode-${mode}`);
 }
 export async function changeConnectorStrokeStyle(
   page: Page,
@@ -1160,7 +1542,7 @@ export async function initThreeOverlapFilledShapes(page: Page) {
   await addBasicRectShapeElement(page, rect0.start, rect0.end);
   await page.mouse.click(rect0.start.x + 5, rect0.start.y + 5);
   await triggerComponentToolbarAction(page, 'changeShapeFillColor');
-  await changeShapeFillColor(page, '--affine-palette-shape-navy');
+  await changeShapeFillColor(page, '--affine-palette-shape-teal');
 
   const rect1 = {
     start: { x: 130, y: 130 },
@@ -1204,11 +1586,17 @@ export async function toViewCoord(page: Page, point: number[]) {
 export async function dragBetweenViewCoords(
   page: Page,
   start: number[],
-  end: number[]
+  end: number[],
+  options?: Parameters<typeof dragBetweenCoords>[3]
 ) {
   const [startX, startY] = await toViewCoord(page, start);
   const [endX, endY] = await toViewCoord(page, end);
-  await dragBetweenCoords(page, { x: startX, y: startY }, { x: endX, y: endY });
+  await dragBetweenCoords(
+    page,
+    { x: startX, y: startY },
+    { x: endX, y: endY },
+    options
+  );
 }
 
 export async function toModelCoord(page: Page, point: number[]) {
@@ -1239,6 +1627,38 @@ export async function getConnectorPath(page: Page, index = 0): Promise<IVec[]> {
   );
 }
 
+export async function getEdgelessElementBound(
+  page: Page,
+  elementId: string
+): Promise<[number, number, number, number]> {
+  return page.evaluate(
+    ([elementId]) => {
+      const container = document.querySelector('affine-edgeless-root');
+      if (!container) throw new Error('container not found');
+      const element = container.service.getElementById(elementId);
+      if (!element) throw new Error(`element not found: ${elementId}`);
+      return JSON.parse(element.xywh);
+    },
+    [elementId]
+  );
+}
+
+export async function getSelectedIds(page: Page) {
+  return page.evaluate(() => {
+    const container = document.querySelector('affine-edgeless-root');
+    if (!container) throw new Error('container not found');
+    return container.service.selection.selectedElements.map(e => e.id);
+  });
+}
+
+export async function getSelectedBoundCount(page: Page) {
+  return page.evaluate(() => {
+    const container = document.querySelector('affine-edgeless-root');
+    if (!container) throw new Error('container not found');
+    return container.service.selection.selectedElements.length;
+  });
+}
+
 export async function getSelectedBound(
   page: Page,
   index = 0
@@ -1247,14 +1667,14 @@ export async function getSelectedBound(
     ([index]) => {
       const container = document.querySelector('affine-edgeless-root');
       if (!container) throw new Error('container not found');
-      const selected = container.service.selection.elements[index];
+      const selected = container.service.selection.selectedElements[index];
       return JSON.parse(selected.xywh);
     },
     [index]
   );
 }
 
-export async function getGroupOfElements(page: Page, ids: string[]) {
+export async function getContainerOfElements(page: Page, ids: string[]) {
   return page.evaluate(
     ([ids]) => {
       const container = document.querySelector('affine-edgeless-root');
@@ -1266,7 +1686,7 @@ export async function getGroupOfElements(page: Page, ids: string[]) {
   );
 }
 
-export async function getGroupIds(page: Page) {
+export async function getContainerIds(page: Page) {
   return page.evaluate(() => {
     const container = document.querySelector('affine-edgeless-root');
     if (!container) throw new Error('container not found');
@@ -1274,16 +1694,16 @@ export async function getGroupIds(page: Page) {
   });
 }
 
-export async function getGroupChildrenIds(page: Page, id: string) {
+export async function getContainerChildIds(page: Page, id: string) {
   return page.evaluate(
     ([id]) => {
       const container = document.querySelector('affine-edgeless-root');
       if (!container) throw new Error('container not found');
-      return Array.from(
-        container.service
-          .getElementsByType('group')
-          .find(group => group.id === id)?.childIds ?? []
-      );
+      const gfxModel = container.service.getElementById(id);
+
+      return gfxModel && container.service.surface.isGroup(gfxModel)
+        ? gfxModel.childIds
+        : [];
     },
     [id]
   );
@@ -1318,7 +1738,7 @@ export async function getTypeById(page: Page, id: string) {
     ([id]) => {
       const container = document.querySelector('affine-edgeless-root');
       if (!container) throw new Error('container not found');
-      const element = container.service.getElementById(id);
+      const element = container.service.getElementById(id)!;
       return 'flavour' in element ? element.flavour : element.type;
     },
     [id]
@@ -1338,14 +1758,14 @@ export async function getIds(page: Page, filterGroup = false) {
   );
 }
 
-export async function getFirstGroupId(page: Page, exclude: string[] = []) {
+export async function getFirstContainerId(page: Page, exclude: string[] = []) {
   return page.evaluate(
     ([exclude]) => {
       const container = document.querySelector('affine-edgeless-root');
       if (!container) throw new Error('container not found');
       return (
-        container.service.elements.find(
-          e => e.type === 'group' && !exclude.includes(e.id)
+        container.service.edgelessElements.find(
+          e => container.service.surface.isGroup(e) && !exclude.includes(e.id)
         )?.id ?? ''
       );
     },
@@ -1366,8 +1786,10 @@ export async function getSortedIdsInViewport(page: Page) {
     const container = document.querySelector('affine-edgeless-root');
     if (!container) throw new Error('container not found');
     const { service } = container;
-    return service.layer.canvasGrid
-      .search(service.viewport.viewportBounds)
+    return service.gfx.grid
+      .search(service.viewport.viewportBounds, {
+        filter: ['canvas'],
+      })
       .map(e => e.id);
   });
 }
@@ -1377,6 +1799,19 @@ export async function edgelessCommonSetup(page: Page) {
   await initEmptyEdgelessState(page);
   await switchEditorMode(page);
   await deleteAll(page);
+  await resetHistory(page);
+}
+
+export async function createFrame(
+  page: Page,
+  coord1: [number, number],
+  coord2: [number, number]
+) {
+  await page.keyboard.press('f');
+  await dragBetweenViewCoords(page, coord1, coord2);
+  const id = (await getSelectedIds(page))[0];
+  await page.keyboard.press('Escape');
+  return id;
 }
 
 export async function createShapeElement(
@@ -1387,12 +1822,13 @@ export async function createShapeElement(
 ) {
   const start = await toViewCoord(page, coord1);
   const end = await toViewCoord(page, coord2);
-  await addBasicShapeElement(
+  const shapeId = await addBasicShapeElement(
     page,
     { x: start[0], y: start[1] },
     { x: end[0], y: end[1] },
     shape
   );
+  return shapeId;
 }
 
 export async function createConnectorElement(
@@ -1409,9 +1845,58 @@ export async function createConnectorElement(
   );
 }
 
-export async function createNote(page: Page, coord1: number[]) {
+export async function createFrameElement(
+  page: Page,
+  coord1: number[],
+  coord2: number[]
+) {
   const start = await toViewCoord(page, coord1);
-  return addNote(page, 'note', start[0], start[1]);
+  const end = await toViewCoord(page, coord2);
+  await addBasicFrameElement(
+    page,
+    { x: start[0], y: start[1] },
+    { x: end[0], y: end[1] }
+  );
+}
+
+export async function createBrushElement(
+  page: Page,
+  coord1: number[],
+  coord2: number[],
+  auto = true
+) {
+  const start = await toViewCoord(page, coord1);
+  const end = await toViewCoord(page, coord2);
+  await addBasicBrushElement(
+    page,
+    { x: start[0], y: start[1] },
+    { x: end[0], y: end[1] },
+    auto
+  );
+}
+
+export async function createEdgelessText(
+  page: Page,
+  coord: number[],
+  text = 'text'
+) {
+  const position = await toViewCoord(page, coord);
+  await addBasicEdgelessText(page, text, position[0], position[1]);
+}
+
+export async function createMindmap(page: Page, coord: number[]) {
+  const position = await toViewCoord(page, coord);
+  await page.keyboard.press('m');
+  await page.mouse.click(position[0], position[1]);
+}
+
+export async function createNote(
+  page: Page,
+  coord1: number[],
+  content?: string
+) {
+  const start = await toViewCoord(page, coord1);
+  return addNote(page, content || 'note', start[0], start[1]);
 }
 
 export async function hoverOnNote(page: Page, id: string, offset = [0, 0]) {
@@ -1433,4 +1918,8 @@ export function toIdCountMap(ids: string[]) {
     },
     {} as Record<string, number>
   );
+}
+
+export function getFrameTitle(page: Page, frame: string) {
+  return page.locator(`affine-frame-title[data-id="${frame}"]`);
 }

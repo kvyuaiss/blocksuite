@@ -1,57 +1,77 @@
-import '../buttons/tool-icon-button.js';
-
-import { WithDisposable } from '@blocksuite/block-std';
-import { css, html, LitElement } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
-import { repeat } from 'lit/directives/repeat.js';
-import { styleMap } from 'lit/directives/style-map.js';
-
-import { NOTE_SHADOWS } from '../../../../_common/edgeless/note/consts.js';
 import {
   NoteNoShadowIcon,
   NoteShadowSampleIcon,
-} from '../../../../_common/icons/edgeless.js';
-import { getThemeMode } from '../../../../_common/utils/query.js';
+} from '@blocksuite/affine-components/icons';
+import { ColorScheme, NoteShadow } from '@blocksuite/affine-model';
+import { WithDisposable } from '@blocksuite/global/utils';
+import { css, html, LitElement } from 'lit';
+import { property } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
+import { styleMap } from 'lit/directives/style-map.js';
 
-const TOOLBAR_SHADOWS_LIGHT = [
-  '',
-  '0px 0.2px 4.8px 0px rgba(66, 65, 73, 0.2), 0px 0px 1.6px 0px rgba(66, 65, 73, 0.2)',
-  '0px 9.6px 10.4px -4px rgba(66, 65, 73, 0.07), 0px 10.4px 7.2px -8px rgba(66, 65, 73, 0.22)',
-  '0px 0px 0px 4px rgba(255, 255, 255, 1), 0px 1.2px 2.4px 4.8px rgba(66, 65, 73, 0.16)',
-  '0px 5.2px 12px 0px rgba(66, 65, 73, 0.13), 0px 0px 0.4px 1px rgba(0, 0, 0, 0.06)',
-  '0px 0px 0px 1.4px rgba(0, 0, 0, 1), 2.4px 2.4px 0px 1px rgba(0, 0, 0, 1)',
+const SHADOWS = [
+  {
+    type: NoteShadow.None,
+    styles: {
+      light: '',
+      dark: '',
+    },
+    tooltip: 'No shadow',
+  },
+  {
+    type: NoteShadow.Box,
+    styles: {
+      light:
+        '0px 0.2px 4.8px 0px rgba(66, 65, 73, 0.2), 0px 0px 1.6px 0px rgba(66, 65, 73, 0.2)',
+      dark: '0px 0.2px 6px 0px rgba(0, 0, 0, 0.44), 0px 0px 2px 0px rgba(0, 0, 0, 0.66)',
+    },
+    tooltip: 'Box shadow',
+  },
+  {
+    type: NoteShadow.Sticker,
+    styles: {
+      light:
+        '0px 9.6px 10.4px -4px rgba(66, 65, 73, 0.07), 0px 10.4px 7.2px -8px rgba(66, 65, 73, 0.22)',
+      dark: '0px 9.6px 10.4px -4px rgba(0, 0, 0, 0.66), 0px 10.4px 7.2px -8px rgba(0, 0, 0, 0.44)',
+    },
+    tooltip: 'Sticker shadow',
+  },
+  {
+    type: NoteShadow.Paper,
+    styles: {
+      light:
+        '0px 0px 0px 4px rgba(255, 255, 255, 1), 0px 1.2px 2.4px 4.8px rgba(66, 65, 73, 0.16)',
+      dark: '0px 1.2px 2.4px 4.8px rgba(0, 0, 0, 0.36), 0px 0px 0px 3.4px rgba(75, 75, 75, 1)',
+    },
+    tooltip: 'Paper shadow',
+  },
+  {
+    type: NoteShadow.Float,
+    styles: {
+      light:
+        '0px 5.2px 12px 0px rgba(66, 65, 73, 0.13), 0px 0px 0.4px 1px rgba(0, 0, 0, 0.06)',
+      dark: '0px 5.2px 12px 0px rgba(0, 0, 0, 0.66), 0px 0px 0.4px 1px rgba(0, 0, 0, 0.44)',
+    },
+    tooltip: 'Floation shadow',
+  },
+  {
+    type: NoteShadow.Film,
+    styles: {
+      light:
+        '0px 0px 0px 1.4px rgba(0, 0, 0, 1), 2.4px 2.4px 0px 1px rgba(0, 0, 0, 1)',
+      dark: '0px 0px 0px 1.4px rgba(178, 178, 178, 1), 2.4px 2.4px 0px 1px rgba(178, 178, 178, 1)',
+    },
+    tooltip: 'Film shadow',
+  },
 ];
 
-const TOOLBAR_SHADOWS_DARK = [
-  '',
-  '0px 0.2px 6px 0px rgba(0, 0, 0, 0.44), 0px 0px 2px 0px rgba(0, 0, 0, 0.66)',
-  '0px 9.6px 10.4px -4px rgba(0, 0, 0, 0.66), 0px 10.4px 7.2px -8px rgba(0, 0, 0, 0.44)',
-  '0px 1.2px 2.4px 4.8px rgba(0, 0, 0, 0.36), 0px 0px 0px 3.4px rgba(75, 75, 75, 1)',
-  '0px 5.2px 12px 0px rgba(0, 0, 0, 0.66), 0px 0px 0.4px 1px rgba(0, 0, 0, 0.44)',
-  '0px 0px 0px 1.4px rgba(178, 178, 178, 1), 2.4px 2.4px 0px 1px rgba(178, 178, 178, 1)',
-];
-
-const TOOLTIPS = [
-  'No Shadow',
-  'Box Shadow',
-  'Sticker Shadow',
-  'Paper Shadow',
-  'Floation Shadow',
-  'Film Shadow',
-];
-
-@customElement('edgeless-note-shadow-panel')
 export class EdgelessNoteShadowPanel extends WithDisposable(LitElement) {
   static override styles = css`
     :host {
-      border-radius: 8px;
-      padding: 8px;
-      gap: 8px;
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      background: var(--affine-background-overlay-panel-color);
-      box-shadow: var(--affine-shadow-2);
+      justify-content: space-between;
+      gap: 8px;
     }
 
     .item {
@@ -74,55 +94,54 @@ export class EdgelessNoteShadowPanel extends WithDisposable(LitElement) {
     }
   `;
 
-  @property({ attribute: false })
-  value!: string;
-
-  @property({ attribute: false })
-  background!: string;
-
-  @property({ attribute: false })
-  onSelect!: (value: string) => void;
-
   override render() {
-    const mode = getThemeMode();
-    const SHADOWS =
-      mode === 'dark' ? TOOLBAR_SHADOWS_DARK : TOOLBAR_SHADOWS_LIGHT;
-    return html`${repeat(
-      NOTE_SHADOWS,
+    return repeat(
+      SHADOWS,
       shadow => shadow,
-      (shadow, index) => {
-        return html`
-          <style>
+      (shadow, index) =>
+        html`<style>
             .item-icon svg rect:first-of-type {
-              fill: var(${this.background});
+              fill: ${this.background.startsWith('--')
+                ? `var(${this.background})`
+                : this.background};
             }
           </style>
           <div
             class="item"
-            @click=${() => this.onSelect(shadow)}
+            @click=${() => this.onSelect(shadow.type)}
             style=${styleMap({
               border:
-                this.value === shadow
+                this.value === shadow.type
                   ? '1px solid var(--affine-brand-color)'
                   : 'none',
             })}
           >
             <edgeless-tool-icon-button
               class="item-icon"
-              .tooltip=${TOOLTIPS[index]}
+              .tooltip=${shadow.tooltip}
               .tipPosition=${'bottom'}
               .iconContainerPadding=${0}
               style=${styleMap({
-                boxShadow: `${SHADOWS[index]}`,
+                boxShadow: `${this.theme === ColorScheme.Dark ? shadow.styles.dark : shadow.styles.light}`,
               })}
             >
               ${index === 0 ? NoteNoShadowIcon : NoteShadowSampleIcon}
             </edgeless-tool-icon-button>
-          </div>
-        `;
-      }
-    )} `;
+          </div>`
+    );
   }
+
+  @property({ attribute: false })
+  accessor background!: string;
+
+  @property({ attribute: false })
+  accessor onSelect!: (value: string) => void;
+
+  @property({ attribute: false })
+  accessor theme!: ColorScheme;
+
+  @property({ attribute: false })
+  accessor value!: string;
 }
 
 declare global {

@@ -1,5 +1,4 @@
 import { css, html, LitElement, nothing } from 'lit';
-import { customElement } from 'lit/decorators.js';
 import { ref } from 'lit/directives/ref.js';
 import { repeat } from 'lit/directives/repeat.js';
 
@@ -13,7 +12,6 @@ type ModalOptions = {
   footer: null | ModalButton[];
 };
 
-@customElement('affine-custom-modal')
 export class AffineCustomModal extends LitElement {
   static override styles = css`
     :host {
@@ -88,8 +86,9 @@ export class AffineCustomModal extends LitElement {
     }
   `;
 
-  options!: ModalOptions;
   onOpen!: (div: HTMLDivElement) => void;
+
+  options!: ModalOptions;
 
   close() {
     this.remove();
@@ -102,7 +101,7 @@ export class AffineCustomModal extends LitElement {
   override render() {
     const { options } = this;
 
-    return html`<div class="modal-background blocksuite-overlay">
+    return html`<div class="modal-background">
       <div class="modal-window">
         <div class="modal-main" ${ref(this.modalRef)}></div>
         <div class="modal-footer">

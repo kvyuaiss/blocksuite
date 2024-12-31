@@ -1,97 +1,54 @@
-import '../../edgeless/components/buttons/tool-icon-button.js';
-import '../../edgeless/components/panel/card-style-panel.js';
-import './component-toolbar-menu-divider.js';
+import type { AttachmentBlockModel } from '@blocksuite/affine-model';
+import type { TemplateResult } from 'lit';
 
-import { WithDisposable } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import { css, html, LitElement, nothing, type TemplateResult } from 'lit';
-import { customElement, property, query, state } from 'lit/decorators.js';
+import {
+  CaptionIcon,
+  DownloadIcon,
+  PaletteIcon,
+} from '@blocksuite/affine-components/icons';
+import { renderToolbarSeparator } from '@blocksuite/affine-components/toolbar';
+import { ThemeProvider } from '@blocksuite/affine-shared/services';
+import { Bound, WithDisposable } from '@blocksuite/global/utils';
+import { html, LitElement, nothing } from 'lit';
+import { property } from 'lit/decorators.js';
+import { join } from 'lit/directives/join.js';
+
+import type { EmbedCardStyle } from '../../../_common/types.js';
+import type { AttachmentBlockComponent } from '../../../attachment-block/index.js';
+import type { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
 
 import {
   EMBED_CARD_HEIGHT,
   EMBED_CARD_WIDTH,
 } from '../../../_common/consts.js';
-import { CaptionIcon, PaletteIcon } from '../../../_common/icons/text.js';
-import type { EmbedCardStyle } from '../../../_common/types.js';
-import { createButtonPopper } from '../../../_common/utils/button-popper.js';
 import { getEmbedCardIcons } from '../../../_common/utils/url.js';
-import type {
-  AttachmentBlockComponent,
-  AttachmentBlockModel,
-  EdgelessRootBlockComponent,
-} from '../../../index.js';
-import { Bound } from '../../../surface-block/index.js';
+import { attachmentViewToggleMenu } from '../../../attachment-block/index.js';
 
-@customElement('edgeless-change-attachment-button')
 export class EdgelessChangeAttachmentButton extends WithDisposable(LitElement) {
-  static override styles = css`
-    .change-attachment-container {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
+  private _download = () => {
+    this._block?.download();
+  };
 
-    .change-attachment-button {
-      width: 24px;
-      height: 24px;
-      border-radius: 4px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
+  private _setCardStyle = (style: EmbedCardStyle) => {
+    const bounds = Bound.deserialize(this.model.xywh);
+    bounds.w = EMBED_CARD_WIDTH[style];
+    bounds.h = EMBED_CARD_HEIGHT[style];
+    const xywh = bounds.serialize();
+    this.model.doc.updateBlock(this.model, { style, xywh });
+  };
 
-    component-toolbar-menu-divider {
-      height: 24px;
-    }
+  private _showCaption = () => {
+    this._block?.captionEditor?.show();
+  };
 
-    card-style-panel {
-      display: none;
-    }
-    card-style-panel[data-show] {
-      display: flex;
-    }
-  `;
-
-  @property({ attribute: false })
-  model!: AttachmentBlockModel;
-
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
-
-  @state()
-  private _showPopper = false;
-
-  @query('.change-attachment-button.card-style')
-  private _cardStyleButton!: HTMLDivElement;
-
-  @query('card-style-panel')
-  private _cardStylePanel!: HTMLDivElement;
+  private get _block() {
+    const block = this.std.view.getBlock(this.model.id);
+    if (!block) return null;
+    return block as AttachmentBlockComponent;
+  }
 
   private get _doc() {
     return this.model.doc;
-  }
-
-  get std() {
-    return this.edgeless.std;
-  }
-
-  private _cardStylePopper: ReturnType<typeof createButtonPopper> | null = null;
-
-  private get _blockElement() {
-    const blockSelection = this.edgeless.service.selection.selections.filter(
-      sel => sel.elements.includes(this.model.id)
-    );
-    if (blockSelection.length !== 1) {
-      return;
-    }
-
-    const blockElement = this.std.view.viewFromPath(
-      'block',
-      blockSelection[0].path
-    ) as AttachmentBlockComponent | null;
-    assertExists(blockElement);
-
-    return blockElement;
   }
 
   private get _getCardStyleOptions(): {
@@ -99,7 +56,8 @@ export class EdgelessChangeAttachmentButton extends WithDisposable(LitElement) {
     Icon: TemplateResult<1>;
     tooltip: string;
   }[] {
-    const { EmbedCardListIcon, EmbedCardCubeIcon } = getEmbedCardIcons();
+    const theme = this.std.get(ThemeProvider).theme;
+    const { EmbedCardListIcon, EmbedCardCubeIcon } = getEmbedCardIcons(theme);
     return [
       {
         style: 'horizontalThin',
@@ -114,76 +72,78 @@ export class EdgelessChangeAttachmentButton extends WithDisposable(LitElement) {
     ];
   }
 
-  private _showCaption() {
-    this._blockElement?.captionElement.show();
+  get std() {
+    return this.edgeless.std;
   }
 
-  private _setCardStyle(style: EmbedCardStyle) {
-    const bounds = Bound.deserialize(this.model.xywh);
-    bounds.w = EMBED_CARD_WIDTH[style];
-    bounds.h = EMBED_CARD_HEIGHT[style];
-    const xywh = bounds.serialize();
-    this.model.doc.updateBlock(this.model, { style, xywh });
-    this._cardStylePopper?.hide();
-  }
+  get viewToggleMenu() {
+    const block = this._block;
+    const model = this.model;
+    if (!block || !model) return nothing;
 
-  override firstUpdated(changedProperties: Map<string, unknown>) {
-    this._cardStylePopper = createButtonPopper(
-      this._cardStyleButton,
-      this._cardStylePanel,
-      ({ display }) => {
-        this._showPopper = display === 'show';
-      }
-    );
-    this._disposables.add(this._cardStylePopper);
-    super.firstUpdated(changedProperties);
+    return attachmentViewToggleMenu({
+      block,
+      callback: () => this.requestUpdate(),
+    });
   }
 
   override render() {
-    const model = this.model;
-
-    return html`
-      <div class="change-attachment-container">
-        <div class="change-attachment-button card-style">
-          <edgeless-tool-icon-button
-            .tooltip=${this._showPopper ? '' : 'Card style'}
-            .iconContainerPadding=${2}
+    return join(
+      [
+        this.model.style === 'pdf'
+          ? null
+          : html`
+              <editor-menu-button
+                .contentPadding=${'8px'}
+                .button=${html`
+                  <editor-icon-button
+                    aria-label="Card style"
+                    .tooltip=${'Card style'}
+                  >
+                    ${PaletteIcon}
+                  </editor-icon-button>
+                `}
+              >
+                <card-style-panel
+                  .value=${this.model.style}
+                  .options=${this._getCardStyleOptions}
+                  .onSelect=${this._setCardStyle}
+                >
+                </card-style-panel>
+              </editor-menu-button>
+            `,
+        this.viewToggleMenu,
+        html`
+          <editor-icon-button
+            aria-label="Download"
+            .tooltip=${'Download'}
             ?disabled=${this._doc.readonly}
-            @click=${() => this._cardStylePopper?.toggle()}
+            @click=${this._download}
           >
-            ${PaletteIcon}
-          </edgeless-tool-icon-button>
-
-          <card-style-panel
-            .value=${model.style}
-            .options=${this._getCardStyleOptions}
-            .onSelect=${(value: EmbedCardStyle) => this._setCardStyle(value)}
+            ${DownloadIcon}
+          </editor-icon-button>
+        `,
+        html`
+          <editor-icon-button
+            aria-label="Add caption"
+            .tooltip=${'Add caption'}
+            class="change-attachment-button caption"
+            ?disabled=${this._doc.readonly}
+            @click=${this._showCaption}
           >
-          </card-style-panel>
-        </div>
-
-        <component-toolbar-menu-divider
-          .vertical=${true}
-        ></component-toolbar-menu-divider>
-
-        <edgeless-tool-icon-button
-          .tooltip=${'Add Caption'}
-          .iconContainerPadding=${2}
-          class="change-attachment-button caption"
-          ?disabled=${this._doc.readonly}
-          @click=${() => this._showCaption()}
-        >
-          ${CaptionIcon}
-        </edgeless-tool-icon-button>
-      </div>
-    `;
+            ${CaptionIcon}
+          </editor-icon-button>
+        `,
+      ].filter(button => button !== nothing && button),
+      renderToolbarSeparator
+    );
   }
-}
 
-declare global {
-  interface HTMLElementTagNameMap {
-    'edgeless-change-attachment-button': EdgelessChangeAttachmentButton;
-  }
+  @property({ attribute: false })
+  accessor edgeless!: EdgelessRootBlockComponent;
+
+  @property({ attribute: false })
+  accessor model!: AttachmentBlockModel;
 }
 
 export function renderAttachmentButton(

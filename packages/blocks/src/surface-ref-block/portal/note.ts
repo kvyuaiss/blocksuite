@@ -1,13 +1,23 @@
-import type { EditorHost } from '@blocksuite/block-std';
+import type { CanvasRenderer } from '@blocksuite/affine-block-surface';
+import type { NoteBlockModel } from '@blocksuite/affine-model';
+
 import {
-  RangeManager,
-  ShadowlessElement,
-  WithDisposable,
+  DEFAULT_NOTE_BACKGROUND_COLOR,
+  NoteDisplayMode,
+  NoteShadow,
+} from '@blocksuite/affine-model';
+import { ThemeProvider } from '@blocksuite/affine-shared/services';
+import { SpecProvider } from '@blocksuite/affine-shared/utils';
+import {
+  BlockStdScope,
+  type EditorHost,
+  RANGE_QUERY_EXCLUDE_ATTR,
 } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import type { BlockModel, BlockSelector } from '@blocksuite/store';
+import { ShadowlessElement } from '@blocksuite/block-std';
+import { deserializeXYWH, WithDisposable } from '@blocksuite/global/utils';
+import { type BlockModel, BlockViewType, type Query } from '@blocksuite/store';
 import { css, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 import { html } from 'lit/static-html.js';
 
@@ -15,13 +25,7 @@ import {
   EDGELESS_BLOCK_CHILD_BORDER_WIDTH,
   EDGELESS_BLOCK_CHILD_PADDING,
 } from '../../_common/consts.js';
-import { DEFAULT_NOTE_COLOR } from '../../_common/edgeless/note/consts.js';
-import { NoteDisplayMode } from '../../_common/types.js';
-import { SpecProvider } from '../../_specs/spec-provider.js';
-import { type NoteBlockModel } from '../../note-block/index.js';
-import { deserializeXYWH } from '../../surface-block/index.js';
 
-@customElement('surface-ref-note-portal')
 export class SurfaceRefNotePortal extends WithDisposable(ShadowlessElement) {
   static override styles = css`
     surface-ref-note-portal {
@@ -29,58 +33,32 @@ export class SurfaceRefNotePortal extends WithDisposable(ShadowlessElement) {
     }
   `;
 
-  @property({ attribute: false })
-  index!: number;
+  ancestors = new Set<string>();
 
-  @property({ attribute: false })
-  model!: NoteBlockModel;
+  query: Query | null = null;
 
-  @property({ attribute: false })
-  host!: EditorHost;
-
-  renderPreview(model: BlockModel) {
-    const ids: string[] = [];
-    let parent: string | null = model.id;
-    while (parent && !ids.includes(parent)) {
-      ids.push(parent);
-      parent = model.doc.blockCollection.crud.getParent(parent);
-    }
-    const addChildren = (model: BlockModel) => {
-      model.children.forEach(child => {
-        if (ids.includes(child.id)) return;
-        if (child.flavour === 'affine:surface-ref') return;
-        ids.push(child.id);
-        addChildren(child);
-      });
-    };
-    addChildren(model);
-
-    const selector: BlockSelector = block => ids.includes(block.id);
-    const doc = model.doc.blockCollection.getDoc(selector);
-    this._disposables.add(() => {
-      model.doc.blockCollection.clearSelector(selector);
-    });
-    this._disposables.add(
-      doc.slots.blockUpdated.on(payload => {
-        if (payload.type === 'update') return;
-        let parent: string | null = payload.id;
-        while (parent) {
-          if (model.id === parent) {
-            this.requestUpdate();
-            return;
-          }
-          parent = model.doc.blockCollection.crud.getParent(parent);
-        }
-      })
-    );
-
-    const previewSpec = SpecProvider.getInstance().getSpec('preview');
-    assertExists(previewSpec, 'Preview spec is not found');
-    return this.host.renderSpecPortal(doc, previewSpec);
-  }
-
-  override connectedCallback(): void {
+  override connectedCallback() {
     super.connectedCallback();
+
+    const ancestors = new Set<string>();
+    let parent: BlockModel | null = this.model;
+    while (parent) {
+      this.ancestors.add(parent.id);
+      parent = this.model.doc.getParent(parent.id);
+    }
+    const query: Query = {
+      mode: 'include',
+      match: Array.from(ancestors).map(id => ({
+        id,
+        viewType: BlockViewType.Display,
+      })),
+    };
+    this.query = query;
+
+    const doc = this.model.doc;
+    this._disposables.add(() => {
+      doc.blockCollection.clearQuery(query, true);
+    });
   }
 
   override firstUpdated() {
@@ -89,45 +67,31 @@ export class SurfaceRefNotePortal extends WithDisposable(ShadowlessElement) {
     );
   }
 
-  override updated() {
-    setTimeout(() => {
-      const editiableElements = Array.from<HTMLDivElement>(
-        this.querySelectorAll('[contenteditable]')
-      );
-      const blockElements = Array.from(
-        this.querySelectorAll(`[data-block-id]`)
-      );
-
-      editiableElements.forEach(element => {
-        if (element.contentEditable === 'true')
-          element.contentEditable = 'false';
-      });
-
-      blockElements.forEach(element => {
-        element.setAttribute(RangeManager.rangeQueryExcludeAttr, 'true');
-      });
-    }, 500);
-  }
-
   override render() {
     const { model, index } = this;
-    const { displayMode } = model;
+    const { displayMode, edgeless } = model;
     if (!!displayMode && displayMode === NoteDisplayMode.DocOnly)
       return nothing;
 
-    const { xywh, background } = model;
-    const [modelX, modelY, modelW, modelH] = deserializeXYWH(xywh);
+    const backgroundColor = this.host.std
+      .get(ThemeProvider)
+      .generateColorProperty(model.background, DEFAULT_NOTE_BACKGROUND_COLOR);
+
+    const [modelX, modelY, modelW, modelH] = deserializeXYWH(model.xywh);
     const style = {
       zIndex: `${index}`,
       width: modelW + 'px',
-      height: modelH + 'px',
+      height:
+        edgeless.collapse && edgeless.collapsedHeight
+          ? edgeless.collapsedHeight + 'px'
+          : undefined,
       transform: `translate(${modelX}px, ${modelY}px)`,
       padding: `${EDGELESS_BLOCK_CHILD_PADDING}px`,
-      border: `${EDGELESS_BLOCK_CHILD_BORDER_WIDTH}px ${'solid'} var(--affine-black-10)`,
-      background: `var(${background ?? DEFAULT_NOTE_COLOR})`,
-      boxShadow: 'var(--affine-shadow-3)',
+      border: `${EDGELESS_BLOCK_CHILD_BORDER_WIDTH}px none var(--affine-black-10)`,
+      backgroundColor,
+      boxShadow: `var(${NoteShadow.Sticker})`,
       position: 'absolute',
-      borderRadius: '8px',
+      borderRadius: '0px',
       boxSizing: 'border-box',
       pointerEvents: 'none',
       overflow: 'hidden',
@@ -142,10 +106,56 @@ export class SurfaceRefNotePortal extends WithDisposable(ShadowlessElement) {
         data-model-height="${modelH}"
         data-portal-reference-block-id="${model.id}"
       >
-        ${this.renderPreview(model)}
+        ${this.renderPreview()}
       </div>
     `;
   }
+
+  renderPreview() {
+    if (!this.query) {
+      console.error('Query is not set before rendering note preview');
+      return nothing;
+    }
+    const doc = this.model.doc.blockCollection.getDoc({
+      query: this.query,
+      readonly: true,
+    });
+    const previewSpec = SpecProvider.getInstance().getSpec('page:preview');
+    return new BlockStdScope({
+      doc,
+      extensions: previewSpec.value.slice(),
+    }).render();
+  }
+
+  override updated() {
+    setTimeout(() => {
+      const editableElements = Array.from<HTMLDivElement>(
+        this.querySelectorAll('[contenteditable]')
+      );
+      const blocks = Array.from(this.querySelectorAll(`[data-block-id]`));
+
+      editableElements.forEach(element => {
+        if (element.contentEditable === 'true')
+          element.contentEditable = 'false';
+      });
+
+      blocks.forEach(element => {
+        element.setAttribute(RANGE_QUERY_EXCLUDE_ATTR, 'true');
+      });
+    }, 500);
+  }
+
+  @property({ attribute: false })
+  accessor host!: EditorHost;
+
+  @property({ attribute: false })
+  accessor index!: number;
+
+  @property({ attribute: false })
+  accessor model!: NoteBlockModel;
+
+  @property({ attribute: false })
+  accessor renderer!: CanvasRenderer;
 }
 
 declare global {

@@ -1,6 +1,5 @@
-import type { TextSelection } from '@blocksuite/block-std';
-import type { EditorHost } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
+import type { EditorHost, TextSelection } from '@blocksuite/block-std';
+
 import { DocCollection, type Y } from '@blocksuite/store';
 
 export interface CommentMeta {
@@ -9,11 +8,11 @@ export interface CommentMeta {
 }
 export interface CommentRange {
   start: {
-    path: string[];
+    id: string;
     index: Y.RelativePosition;
   };
   end: {
-    path: string[];
+    id: string;
     index: Y.RelativePosition;
   };
 }
@@ -26,77 +25,15 @@ export interface CommentContent {
 export type Comment = CommentMeta & CommentRange & CommentContent;
 
 export class CommentManager {
-  constructor(public readonly host: EditorHost) {}
+  private get _command() {
+    return this.host.command;
+  }
 
   get commentsMap() {
     return this.host.doc.spaceDoc.getMap<Y.Map<unknown>>('comments');
   }
 
-  parseTextSelection(selection: TextSelection): {
-    quote: CommentContent['quote'];
-    range: CommentRange;
-  } | null {
-    const [_, ctx] = this._command
-      .chain()
-      .getSelectedBlocks({
-        currentTextSelection: selection,
-        types: ['text'],
-      })
-      .run();
-    const blocks = ctx.selectedBlocks;
-    if (!blocks || blocks.length === 0) return null;
-
-    const { from, to } = selection;
-    const fromBlock = blocks[0];
-    const fromBlockText = fromBlock.model.text;
-    const fromBlockPath = fromBlock.path;
-    assertExists(fromBlockText);
-    assertExists(fromBlockPath);
-    const toBlock = blocks[blocks.length - 1];
-    const toBlockText = toBlock.model.text;
-    const toBlockPath = toBlock.path;
-    assertExists(toBlockText);
-    assertExists(toBlockPath);
-
-    const startIndex = DocCollection.Y.createRelativePositionFromTypeIndex(
-      fromBlockText.yText,
-      from.index
-    );
-    const endIndex = DocCollection.Y.createRelativePositionFromTypeIndex(
-      toBlockText.yText,
-      to ? to.index + to.length : from.index + from.length
-    );
-    const quote = blocks.reduce((acc, block, index) => {
-      const text = block.model.text;
-      if (!text) return acc;
-
-      if (index === 0) {
-        return (
-          acc +
-          text.yText.toString().slice(from.index, from.index + from.length)
-        );
-      }
-      if (index === blocks.length - 1 && to) {
-        return acc + ' ' + text.yText.toString().slice(0, to.index + to.length);
-      }
-
-      return acc + ' ' + text.yText.toString();
-    }, '');
-
-    return {
-      quote,
-      range: {
-        start: {
-          path: fromBlockPath,
-          index: startIndex,
-        },
-        end: {
-          path: toBlockPath,
-          index: endIndex,
-        },
-      },
-    };
-  }
+  constructor(readonly host: EditorHost) {}
 
   addComment(
     selection: TextSelection,
@@ -135,13 +72,13 @@ export class CommentManager {
           start.index,
           this.host.doc.spaceDoc
         );
-      const startBlock = this.host.view.viewFromPath('block', start.path);
+      const startBlock = this.host.view.getBlock(start.id);
       const endIndex =
         DocCollection.Y.createAbsolutePositionFromRelativePosition(
           end.index,
           this.host.doc.spaceDoc
         );
-      const endBlock = this.host.view.viewFromPath('block', end.path);
+      const endBlock = this.host.view.getBlock(end.id);
 
       if (!startIndex || !startBlock || !endIndex || !endBlock) {
         // remove outdated comment
@@ -163,7 +100,66 @@ export class CommentManager {
     return comments;
   }
 
-  private get _command() {
-    return this.host.command;
+  parseTextSelection(selection: TextSelection): {
+    quote: CommentContent['quote'];
+    range: CommentRange;
+  } | null {
+    const [_, ctx] = this._command
+      .chain()
+      .getSelectedBlocks({
+        currentTextSelection: selection,
+        types: ['text'],
+      })
+      .run();
+    const blocks = ctx.selectedBlocks;
+    if (!blocks || blocks.length === 0) return null;
+
+    const { from, to } = selection;
+    const fromBlock = blocks[0];
+    const fromBlockText = fromBlock.model.text;
+    const fromBlockId = fromBlock.model.id;
+    const toBlock = blocks[blocks.length - 1];
+    const toBlockText = toBlock.model.text;
+    const toBlockId = toBlock.model.id;
+    if (!fromBlockText || !toBlockText) return null;
+
+    const startIndex = DocCollection.Y.createRelativePositionFromTypeIndex(
+      fromBlockText.yText,
+      from.index
+    );
+    const endIndex = DocCollection.Y.createRelativePositionFromTypeIndex(
+      toBlockText.yText,
+      to ? to.index + to.length : from.index + from.length
+    );
+    const quote = blocks.reduce((acc, block, index) => {
+      const text = block.model.text;
+      if (!text) return acc;
+
+      if (index === 0) {
+        return (
+          acc +
+          text.yText.toString().slice(from.index, from.index + from.length)
+        );
+      }
+      if (index === blocks.length - 1 && to) {
+        return acc + ' ' + text.yText.toString().slice(0, to.index + to.length);
+      }
+
+      return acc + ' ' + text.yText.toString();
+    }, '');
+
+    return {
+      quote,
+      range: {
+        start: {
+          id: fromBlockId,
+          index: startIndex,
+        },
+        end: {
+          id: toBlockId,
+          index: endIndex,
+        },
+      },
+    };
   }
 }

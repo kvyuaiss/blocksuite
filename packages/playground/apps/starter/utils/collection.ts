@@ -1,67 +1,85 @@
+import type { BlockSuiteFlags } from '@blocksuite/global/types';
+
 import { AffineSchemas, TestUtils } from '@blocksuite/blocks';
 import { assertExists } from '@blocksuite/global/utils';
-import type { BlockCollection } from '@blocksuite/store';
 import {
-  type BlobStorage,
-  createIndexeddbStorage,
-  createMemoryStorage,
-  createSimpleServerStorage,
+  type BlockCollection,
   DocCollection,
   type DocCollectionOptions,
-  Generator,
+  IdGeneratorType,
   Job,
   Schema,
-  type StoreOptions,
 } from '@blocksuite/store';
 import {
+  type BlobSource,
   BroadcastChannelAwarenessSource,
   BroadcastChannelDocSource,
+  IndexedDBBlobSource,
+  MemoryBlobSource,
 } from '@blocksuite/sync';
 
 import type { InitFn } from '../data/utils.js';
 
+import { MockServerBlobSource } from '../../_common/sync/blob/mock-server.js';
+
 const params = new URLSearchParams(location.search);
 const room = params.get('room');
-const blobStorageArgs = (params.get('blobStorage') ?? 'memory').split(',');
 const isE2E = room?.startsWith('playwright');
+const blobSourceArgs = (params.get('blobSource') ?? '').split(',');
 
 export function createStarterDocCollection() {
-  const blobStorages: ((id: string) => BlobStorage)[] = [];
-  if (blobStorageArgs.includes('memory')) {
-    blobStorages.push(createMemoryStorage);
-  }
-  if (blobStorageArgs.includes('idb')) {
-    blobStorages.push(createIndexeddbStorage);
-  }
-  if (blobStorageArgs.includes('mock')) {
-    blobStorages.push(createSimpleServerStorage);
-  }
-
+  const collectionId = room ?? 'starter';
   const schema = new Schema();
   schema.register(AffineSchemas);
-  const idGenerator = isE2E ? Generator.AutoIncrement : Generator.NanoID;
+  const idGenerator = isE2E
+    ? IdGeneratorType.AutoIncrement
+    : IdGeneratorType.NanoID;
 
-  let docSources: StoreOptions['docSources'];
+  let docSources: DocCollectionOptions['docSources'];
   if (room) {
     docSources = {
-      main: new BroadcastChannelDocSource(),
+      main: new BroadcastChannelDocSource(`broadcast-channel-${room}`),
     };
   }
+  const id = room ?? `starter-${Math.random().toString(16).slice(2, 8)}`;
+
+  const blobSources = {
+    main: new MemoryBlobSource(),
+    shadows: [] as BlobSource[],
+  } satisfies DocCollectionOptions['blobSources'];
+  if (blobSourceArgs.includes('mock')) {
+    blobSources.shadows.push(new MockServerBlobSource(collectionId));
+  }
+  if (blobSourceArgs.includes('idb')) {
+    blobSources.shadows.push(new IndexedDBBlobSource(collectionId));
+  }
+
+  const flags: Partial<BlockSuiteFlags> = Object.fromEntries(
+    [...params.entries()]
+      .filter(([key]) => key.startsWith('enable_'))
+      .map(([k, v]) => [k, v === 'true'])
+  );
 
   const options: DocCollectionOptions = {
-    id: room ?? 'starter',
+    id: collectionId,
     schema,
     idGenerator,
-    blobStorages,
     defaultFlags: {
       enable_synced_doc_block: true,
       enable_pie_menu: true,
+      enable_lasso_tool: true,
+      enable_edgeless_text: true,
+      enable_color_picker: true,
+      enable_mind_map_import: true,
+      enable_advanced_block_visibility: true,
+      enable_shape_shadow_blur: false,
+      ...flags,
     },
-    awarenessSources: [new BroadcastChannelAwarenessSource()],
+    awarenessSources: [new BroadcastChannelAwarenessSource(id)],
     docSources,
+    blobSources,
   };
   const collection = new DocCollection(options);
-
   collection.start();
 
   // debug info
@@ -111,6 +129,7 @@ export async function initStarterDocCollection(collection: DocCollection) {
   ).forEach(fn => functionMap.set(fn.id, fn));
   const init = params.get('init') || 'preset';
   if (functionMap.has(init)) {
+    collection.meta.initialize();
     await functionMap.get(init)?.(collection, 'doc:home');
     const doc = collection.getDoc('doc:home');
     if (!doc?.loaded) {

@@ -1,29 +1,101 @@
-import { assertExists, Slot } from '@blocksuite/global/utils';
+import type { BlockSuiteFlags } from '@blocksuite/global/types';
+
+import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
+import { type Logger, NoopLogger, Slot } from '@blocksuite/global/utils';
+import {
+  AwarenessEngine,
+  type AwarenessSource,
+  BlobEngine,
+  type BlobSource,
+  DocEngine,
+  type DocSource,
+  MemoryBlobSource,
+  NoopDocSource,
+} from '@blocksuite/sync';
+import clonedeep from 'lodash.clonedeep';
+import merge from 'lodash.merge';
+import { Awareness } from 'y-protocols/awareness.js';
 import * as Y from 'yjs';
 
 import type { Schema } from '../schema/index.js';
-import type { AwarenessStore } from '../yjs/index.js';
-import { blob, DocCollectionAddonType, indexer, test } from './addon/index.js';
-import {
-  BlockCollection,
-  defaultBlockSelector,
-} from './doc/block-collection.js';
-import type { BlockSelector, Doc } from './doc/index.js';
-import { DocCollectionMeta, type DocMeta } from './meta.js';
-import { Store, type StoreOptions } from './store.js';
+import type { IdGenerator } from '../utils/id-generator.js';
+import type { Doc, Query } from './doc/index.js';
+import type { IdGeneratorType } from './id.js';
 
-export type DocCollectionOptions = StoreOptions & {
+import {
+  AwarenessStore,
+  BlockSuiteDoc,
+  type RawAwarenessState,
+} from '../yjs/index.js';
+import { DocCollectionAddonType, test } from './addon/index.js';
+import { BlockCollection, type GetDocOptions } from './doc/block-collection.js';
+import { pickIdGenerator } from './id.js';
+import { DocCollectionMeta, type DocMeta } from './meta.js';
+
+export type DocCollectionOptions = {
   schema: Schema;
+  id?: string;
+  idGenerator?: IdGeneratorType | IdGenerator;
+  defaultFlags?: Partial<BlockSuiteFlags>;
+  logger?: Logger;
+  docSources?: {
+    main: DocSource;
+    shadows?: DocSource[];
+  };
+  blobSources?: {
+    main: BlobSource;
+    shadows?: BlobSource[];
+  };
+  awarenessSources?: AwarenessSource[];
 };
 
-@blob
-@indexer
+const FLAGS_PRESET = {
+  enable_synced_doc_block: false,
+  enable_pie_menu: false,
+  enable_database_number_formatting: false,
+  enable_database_attachment_note: false,
+  enable_database_full_width: false,
+  enable_legacy_validation: true,
+  enable_block_query: false,
+  enable_lasso_tool: false,
+  enable_edgeless_text: true,
+  enable_ai_onboarding: false,
+  enable_ai_chat_block: false,
+  enable_color_picker: false,
+  enable_mind_map_import: false,
+  enable_advanced_block_visibility: false,
+  enable_shape_shadow_blur: false,
+  enable_new_dnd: true,
+  enable_mobile_keyboard_toolbar: false,
+  enable_mobile_linked_doc_menu: false,
+  readonly: {},
+} satisfies BlockSuiteFlags;
+
+export interface StackItem {
+  meta: Map<'cursor-location' | 'selection-state', unknown>;
+}
+
 @test
 export class DocCollection extends DocCollectionAddonType {
   static Y = Y;
-  protected _store: Store;
 
   protected readonly _schema: Schema;
+
+  readonly awarenessStore: AwarenessStore;
+
+  readonly awarenessSync: AwarenessEngine;
+
+  readonly blobSync: BlobEngine;
+
+  readonly blockCollections = new Map<string, BlockCollection>();
+
+  readonly doc: BlockSuiteDoc;
+
+  readonly docSync: DocEngine;
+
+  readonly id: string;
+
+  readonly idGenerator: IdGenerator;
 
   meta: DocCollectionMeta;
 
@@ -31,20 +103,11 @@ export class DocCollection extends DocCollectionAddonType {
     docAdded: new Slot<string>(),
     docUpdated: new Slot(),
     docRemoved: new Slot<string>(),
+    docCreated: new Slot<string>(),
   };
 
-  constructor(options: DocCollectionOptions) {
-    super();
-    this._schema = options.schema;
-
-    this._store = new Store(options);
-
-    this.meta = new DocCollectionMeta(this.doc);
-    this._bindDocMetaEvents();
-  }
-
-  get id() {
-    return this._store.id;
+  get docs() {
+    return this.blockCollections;
   }
 
   get isEmpty() {
@@ -61,53 +124,54 @@ export class DocCollection extends DocCollectionAddonType {
     return flag;
   }
 
-  get store(): Store {
-    return this._store;
-  }
-
-  get awarenessStore(): AwarenessStore {
-    return this._store.awarenessStore;
-  }
-
-  get docs() {
-    return this._store.spaces as Map<string, BlockCollection>;
-  }
-
-  get doc() {
-    return this._store.doc;
-  }
-
-  get idGenerator() {
-    return this._store.idGenerator;
-  }
-
   get schema() {
     return this._schema;
   }
 
-  get docSync() {
-    return this.store.docSync;
-  }
+  constructor({
+    id,
+    schema,
+    idGenerator,
+    defaultFlags,
+    awarenessSources = [],
+    docSources = {
+      main: new NoopDocSource(),
+    },
+    blobSources = {
+      main: new MemoryBlobSource(),
+    },
+    logger = new NoopLogger(),
+  }: DocCollectionOptions) {
+    super();
+    this._schema = schema;
 
-  get awarenessSync() {
-    return this.store.awarenessSync;
-  }
+    this.id = id || '';
+    this.doc = new BlockSuiteDoc({ guid: id });
+    this.awarenessStore = new AwarenessStore(
+      new Awareness<RawAwarenessState>(this.doc),
+      merge(clonedeep(FLAGS_PRESET), defaultFlags)
+    );
 
-  private _hasDoc(docId: string) {
-    return this.docs.has(docId);
-  }
+    this.awarenessSync = new AwarenessEngine(
+      this.awarenessStore.awareness,
+      awarenessSources
+    );
+    this.docSync = new DocEngine(
+      this.doc,
+      docSources.main,
+      docSources.shadows ?? [],
+      logger
+    );
+    this.blobSync = new BlobEngine(
+      blobSources.main,
+      blobSources.shadows ?? [],
+      logger
+    );
 
-  getDoc(
-    docId: string,
-    selector: BlockSelector = defaultBlockSelector
-  ): Doc | null {
-    const collection = this.getBlockCollection(docId);
-    return collection?.getDoc(selector) ?? null;
-  }
+    this.idGenerator = pickIdGenerator(idGenerator, this.doc.clientID);
 
-  getBlockCollection(docId: string): BlockCollection | null {
-    const space = this.docs.get(docId) as BlockCollection | undefined;
-    return space ?? null;
+    this.meta = new DocCollectionMeta(this.doc);
+    this._bindDocMetaEvents();
   }
 
   private _bindDocMetaEvents() {
@@ -117,9 +181,9 @@ export class DocCollection extends DocCollectionAddonType {
         collection: this,
         doc: this.doc,
         awarenessStore: this.awarenessStore,
-        idGenerator: this._store.idGenerator,
+        idGenerator: this.idGenerator,
       });
-      this._store.addSpace(doc);
+      this.blockCollections.set(doc.id, doc);
       this.slots.docAdded.emit(doc.id);
     });
 
@@ -128,61 +192,14 @@ export class DocCollection extends DocCollectionAddonType {
     this.meta.docMetaRemoved.on(id => {
       const space = this.getBlockCollection(id);
       if (!space) return;
-      this._store.removeSpace(space);
+      this.blockCollections.delete(id);
       space.remove();
       this.slots.docRemoved.emit(id);
     });
   }
 
-  /**
-   * By default, only an empty doc will be created.
-   * If the `init` parameter is passed, a `surface`, `note`, and `paragraph` block
-   * will be created in the doc simultaneously.
-   */
-  createDoc(options: { id?: string; selector?: BlockSelector } = {}) {
-    // End of migration guide. Remove this in the next major version
-
-    const { id: docId = this.idGenerator(), selector } = options;
-    if (this._hasDoc(docId)) {
-      throw new Error('dac already exists');
-    }
-
-    this.meta.addDocMeta({
-      id: docId,
-      title: '',
-      createDate: Date.now(),
-      tags: [],
-    });
-    return this.getDoc(docId, selector) as Doc;
-  }
-
-  /** Update doc meta state. Note that this intentionally does not mutate doc state. */
-  setDocMeta(
-    docId: string,
-    // You should not update subDocIds directly.
-    props: Partial<DocMeta>
-  ) {
-    this.meta.setDocMeta(docId, props);
-  }
-
-  removeDoc(docId: string) {
-    const docMeta = this.meta.getDocMeta(docId);
-    assertExists(docMeta);
-
-    const blockCollection = this.getBlockCollection(docId);
-    if (!blockCollection) return;
-
-    blockCollection.dispose();
-    this.meta.removeDocMeta(docId);
-    this._store.removeSpace(blockCollection);
-  }
-
-  /**
-   * Start the data sync process
-   */
-  start() {
-    this.docSync.start();
-    this.awarenessSync.connect();
+  private _hasDoc(docId: string) {
+    return this.docs.has(docId);
   }
 
   /**
@@ -194,10 +211,31 @@ export class DocCollection extends DocCollectionAddonType {
   }
 
   /**
-   * Wait for all data has been successfully saved to the primary storage.
+   * By default, only an empty doc will be created.
+   * If the `init` parameter is passed, a `surface`, `note`, and `paragraph` block
+   * will be created in the doc simultaneously.
    */
-  waitForGracefulStop(abort?: AbortSignal) {
-    return this.docSync.waitForGracefulStop(abort);
+  createDoc(options: { id?: string; query?: Query } = {}) {
+    const { id: docId = this.idGenerator(), query } = options;
+    if (this._hasDoc(docId)) {
+      throw new BlockSuiteError(
+        ErrorCode.DocCollectionError,
+        'doc already exists'
+      );
+    }
+
+    this.meta.addDocMeta({
+      id: docId,
+      title: '',
+      createDate: Date.now(),
+      tags: [],
+    });
+    this.slots.docCreated.emit(docId);
+    return this.getDoc(docId, { query }) as Doc;
+  }
+
+  dispose() {
+    this.awarenessStore.destroy();
   }
 
   /**
@@ -206,7 +244,60 @@ export class DocCollection extends DocCollectionAddonType {
    */
   forceStop() {
     this.docSync.forceStop();
+    this.blobSync.stop();
     this.awarenessSync.disconnect();
+  }
+
+  getBlockCollection(docId: string): BlockCollection | null {
+    const space = this.docs.get(docId) as BlockCollection | undefined;
+    return space ?? null;
+  }
+
+  getDoc(docId: string, options?: GetDocOptions): Doc | null {
+    const collection = this.getBlockCollection(docId);
+    return collection?.getDoc(options) ?? null;
+  }
+
+  removeDoc(docId: string) {
+    const docMeta = this.meta.getDocMeta(docId);
+    if (!docMeta) {
+      throw new BlockSuiteError(
+        ErrorCode.DocCollectionError,
+        `doc meta not found: ${docId}`
+      );
+    }
+
+    const blockCollection = this.getBlockCollection(docId);
+    if (!blockCollection) return;
+
+    blockCollection.dispose();
+    this.meta.removeDocMeta(docId);
+    this.blockCollections.delete(docId);
+  }
+
+  /** Update doc meta state. Note that this intentionally does not mutate doc state. */
+  setDocMeta(
+    docId: string,
+    // You should not update subDocIds directly.
+    props: Partial<DocMeta>
+  ) {
+    this.meta.setDocMeta(docId, props);
+  }
+
+  /**
+   * Start the data sync process
+   */
+  start() {
+    this.docSync.start();
+    this.blobSync.start();
+    this.awarenessSync.connect();
+  }
+
+  /**
+   * Wait for all data has been successfully saved to the primary storage.
+   */
+  waitForGracefulStop(abort?: AbortSignal) {
+    return this.docSync.waitForGracefulStop(abort);
   }
 
   waitForSynced() {

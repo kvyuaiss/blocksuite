@@ -1,10 +1,12 @@
 import type { ErrorCode } from './code.js';
 
 export class BlockSuiteError extends Error {
-  public code: ErrorCode;
-  public isFatal: boolean;
-  constructor(code: ErrorCode, message: string) {
-    super(message);
+  code: ErrorCode;
+
+  isFatal: boolean;
+
+  constructor(code: ErrorCode, message: string, options?: { cause: Error }) {
+    super(message, options);
     this.name = 'BlockSuiteError';
     this.code = code;
     this.isFatal = code >= 10000;

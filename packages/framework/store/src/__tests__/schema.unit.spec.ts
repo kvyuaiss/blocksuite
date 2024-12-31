@@ -1,14 +1,11 @@
-/* eslint-disable @typescript-eslint/no-restricted-imports */
-
 import { literal } from 'lit/static-html.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 // import some blocks
 import { type BlockModel, defineBlockSchema } from '../schema/base.js';
 import { SchemaValidateError } from '../schema/error.js';
 import { Schema } from '../schema/index.js';
-import { DocCollection } from '../store/index.js';
-import { Generator } from '../store/store.js';
+import { DocCollection, IdGeneratorType } from '../store/index.js';
 import {
   DividerBlockSchema,
   ListBlockSchema,
@@ -18,7 +15,7 @@ import {
 } from './test-schema.js';
 
 function createTestOptions() {
-  const idGenerator = Generator.AutoIncrement;
+  const idGenerator = IdGeneratorType.AutoIncrement;
   const schema = new Schema();
   schema.register(BlockSchemas);
   return { id: 'test-collection', idGenerator, schema };
@@ -64,6 +61,7 @@ const defaultDocId = 'doc0';
 function createTestDoc(docId = defaultDocId) {
   const options = createTestOptions();
   const collection = new DocCollection(options);
+  collection.meta.initialize();
   const doc = collection.createDoc({ id: docId });
   doc.load();
   return doc;
@@ -71,38 +69,57 @@ function createTestDoc(docId = defaultDocId) {
 
 describe('schema', () => {
   it('should be able to validate schema by role', () => {
+    const consoleMock = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
     const doc = createTestDoc();
     const rootId = doc.addBlock('affine:page', {});
     const noteId = doc.addBlock('affine:note', {}, rootId);
     const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
 
-    // add note to root should throw
-    expect(() => doc.addBlock('affine:note', {})).toThrow(SchemaValidateError);
+    doc.addBlock('affine:note', {});
+    expect(consoleMock.mock.calls[0]).toSatisfy((call: unknown[]) => {
+      return typeof call[0] === 'string';
+    });
+    expect(consoleMock.mock.calls[1]).toSatisfy((call: unknown[]) => {
+      return call[0] instanceof SchemaValidateError;
+    });
 
+    consoleMock.mockClear();
     // add paragraph to root should throw
-    expect(() => doc.addBlock('affine:paragraph', {}, rootId)).toThrow(
-      SchemaValidateError
-    );
+    doc.addBlock('affine:paragraph', {}, rootId);
+    expect(consoleMock.mock.calls[0]).toSatisfy((call: unknown[]) => {
+      return typeof call[0] === 'string';
+    });
+    expect(consoleMock.mock.calls[1]).toSatisfy((call: unknown[]) => {
+      return call[0] instanceof SchemaValidateError;
+    });
 
-    expect(() => doc.addBlock('affine:note', {}, rootId)).not.toThrow();
-    expect(() => doc.addBlock('affine:paragraph', {}, noteId)).not.toThrow();
-    expect(() =>
-      doc.addBlock('affine:paragraph', {}, paragraphId)
-    ).not.toThrow();
+    consoleMock.mockClear();
+    doc.addBlock('affine:note', {}, rootId);
+    doc.addBlock('affine:paragraph', {}, noteId);
+    doc.addBlock('affine:paragraph', {}, paragraphId);
+    expect(consoleMock).not.toBeCalled();
   });
 
   it('should glob match works', () => {
+    const consoleMock = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
     const doc = createTestDoc();
     const rootId = doc.addBlock('affine:page', {});
     const noteId = doc.addBlock('affine:note', {}, rootId);
 
-    expect(() =>
-      doc.addBlock('affine:note-block-video', {}, noteId)
-    ).not.toThrow();
+    doc.addBlock('affine:note-block-video', {}, noteId);
+    expect(consoleMock).not.toBeCalled();
 
-    expect(() =>
-      doc.addBlock('affine:note-invalid-block-video', {}, noteId)
-    ).toThrow();
+    doc.addBlock('affine:note-invalid-block-video', {}, noteId);
+    expect(consoleMock.mock.calls[0]).toSatisfy((call: unknown[]) => {
+      return typeof call[0] === 'string';
+    });
+    expect(consoleMock.mock.calls[1]).toSatisfy((call: unknown[]) => {
+      return call[0] instanceof SchemaValidateError;
+    });
   });
 });
 

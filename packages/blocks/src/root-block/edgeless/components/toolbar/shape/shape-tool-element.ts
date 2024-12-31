@@ -1,5 +1,11 @@
-import { WithDisposable } from '@blocksuite/block-std';
-import { sleep } from '@blocksuite/global/utils';
+import { CanvasElementType } from '@blocksuite/affine-block-surface';
+import {
+  getShapeRadius,
+  getShapeType,
+  type ShapeName,
+  type ShapeStyle,
+} from '@blocksuite/affine-model';
+import { Bound, sleep, WithDisposable } from '@blocksuite/global/utils';
 import {
   css,
   html,
@@ -7,19 +13,11 @@ import {
   type PropertyValues,
   type TemplateResult,
 } from 'lit';
-import { customElement, property, query, state } from 'lit/decorators.js';
+import { property, query, state } from 'lit/decorators.js';
 
-import type { CssVariableName } from '../../../../../_common/theme/css-variables.js';
-import type { ShapeType } from '../../../../../surface-block/elements/shape/consts.js';
-import type { ShapeStyle } from '../../../../../surface-block/index.js';
-import {
-  Bound,
-  CanvasElementType,
-} from '../../../../../surface-block/index.js';
-import { ShapeToolController } from '../../../controllers/tools/shape-tool.js';
 import type { EdgelessRootBlockComponent } from '../../../edgeless-root-block.js';
 
-export type ShapeName = ShapeType | 'roundedRect';
+import { ShapeTool } from '../../../gfx-tool/shape-tool.js';
 
 export interface Shape {
   name: ShapeName;
@@ -31,16 +29,16 @@ interface Coord {
   y: number;
 }
 
-interface TransformMap {
-  [key: string]: {
+type TransformMap = Record<
+  string,
+  {
     x: number;
     y: number;
     scale: number;
     origin: string;
-  };
-}
+  }
+>;
 
-@customElement('edgeless-shape-tool-element')
 export class EdgelessShapeToolElement extends WithDisposable(LitElement) {
   static override styles = css`
     .shape {
@@ -70,73 +68,63 @@ export class EdgelessShapeToolElement extends WithDisposable(LitElement) {
     }
   `;
 
-  @property({ attribute: false })
-  shape!: Shape;
-
-  @property({ attribute: false })
-  order!: number;
-
-  @property({ attribute: false })
-  getContainerRect!: () => DOMRect;
-
-  @property({ attribute: false })
-  handleClick!: () => void;
-
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
-
-  @query('#shape-tool-element')
-  private _shapeElement!: HTMLElement;
-
-  @query('#backup-shape-element')
-  private _backupShapeElement!: HTMLElement;
-
-  @property({ attribute: false })
-  shapeType!: ShapeName;
-
-  @property({ attribute: false })
-  fillColor!: CssVariableName;
-
-  @property({ attribute: false })
-  shapeStyle!: ShapeStyle;
-
-  @property({ attribute: false })
-  strokeColor!: CssVariableName;
-
-  @property({ attribute: false })
-  radius!: number;
-
-  private _transformMap: TransformMap = {
-    z1: { x: 0, y: 5, scale: 1.1, origin: '50% 100%' },
-    z2: { x: -15, y: 0, scale: 0.75, origin: '20% 20%' },
-    z3: { x: 15, y: 0, scale: 0.75, origin: '80% 20%' },
-    hidden: { x: 0, y: 120, scale: 0, origin: '50% 50%' },
+  private _addShape = (coord: Coord, padding: Coord) => {
+    const width = 100;
+    const height = 100;
+    const { x: edgelessX, y: edgelessY } =
+      this.edgeless.getBoundingClientRect();
+    const zoom = this.edgeless.service.viewport.zoom;
+    const [modelX, modelY] = this.edgeless.service.viewport.toModelCoord(
+      coord.x - edgelessX - width * padding.x * zoom,
+      coord.y - edgelessY - height * padding.y * zoom
+    );
+    const xywh = new Bound(modelX, modelY, width, height).serialize();
+    this.edgeless.service.addElement(CanvasElementType.SHAPE, {
+      shapeType: getShapeType(this.shape.name),
+      xywh: xywh,
+      radius: getShapeRadius(this.shape.name),
+    });
   };
 
-  @state()
-  private _startCoord: Coord = { x: -1, y: -1 };
-
-  @state()
-  private _dragging: boolean = false;
-
-  @state()
-  private _isOutside: boolean = false;
-
-  private _onDragStart = (coord: Coord) => {
-    this._startCoord = { x: coord.x, y: coord.y };
-    if (this.order !== 1) {
+  private _onDragEnd = async (coord: Coord) => {
+    if (this._startCoord.x === coord.x && this._startCoord.y === coord.y) {
+      this.handleClick();
+      this._dragging = false;
       return;
     }
-    this._dragging = true;
-    this._shapeElement.classList.add('dragging');
+    if (!this._dragging) {
+      return;
+    }
+    this._dragging = false;
+    this.edgeless.gfx.tool.setTool('default');
+    if (this._isOutside) {
+      const rect = this._shapeElement.getBoundingClientRect();
+      this._backupShapeElement.style.setProperty('transition', 'none');
+      this._backupShapeElement.style.setProperty('--y', '100px');
+      this._shapeElement.style.setProperty('--offset-x', `${0}px`);
+      this._shapeElement.style.setProperty('--offset-y', `${0}px`);
+      await sleep(0);
+      this._shapeElement.classList.remove('dragging');
+      this._backupShapeElement.style.removeProperty('transition');
+      const padding = {
+        x: (coord.x - rect.left) / rect.width,
+        y: (coord.y - rect.top) / rect.height,
+      };
+      this._addShape(coord, padding);
+    } else {
+      this._shapeElement.classList.remove('dragging');
+      this._shapeElement.style.setProperty('--offset-x', `${0}px`);
+      this._shapeElement.style.setProperty('--offset-y', `${0}px`);
+      this._backupShapeElement.style.setProperty('--y', '100px');
+    }
   };
 
   private _onDragMove = (coord: Coord) => {
     if (!this._dragging) {
       return;
     }
-    const controller = this.edgeless.tools.currentController;
-    if (controller instanceof ShapeToolController) {
+    const controller = this.edgeless.gfx.tool.currentTool$.peek();
+    if (controller instanceof ShapeTool) {
       controller.clearOverlay();
     }
     const { x, y } = coord;
@@ -166,37 +154,13 @@ export class EdgelessShapeToolElement extends WithDisposable(LitElement) {
     this._isOutside = isOut;
   };
 
-  private _onDragEnd = async (coord: Coord) => {
-    if (this._startCoord.x === coord.x && this._startCoord.y === coord.y) {
-      this.handleClick();
-      this._dragging = false;
+  private _onDragStart = (coord: Coord) => {
+    this._startCoord = { x: coord.x, y: coord.y };
+    if (this.order !== 1) {
       return;
     }
-    if (!this._dragging) {
-      return;
-    }
-    this._dragging = false;
-    this.edgeless.tools.setEdgelessTool({ type: 'default' });
-    if (this._isOutside) {
-      const rect = this._shapeElement.getBoundingClientRect();
-      this._backupShapeElement.style.setProperty('transition', 'none');
-      this._backupShapeElement.style.setProperty('--y', '100px');
-      this._shapeElement.style.setProperty('--offset-x', `${0}px`);
-      this._shapeElement.style.setProperty('--offset-y', `${0}px`);
-      await sleep(0);
-      this._shapeElement.classList.remove('dragging');
-      this._backupShapeElement.style.removeProperty('transition');
-      const padding = {
-        x: (coord.x - rect.left) / rect.width,
-        y: (coord.y - rect.top) / rect.height,
-      };
-      this._addShape(coord, padding);
-    } else {
-      this._shapeElement.classList.remove('dragging');
-      this._shapeElement.style.setProperty('--offset-x', `${0}px`);
-      this._shapeElement.style.setProperty('--offset-y', `${0}px`);
-      this._backupShapeElement.style.setProperty('--y', '100px');
-    }
+    this._dragging = true;
+    this._shapeElement.classList.add('dragging');
   };
 
   private _onMouseMove = (event: MouseEvent) => {
@@ -204,6 +168,22 @@ export class EdgelessShapeToolElement extends WithDisposable(LitElement) {
       return;
     }
     this._onDragMove({ x: event.clientX, y: event.clientY });
+  };
+
+  private _onMouseUp = (event: MouseEvent) => {
+    this._onDragEnd({ x: event.clientX, y: event.clientY }).catch(
+      console.error
+    );
+  };
+
+  private _onTouchEnd = (event: TouchEvent) => {
+    if (!event.changedTouches.length) return;
+
+    this._onDragEnd({
+      // https://developer.mozilla.org/en-US/docs/Web/API/TouchEvent#touchend
+      x: event.changedTouches[0].clientX,
+      y: event.changedTouches[0].clientY,
+    }).catch(console.error);
   };
 
   private _touchMove = (event: TouchEvent) => {
@@ -216,35 +196,11 @@ export class EdgelessShapeToolElement extends WithDisposable(LitElement) {
     });
   };
 
-  private _onMouseUp = (event: MouseEvent) => {
-    this._onDragEnd({ x: event.clientX, y: event.clientY }).catch(
-      console.error
-    );
-  };
-
-  private _onTouchEnd = (event: TouchEvent) => {
-    this._onDragEnd({
-      x: event.touches[0].clientX,
-      y: event.touches[0].clientY,
-    }).catch(console.error);
-  };
-
-  private _addShape = (coord: Coord, padding: Coord) => {
-    const width = 100;
-    const height = 100;
-    const { x: edgelessX, y: edgelessY } =
-      this.edgeless.getBoundingClientRect();
-    const zoom = this.edgeless.service.viewport.zoom;
-    const [modelX, modelY] = this.edgeless.service.viewport.toModelCoord(
-      coord.x - edgelessX - width * padding.x * zoom,
-      coord.y - edgelessY - height * padding.y * zoom
-    );
-    const xywh = new Bound(modelX, modelY, width, height).serialize();
-    this.edgeless.service.addElement(CanvasElementType.SHAPE, {
-      shapeType: this.shape.name === 'roundedRect' ? 'rect' : this.shape.name,
-      xywh: xywh,
-      radius: this.radius,
-    });
+  private _transformMap: TransformMap = {
+    z1: { x: 0, y: 5, scale: 1.1, origin: '50% 100%' },
+    z2: { x: -15, y: 0, scale: 0.75, origin: '20% 20%' },
+    z3: { x: 15, y: 0, scale: 0.75, origin: '80% 20%' },
+    hidden: { x: 0, y: 120, scale: 0, origin: '50% 50%' },
   };
 
   override connectedCallback() {
@@ -271,34 +227,6 @@ export class EdgelessShapeToolElement extends WithDisposable(LitElement) {
     );
   }
 
-  override updated(changedProperties: PropertyValues<this>) {
-    if (!changedProperties.has('shape') && !changedProperties.has('order')) {
-      return;
-    }
-    const transform =
-      this._transformMap[this.order <= 3 ? `z${this.order}` : 'hidden'];
-    this._shapeElement.style.setProperty('--x', `${transform.x}px`);
-    this._shapeElement.style.setProperty('--y', `${transform.y}px`);
-    this._shapeElement.style.setProperty(
-      '--scale',
-      String(transform.scale || 1)
-    );
-    this._shapeElement.style.zIndex = String(999 - this.order);
-    this._shapeElement.style.transformOrigin = transform.origin;
-
-    if (this._backupShapeElement) {
-      this._backupShapeElement.style.setProperty('--y', '100px');
-      this._backupShapeElement.style.setProperty('--scale', '0.9');
-      this._backupShapeElement.style.zIndex = '999';
-    }
-
-    this.edgeless.slots.edgelessToolUpdated.on(newTool => {
-      if (newTool.type !== 'shape') {
-        return;
-      }
-    });
-  }
-
   override render() {
     return html`
       <div
@@ -323,6 +251,64 @@ export class EdgelessShapeToolElement extends WithDisposable(LitElement) {
         : null}
     `;
   }
+
+  override updated(changedProperties: PropertyValues<this>) {
+    if (!changedProperties.has('shape') && !changedProperties.has('order')) {
+      return;
+    }
+    const transform =
+      this._transformMap[this.order <= 3 ? `z${this.order}` : 'hidden'];
+    this._shapeElement.style.setProperty('--x', `${transform.x}px`);
+    this._shapeElement.style.setProperty('--y', `${transform.y}px`);
+    this._shapeElement.style.setProperty(
+      '--scale',
+      String(transform.scale || 1)
+    );
+    this._shapeElement.style.zIndex = String(999 - this.order);
+    this._shapeElement.style.transformOrigin = transform.origin;
+
+    if (this._backupShapeElement) {
+      this._backupShapeElement.style.setProperty('--y', '100px');
+      this._backupShapeElement.style.setProperty('--scale', '0.9');
+      this._backupShapeElement.style.zIndex = '999';
+    }
+  }
+
+  @query('#backup-shape-element')
+  private accessor _backupShapeElement!: HTMLElement;
+
+  @state()
+  private accessor _dragging: boolean = false;
+
+  @state()
+  private accessor _isOutside: boolean = false;
+
+  @query('#shape-tool-element')
+  private accessor _shapeElement!: HTMLElement;
+
+  @state()
+  private accessor _startCoord: Coord = { x: -1, y: -1 };
+
+  @property({ attribute: false })
+  accessor edgeless!: EdgelessRootBlockComponent;
+
+  @property({ attribute: false })
+  accessor getContainerRect!: () => DOMRect;
+
+  @property({ attribute: false })
+  accessor handleClick!: () => void;
+
+  @property({ attribute: false })
+  accessor order!: number;
+
+  @property({ attribute: false })
+  accessor shape!: Shape;
+
+  @property({ attribute: false })
+  accessor shapeStyle!: ShapeStyle;
+
+  @property({ attribute: false })
+  accessor shapeType!: ShapeName;
 }
 
 declare global {

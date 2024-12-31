@@ -1,27 +1,40 @@
+import type { BlockCollection } from '@blocksuite/store';
+
+import { effects as blocksEffects } from '@blocksuite/blocks/effects';
+
+import { effects } from '../../effects.js';
+
+blocksEffects();
+effects();
+
+import {
+  CommunityCanvasTextFonts,
+  type DocMode,
+  FontConfigExtension,
+} from '@blocksuite/blocks';
 import { AffineSchemas } from '@blocksuite/blocks/schemas';
 import { assertExists } from '@blocksuite/global/utils';
-import type { BlockCollection } from '@blocksuite/store';
-import { type BlobStorage, DocCollection, Text } from '@blocksuite/store';
-import { createMemoryStorage, Generator, Schema } from '@blocksuite/store';
+import {
+  DocCollection,
+  IdGeneratorType,
+  Schema,
+  Text,
+} from '@blocksuite/store';
 
 import { AffineEditorContainer } from '../../index.js';
 
 function createCollectionOptions() {
-  const blobStorages: ((id: string) => BlobStorage)[] = [];
   const schema = new Schema();
   const room = Math.random().toString(16).slice(2, 8);
 
   schema.register(AffineSchemas);
 
-  const idGenerator: Generator = Generator.AutoIncrement; // works only in single user mode
-
-  blobStorages.push(createMemoryStorage);
+  const idGenerator: IdGeneratorType = IdGeneratorType.AutoIncrement; // works only in single user mode
 
   return {
     id: room,
     schema,
     idGenerator,
-    blobStorages,
     defaultFlags: {
       enable_synced_doc_block: true,
       enable_pie_menu: true,
@@ -44,10 +57,7 @@ function initCollection(collection: DocCollection) {
   doc.resetHistory();
 }
 
-async function createEditor(
-  collection: DocCollection,
-  mode: 'edgeless' | 'page' = 'page'
-) {
+async function createEditor(collection: DocCollection, mode: DocMode = 'page') {
   const app = document.createElement('div');
   const blockCollection = collection.docs.values().next().value as
     | BlockCollection
@@ -57,6 +67,12 @@ async function createEditor(
   const editor = new AffineEditorContainer();
   editor.doc = doc;
   editor.mode = mode;
+  editor.pageSpecs = editor.pageSpecs.concat([
+    FontConfigExtension(CommunityCanvasTextFonts),
+  ]);
+  editor.edgelessSpecs = editor.edgelessSpecs.concat([
+    FontConfigExtension(CommunityCanvasTextFonts),
+  ]);
   app.append(editor);
 
   window.editor = editor;
@@ -70,8 +86,9 @@ async function createEditor(
   return app;
 }
 
-export async function setupEditor(mode: 'edgeless' | 'page' = 'page') {
+export async function setupEditor(mode: DocMode = 'page') {
   const collection = new DocCollection(createCollectionOptions());
+  collection.meta.initialize();
 
   window.collection = collection;
 

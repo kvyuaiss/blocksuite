@@ -1,24 +1,23 @@
+import type { CanvasRenderer } from '@blocksuite/affine-block-surface';
 import type { EditorHost } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
 
-import { type EdgelessModel } from '../../../_common/types.js';
-import { isTopLevelBlock } from '../../../root-block/edgeless/utils/query.js';
-import type { Renderer } from '../../../surface-block/canvas-renderer/renderer.js';
-import { Bound } from '../../../surface-block/utils/bound.js';
+import { assertExists, Bound } from '@blocksuite/global/utils';
+
 import type { SurfaceRefBlockComponent } from '../../../surface-ref-block/surface-ref-block.js';
+
+import { ExportManager } from '../../../_common/export-manager/export-manager.js';
+import { isTopLevelBlock } from '../../../root-block/edgeless/utils/query.js';
 
 export const edgelessToBlob = async (
   host: EditorHost,
   options: {
     surfaceRefBlock: SurfaceRefBlockComponent;
-    surfaceRenderer: Renderer;
-    edgelessElement: EdgelessModel;
-    blockContainer: HTMLElement;
+    surfaceRenderer: CanvasRenderer;
+    edgelessElement: BlockSuite.EdgelessModel;
   }
 ): Promise<Blob> => {
-  const { edgelessElement, blockContainer } = options;
-  const rootService = host.spec.getService('affine:page');
-  const exportManager = rootService.exportManager;
+  const { edgelessElement } = options;
+  const exportManager = host.std.get(ExportManager);
   const bound = Bound.deserialize(edgelessElement.xywh);
   const isBlock = isTopLevelBlock(edgelessElement);
 
@@ -26,14 +25,10 @@ export const edgelessToBlob = async (
     .edgelessToCanvas(
       options.surfaceRenderer,
       bound,
-      model =>
-        blockContainer.querySelector(
-          `[data-portal-reference-block-id="${model.id}"]`
-        ),
       undefined,
       isBlock ? [edgelessElement] : undefined,
       isBlock ? undefined : [edgelessElement],
-      { zoom: options.surfaceRenderer.zoom }
+      { zoom: options.surfaceRenderer.viewport.zoom }
     )
     .then(canvas => {
       assertExists(canvas);

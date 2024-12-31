@@ -1,17 +1,25 @@
-import '../../panel/one-row-color-panel.js';
-import '../../buttons/tool-icon-button.js';
-import '../common/slide-menu.js';
+import type { GfxToolsFullOptionValue } from '@blocksuite/block-std/gfx';
 
-import { WithDisposable } from '@blocksuite/block-std';
-import { css, html, LitElement, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import {
+  EditPropsStore,
+  ThemeProvider,
+} from '@blocksuite/affine-shared/services';
+import { SignalWatcher } from '@blocksuite/global/utils';
+import { computed } from '@preact/signals-core';
+import { css, html, LitElement } from 'lit';
+import { property } from 'lit/decorators.js';
 
-import type { EdgelessRootBlockComponent } from '../../../edgeless-root-block.js';
-import type { ColorEvent } from '../../panel/color-panel.js';
 import type { LineWidthEvent } from '../../panel/line-width-panel.js';
 
-@customElement('edgeless-brush-menu')
-export class EdgelessBrushMenu extends WithDisposable(LitElement) {
+import {
+  type ColorEvent,
+  GET_DEFAULT_LINE_COLOR,
+} from '../../panel/color-panel.js';
+import { EdgelessToolbarToolMixin } from '../mixins/tool.mixin.js';
+
+export class EdgelessBrushMenu extends EdgelessToolbarToolMixin(
+  SignalWatcher(LitElement)
+) {
   static override styles = css`
     :host {
       display: flex;
@@ -30,27 +38,28 @@ export class EdgelessBrushMenu extends WithDisposable(LitElement) {
     }
   `;
 
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
+  private _props$ = computed(() => {
+    const { color, lineWidth } =
+      this.edgeless.std.get(EditPropsStore).lastProps$.value.brush;
+    return {
+      color,
+      lineWidth,
+    };
+  });
 
-  @property({ attribute: false })
-  color!: string;
-
-  @property({ attribute: false })
-  lineWidth!: number;
-
-  @property({ attribute: false })
-  onChange!: (props: Record<string, unknown>) => void;
+  type: GfxToolsFullOptionValue['type'] = 'brush';
 
   override render() {
-    if (this.edgeless.edgelessTool.type !== 'brush') return nothing;
+    const theme = this.edgeless.std.get(ThemeProvider).theme;
+    const color = this.edgeless.std
+      .get(ThemeProvider)
+      .getColorValue(this._props$.value.color, GET_DEFAULT_LINE_COLOR(theme));
 
-    const { color, lineWidth } = this;
     return html`
       <edgeless-slide-menu>
         <div class="menu-content">
           <edgeless-line-width-panel
-            .selectedSize=${lineWidth}
+            .selectedSize=${this._props$.value.lineWidth}
             @select=${(e: LineWidthEvent) =>
               this.onChange({ lineWidth: e.detail })}
           >
@@ -58,12 +67,18 @@ export class EdgelessBrushMenu extends WithDisposable(LitElement) {
           <menu-divider .vertical=${true}></menu-divider>
           <edgeless-one-row-color-panel
             .value=${color}
+            .hasTransparent=${!this.edgeless.doc.awarenessStore.getFlag(
+              'enable_color_picker'
+            )}
             @select=${(e: ColorEvent) => this.onChange({ color: e.detail })}
           ></edgeless-one-row-color-panel>
         </div>
       </edgeless-slide-menu>
     `;
   }
+
+  @property({ attribute: false })
+  accessor onChange!: (props: Record<string, unknown>) => void;
 }
 
 declare global {

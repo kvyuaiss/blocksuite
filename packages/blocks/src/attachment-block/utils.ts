@@ -1,16 +1,16 @@
-import type { EditorHost } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import type { BlockModel } from '@blocksuite/store';
-
-import { toast } from '../_common/components/toast.js';
-import { humanFileSize } from '../_common/utils/math.js';
-import type { AttachmentBlockComponent } from './attachment-block.js';
 import type {
   AttachmentBlockModel,
   AttachmentBlockProps,
-} from './attachment-model.js';
-import { defaultAttachmentProps } from './attachment-model.js';
-import { allowEmbed } from './embed.js';
+} from '@blocksuite/affine-model';
+import type { EditorHost } from '@blocksuite/block-std';
+import type { BlockModel } from '@blocksuite/store';
+
+import { toast } from '@blocksuite/affine-components/toast';
+import { defaultAttachmentProps } from '@blocksuite/affine-model';
+import { TelemetryProvider } from '@blocksuite/affine-shared/services';
+import { humanFileSize } from '@blocksuite/affine-shared/utils';
+
+import type { AttachmentBlockComponent } from './attachment-block.js';
 
 export function cloneAttachmentProperties(model: AttachmentBlockModel) {
   const clonedProps = {} as AttachmentBlockProps;
@@ -38,13 +38,15 @@ function isAttachmentUploading(blockId: string) {
 /**
  * This function will not verify the size of the file.
  */
-async function uploadAttachmentBlob(
+export async function uploadAttachmentBlob(
   editorHost: EditorHost,
   blockId: string,
-  blob: Blob
+  blob: Blob,
+  filetype: string,
+  isEdgeless?: boolean
 ): Promise<void> {
   if (isAttachmentUploading(blockId)) {
-    throw new Error('The attachment is already uploading!');
+    return;
   }
 
   const doc = editorHost.doc;
@@ -52,7 +54,7 @@ async function uploadAttachmentBlob(
 
   try {
     setAttachmentUploading(blockId);
-    sourceId = await doc.blob.set(blob);
+    sourceId = await doc.blobSync.set(blob);
   } catch (error) {
     console.error(error);
     if (error instanceof Error) {
@@ -64,16 +66,26 @@ async function uploadAttachmentBlob(
   } finally {
     setAttachmentUploaded(blockId);
 
-    const attachmentModel = doc.getBlockById(
-      blockId
-    ) as AttachmentBlockModel | null;
-    assertExists(attachmentModel);
+    const block = doc.getBlock(blockId);
 
     doc.withoutTransact(() => {
-      doc.updateBlock(attachmentModel, {
+      if (!block) return;
+
+      doc.updateBlock(block.model, {
         sourceId,
       } satisfies Partial<AttachmentBlockProps>);
     });
+
+    editorHost.std
+      .getOptional(TelemetryProvider)
+      ?.track('AttachmentUploadedEvent', {
+        page: `${isEdgeless ? 'whiteboard' : 'doc'} editor`,
+        module: 'attachment',
+        segment: 'attachment',
+        control: 'uploader',
+        type: filetype,
+        category: block && sourceId ? 'success' : 'failure',
+      });
   }
 }
 
@@ -84,7 +96,7 @@ async function getAttachmentBlob(model: AttachmentBlockModel) {
   }
 
   const doc = model.doc;
-  let blob = await doc.blob.get(sourceId);
+  let blob = await doc.blobSync.get(sourceId);
 
   if (blob) {
     blob = new Blob([blob], { type: model.type });
@@ -110,17 +122,17 @@ export async function checkAttachmentBlob(block: AttachmentBlockComponent) {
 
   try {
     if (!sourceId) {
-      throw new Error('Attachment sourceId is missing!');
+      return;
     }
 
     const blob = await getAttachmentBlob(model);
     if (!blob) {
-      throw new Error('Attachment blob is missing!');
+      return;
     }
 
     block.loading = false;
     block.error = false;
-    block.allowEmbed = allowEmbed(model);
+    block.allowEmbed = block.embedded();
     if (block.blobUrl) {
       URL.revokeObjectURL(block.blobUrl);
     }
@@ -176,10 +188,21 @@ export function downloadAttachmentBlob(block: AttachmentBlockComponent) {
   block.downloading = false;
 }
 
+export async function getFileType(file: File) {
+  if (file.type) {
+    return file.type;
+  }
+  // If the file type is not available, try to get it from the buffer.
+  const buffer = await file.arrayBuffer();
+  const FileType = await import('file-type');
+  const fileType = await FileType.fileTypeFromBuffer(buffer);
+  return fileType ? fileType.mime : '';
+}
+
 /**
  * Add a new attachment block before / after the specified block.
  */
-export function addSiblingAttachmentBlocks(
+export async function addSiblingAttachmentBlocks(
   editorHost: EditorHost,
   files: File[],
   maxFileSize: number,
@@ -204,13 +227,16 @@ export function addSiblingAttachmentBlocks(
   }
 
   const doc = targetModel.doc;
+
+  // Get the types of all files
+  const types = await Promise.all(files.map(file => getFileType(file)));
   const attachmentBlockProps: (Partial<AttachmentBlockProps> & {
     flavour: 'affine:attachment';
-  })[] = files.map(file => ({
+  })[] = files.map((file, index) => ({
     flavour: 'affine:attachment',
     name: file.name,
     size: file.size,
-    type: file.type,
+    type: types[index],
   }));
 
   const blockIds = doc.addSiblingBlocks(
@@ -221,7 +247,7 @@ export function addSiblingAttachmentBlocks(
 
   blockIds.map(
     (blockId, index) =>
-      void uploadAttachmentBlob(editorHost, blockId, files[index])
+      void uploadAttachmentBlob(editorHost, blockId, files[index], types[index])
   );
 
   return blockIds;

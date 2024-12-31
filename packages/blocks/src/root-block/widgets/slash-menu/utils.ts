@@ -1,105 +1,144 @@
-import type { EditorHost } from '@blocksuite/block-std';
+import type { TextFormatConfig } from '@blocksuite/affine-components/rich-text';
 import type { BlockModel } from '@blocksuite/store';
-import type { TemplateResult } from 'lit';
 
-import type { AffineTextAttributes } from '../../../_common/inline/presets/affine-inline-specs.js';
-import { isInsideBlockByFlavour } from '../../../_common/utils/index.js';
-import { getInlineEditorByModel } from '../../../_common/utils/query.js';
-import type { RootBlockComponent } from '../../../root-block/types.js';
+import { isInsideBlockByFlavour } from '@blocksuite/affine-shared/utils';
+import { assertType } from '@blocksuite/global/utils';
 
-export type SlashMenuOptions = {
-  /**
-   * If return false, the slash menu will not show
-   *
-   * If return string, the slash menu will show and the string will be clear after the slash menu is activated
-   */
-  isTriggerKey: (e: KeyboardEvent) => false | string;
-  menus: {
-    name: string;
-    items:
-      | ((options: {
-          rootElement: RootBlockComponent;
-          model: BlockModel;
-        }) => SlashItem[])
-      | SlashItem[];
-  }[];
-};
+import type { TextConversionConfig } from '../../../_common/configs/text-conversion.js';
+import type {
+  SlashMenuActionItem,
+  SlashMenuContext,
+  SlashMenuGroupDivider,
+  SlashMenuItem,
+  SlashMenuItemGenerator,
+  SlashMenuStaticItem,
+  SlashSubMenu,
+} from './config.js';
 
-export type SlashItem = {
-  name: string;
-  /**
-   * search alias
-   */
-  alias?: string[];
-  /**
-   * size 20x20
-   */
-  icon: TemplateResult<1>;
-  suffix?: TemplateResult<1>;
-  showWhen?: (model: BlockModel, rootElement: RootBlockComponent) => boolean;
-  disabled?: boolean;
-  action: ({
-    rootElement,
-    model,
-  }: {
-    rootElement: RootBlockComponent;
-    model: BlockModel;
-  }) => void | Promise<void>;
-};
+import { slashMenuToolTips } from './tooltips/index.js';
 
-export type InternSlashItem = SlashItem & { groupName: string };
-
-export function collectGroupNames(menuItem: InternSlashItem[]) {
-  return menuItem.reduce((acc, item) => {
-    if (!acc.length || acc[acc.length - 1] !== item.groupName) {
-      acc.push(item.groupName);
-    }
-    return acc;
-  }, [] as string[]);
+export function isGroupDivider(
+  item: SlashMenuStaticItem
+): item is SlashMenuGroupDivider {
+  return 'groupName' in item;
 }
 
-export function insertContent(
-  editorHost: EditorHost,
-  model: BlockModel,
-  text: string,
-  attributes?: AffineTextAttributes
-) {
-  if (!model.text) {
-    throw new Error("Can't insert text! Text not found");
-  }
-  const inlineEditor = getInlineEditorByModel(editorHost, model);
-  if (!inlineEditor) {
-    throw new Error("Can't insert text! Inline editor not found");
-  }
-  const inlineRange = inlineEditor.getInlineRange();
-  const index = inlineRange ? inlineRange.index : model.text.length;
-  model.text.insert(text, index, attributes as Record<string, unknown>);
-  // Update the caret to the end of the inserted text
-  inlineEditor.setInlineRange({
-    index: index + text.length,
-    length: 0,
-  });
+export function notGroupDivider(
+  item: SlashMenuStaticItem
+): item is Exclude<SlashMenuStaticItem, SlashMenuGroupDivider> {
+  return !isGroupDivider(item);
 }
 
-export function formatDate(date: Date) {
-  // yyyy-mm-dd
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const day = date.getDate().toString().padStart(2, '0');
-  const strTime = `${year}-${month}-${day}`;
-  return strTime;
+export function isActionItem(
+  item: SlashMenuStaticItem
+): item is SlashMenuActionItem {
+  return 'action' in item;
 }
 
-export function insideDatabase(model: BlockModel) {
-  return isInsideBlockByFlavour(model.doc, model, 'affine:database');
+export function isSubMenuItem(item: SlashMenuStaticItem): item is SlashSubMenu {
+  return 'subMenu' in item;
 }
 
-export function insideDataView(model: BlockModel) {
-  return isInsideBlockByFlavour(model.doc, model, 'affine:data-view');
+export function isMenuItemGenerator(
+  item: SlashMenuItem
+): item is SlashMenuItemGenerator {
+  return typeof item === 'function';
+}
+
+export function slashItemClassName(item: SlashMenuStaticItem) {
+  const name = isGroupDivider(item) ? item.groupName : item.name;
+
+  return name.split(' ').join('-').toLocaleLowerCase();
+}
+
+export function filterEnabledSlashMenuItems(
+  items: SlashMenuItem[],
+  context: SlashMenuContext
+): SlashMenuStaticItem[] {
+  const result = items
+    .map(item => (isMenuItemGenerator(item) ? item(context) : item))
+    .flat()
+    .filter(item => (item.showWhen ? item.showWhen(context) : true))
+    .map(item => {
+      if (isSubMenuItem(item)) {
+        return {
+          ...item,
+          subMenu: filterEnabledSlashMenuItems(item.subMenu, context),
+        };
+      } else {
+        return { ...item };
+      }
+    });
+  return result;
+}
+
+export function getFirstNotDividerItem(
+  items: SlashMenuStaticItem[]
+): SlashMenuActionItem | SlashSubMenu | null {
+  const firstItem = items.find(item => !isGroupDivider(item));
+  assertType<SlashMenuActionItem | SlashSubMenu | undefined>(firstItem);
+  return firstItem ?? null;
+}
+
+export function insideEdgelessText(model: BlockModel) {
+  return isInsideBlockByFlavour(model.doc, model, 'affine:edgeless-text');
 }
 
 export function tryRemoveEmptyLine(model: BlockModel) {
-  if (!model.text?.length) {
+  if (model.text?.length === 0) {
     model.doc.deleteBlock(model);
   }
+}
+
+export function createConversionItem(
+  config: TextConversionConfig
+): SlashMenuActionItem {
+  const { name, description, icon, flavour, type } = config;
+  return {
+    name,
+    description,
+    icon,
+    tooltip: slashMenuToolTips[name],
+    showWhen: ({ model }) => model.doc.schema.flavourSchemaMap.has(flavour),
+    action: ({ rootComponent }) => {
+      rootComponent.std.command
+        .chain()
+        .updateBlockType({
+          flavour,
+          props: { type },
+        })
+        .run();
+    },
+  };
+}
+
+export function createTextFormatItem(
+  config: TextFormatConfig
+): SlashMenuActionItem {
+  const { name, icon, id, action } = config;
+  return {
+    name,
+    icon,
+    tooltip: slashMenuToolTips[name],
+    action: ({ rootComponent, model }) => {
+      const { std, host } = rootComponent;
+
+      if (model.text?.length !== 0) {
+        std.command
+          .chain()
+          .formatBlock({
+            blockSelections: [
+              std.selection.create('block', {
+                blockId: model.id,
+              }),
+            ],
+            styles: { [id]: true },
+          })
+          .run();
+      } else {
+        // like format bar when the line is empty
+        action(host);
+      }
+    },
+  };
 }

@@ -1,92 +1,71 @@
-import { assertExists } from '@blocksuite/global/utils';
-import type { BlockModel } from '@blocksuite/store';
+import type { BlockComponent, WidgetComponent } from './element/index.js';
 
-import { PathFinder } from '../utils/index.js';
-import type { BlockElement, WidgetElement } from './element/index.js';
+import { LifeCycleWatcher } from '../extension/index.js';
 
-export class ViewStore {
-  private readonly _blockMap = new Map<string, BlockElement>();
-  private readonly _widgetMap = new Map<string, WidgetElement>();
+export class ViewStore extends LifeCycleWatcher {
+  static override readonly key = 'viewStore';
 
-  setBlock = (node: BlockElement) => {
-    this._blockMap.set(node.model.id, node);
-  };
+  private readonly _blockMap = new Map<string, BlockComponent>();
 
-  setWidget = (node: WidgetElement) => {
-    const id = node.dataset.widgetId as string;
-    const widgetIndex = `${node.model.id}|${id}`;
-    this._widgetMap.set(widgetIndex, node);
-  };
-
-  getBlock = (id: string): BlockElement | null => {
-    return this._blockMap.get(id) ?? null;
-  };
-
-  getWidget = (
-    widgetName: string,
-    hostBlockId: string
-  ): WidgetElement | null => {
-    const widgetIndex = `${hostBlockId}|${widgetName}`;
-    return this._widgetMap.get(widgetIndex) ?? null;
-  };
-
-  deleteBlock = (node: BlockElement) => {
-    this._blockMap.delete(node.id);
-  };
-
-  deleteWidget = (node: WidgetElement) => {
-    const id = node.dataset.widgetId as string;
-    const widgetIndex = `${node.model.id}|${id}`;
-    this._widgetMap.delete(widgetIndex);
-  };
-
-  constructor(public std: BlockSuite.Std) {}
-
-  calculatePath = (node: BlockElement | WidgetElement): string[] => {
-    const path: string[] = [];
-    let current: BlockModel | null = node.model;
-    while (current) {
-      path.push(current.id);
-      current = this.std.doc.getParent(current);
-    }
-    return path.reverse();
-  };
-
-  fromPath = (path: string[]): BlockElement | null => {
-    const id = path[path.length - 1] ?? this.std.doc.root?.id;
+  private _fromId = (
+    blockId: string | undefined | null
+  ): BlockComponent | null => {
+    const id = blockId ?? this.std.doc.root?.id;
     if (!id) {
       return null;
     }
     return this._blockMap.get(id) ?? null;
   };
 
-  viewFromPath(type: 'block', path: string[]): null | BlockElement;
-  viewFromPath(type: 'widget', path: string[]): null | WidgetElement;
-  viewFromPath(
-    type: 'block' | 'widget',
-    path: string[]
-  ): null | BlockElement | WidgetElement {
-    if (type === 'block') {
-      return this.fromPath(path);
-    }
-    const temp = path.slice(-2) as [string, string];
-    const widgetId = temp.join('|');
-    return this._widgetMap.get(widgetId) ?? null;
-  }
+  private readonly _widgetMap = new Map<string, WidgetComponent>();
+
+  deleteBlock = (node: BlockComponent) => {
+    this._blockMap.delete(node.id);
+  };
+
+  deleteWidget = (node: WidgetComponent) => {
+    const id = node.dataset.widgetId as string;
+    const widgetIndex = `${node.model.id}|${id}`;
+    this._widgetMap.delete(widgetIndex);
+  };
+
+  getBlock = (id: string): BlockComponent | null => {
+    return this._blockMap.get(id) ?? null;
+  };
+
+  getWidget = (
+    widgetName: string,
+    hostBlockId: string
+  ): WidgetComponent | null => {
+    const widgetIndex = `${hostBlockId}|${widgetName}`;
+    return this._widgetMap.get(widgetIndex) ?? null;
+  };
+
+  setBlock = (node: BlockComponent) => {
+    this._blockMap.set(node.model.id, node);
+  };
+
+  setWidget = (node: WidgetComponent) => {
+    const id = node.dataset.widgetId as string;
+    const widgetIndex = `${node.model.id}|${id}`;
+    this._widgetMap.set(widgetIndex, node);
+  };
 
   walkThrough = (
     fn: (
-      nodeView: BlockElement,
+      nodeView: BlockComponent,
       index: number,
-      parent: BlockElement
+      parent: BlockComponent
     ) => undefined | null | true,
-    path: string[] = []
+    blockId?: string | undefined | null
   ) => {
-    const tree = this.fromPath(path);
-    assertExists(tree, `Invalid path to get node in view: ${path}`);
+    const top = this._fromId(blockId);
+    if (!top) {
+      return;
+    }
 
     const iterate =
-      (parent: BlockElement) => (node: BlockElement, index: number) => {
+      (parent: BlockComponent) => (node: BlockComponent, index: number) => {
         const result = fn(node, index, parent);
         if (result === true) {
           return;
@@ -100,24 +79,15 @@ export class ViewStore {
         });
       };
 
-    tree.model.children.forEach(child => {
+    top.model.children.forEach(child => {
       const childNode = this._blockMap.get(child.id);
       if (childNode) {
-        iterate(childNode)(childNode, tree.model.children.indexOf(child));
+        iterate(childNode)(childNode, top.model.children.indexOf(child));
       }
     });
   };
 
-  getParent = (path: string[]) => {
-    if (path.length === 0) {
-      return null;
-    }
-    return this.fromPath(PathFinder.parent(path));
-  };
-
-  mount() {}
-
-  unmount() {
+  override unmounted() {
     this._blockMap.clear();
     this._widgetMap.clear();
   }

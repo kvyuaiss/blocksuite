@@ -1,20 +1,15 @@
-import {
-  EditorHost,
-  ShadowlessElement,
-  WithDisposable,
-} from '@blocksuite/block-std';
-import type { SurfaceBlockComponent } from '@blocksuite/blocks';
-import { EdgelessEditorBlockSpecs } from '@blocksuite/blocks';
-import { noop } from '@blocksuite/global/utils';
 import type { Doc } from '@blocksuite/store';
-import { css, html, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
-import { createRef, type Ref, ref } from 'lit/directives/ref.js';
 
-noop(EditorHost);
+import { BlockStdScope, ShadowlessElement } from '@blocksuite/block-std';
+import { EdgelessEditorBlockSpecs, ThemeProvider } from '@blocksuite/blocks';
+import { SignalWatcher, WithDisposable } from '@blocksuite/global/utils';
+import { css, html, nothing, type TemplateResult } from 'lit';
+import { property, state } from 'lit/decorators.js';
+import { guard } from 'lit/directives/guard.js';
 
-@customElement('edgeless-editor')
-export class EdgelessEditor extends WithDisposable(ShadowlessElement) {
+export class EdgelessEditor extends SignalWatcher(
+  WithDisposable(ShadowlessElement)
+) {
   static override styles = css`
     edgeless-editor {
       font-family: var(--affine-font-family);
@@ -41,16 +36,12 @@ export class EdgelessEditor extends WithDisposable(ShadowlessElement) {
     }
   `;
 
-  @property({ attribute: false })
-  doc!: Doc;
-
-  @property({ attribute: false })
-  specs = EdgelessEditorBlockSpecs;
-
-  private _host: Ref<EditorHost> = createRef<EditorHost>();
-
   get host() {
-    return this._host.value as EditorHost;
+    try {
+      return this.std.host;
+    } catch {
+      return null;
+    }
   }
 
   override connectedCallback() {
@@ -58,46 +49,53 @@ export class EdgelessEditor extends WithDisposable(ShadowlessElement) {
     this._disposables.add(
       this.doc.slots.rootAdded.on(() => this.requestUpdate())
     );
+    this.std = new BlockStdScope({
+      doc: this.doc,
+      extensions: this.specs,
+    });
   }
 
   override async getUpdateComplete(): Promise<boolean> {
     const result = await super.getUpdateComplete();
-    await this.host.updateComplete;
+    await this.host?.updateComplete;
     return result;
   }
 
   override render() {
     if (!this.doc.root) return nothing;
 
+    const std = this.std;
+    const theme = std.get(ThemeProvider).edgeless$.value;
     return html`
-      <div class="affine-edgeless-viewport">
-        <editor-host
-          ${ref(this._host)}
-          .doc=${this.doc}
-          .specs=${this.specs}
-        ></editor-host>
+      <div class="affine-edgeless-viewport" data-theme=${theme}>
+        ${guard([std], () => std.render())}
       </div>
     `;
   }
 
-  override disconnectedCallback(): void {
-    const host = this.host;
-    if (!host) return;
-    const surfaceModel = host.doc.getBlockByFlavour('affine:surface')[0];
-    const surface = host.view.viewFromPath('block', [
-      this.doc.root!.id,
-      surfaceModel.id,
-    ]) as SurfaceBlockComponent;
-
-    if (!surface) return;
-
-    const { edgeless } = surface;
-    edgeless.service.editSession.setItem('viewport', {
-      centerX: edgeless.service.viewport.centerX,
-      centerY: edgeless.service.viewport.centerY,
-      zoom: edgeless.service.viewport.zoom,
-    });
+  override willUpdate(
+    changedProperties: Map<string | number | symbol, unknown>
+  ) {
+    super.willUpdate(changedProperties);
+    if (changedProperties.has('doc')) {
+      this.std = new BlockStdScope({
+        doc: this.doc,
+        extensions: this.specs,
+      });
+    }
   }
+
+  @property({ attribute: false })
+  accessor doc!: Doc;
+
+  @property({ attribute: false })
+  accessor editor!: TemplateResult;
+
+  @property({ attribute: false })
+  accessor specs = EdgelessEditorBlockSpecs;
+
+  @state()
+  accessor std!: BlockStdScope;
 }
 
 declare global {

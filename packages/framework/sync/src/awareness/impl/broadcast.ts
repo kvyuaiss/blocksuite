@@ -1,4 +1,5 @@
 import type { Awareness } from 'y-protocols/awareness';
+
 import {
   applyAwarenessUpdate,
   encodeAwarenessUpdate,
@@ -13,30 +14,9 @@ type ChannelMessage =
   | { type: 'update'; update: Uint8Array };
 
 export class BroadcastChannelAwarenessSource implements AwarenessSource {
-  channel: BroadcastChannel | null = null;
   awareness: Awareness | null = null;
 
-  constructor(readonly channelName: string = 'blocksuite:awareness') {}
-
-  connect(awareness: Awareness): void {
-    this.channel = new BroadcastChannel(this.channelName);
-    this.channel.postMessage({
-      type: 'connect',
-    } satisfies ChannelMessage);
-    this.awareness = awareness;
-    awareness.on('update', this.handleAwarenessUpdate);
-    this.channel.addEventListener(
-      'message',
-      (event: MessageEvent<ChannelMessage>) => {
-        this.handleChannelMessage(event);
-      }
-    );
-  }
-  disconnect(): void {
-    this.awareness?.off('update', this.handleAwarenessUpdate);
-    this.channel?.close();
-    this.channel = null;
-  }
+  channel: BroadcastChannel | null = null;
 
   handleAwarenessUpdate = (changes: AwarenessChanges, origin: unknown) => {
     if (origin === 'remote') {
@@ -53,6 +33,29 @@ export class BroadcastChannelAwarenessSource implements AwarenessSource {
       update: update,
     } satisfies ChannelMessage);
   };
+
+  constructor(readonly channelName: string) {}
+
+  connect(awareness: Awareness): void {
+    this.channel = new BroadcastChannel(this.channelName);
+    this.channel.postMessage({
+      type: 'connect',
+    } satisfies ChannelMessage);
+    this.awareness = awareness;
+    awareness.on('update', this.handleAwarenessUpdate);
+    this.channel.addEventListener(
+      'message',
+      (event: MessageEvent<ChannelMessage>) => {
+        this.handleChannelMessage(event);
+      }
+    );
+  }
+
+  disconnect(): void {
+    this.awareness?.off('update', this.handleAwarenessUpdate);
+    this.channel?.close();
+    this.channel = null;
+  }
 
   handleChannelMessage(event: MessageEvent<ChannelMessage>) {
     if (event.data.type === 'update') {

@@ -1,41 +1,24 @@
-import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
+import type { BlockModel } from '@blocksuite/store';
+
+import { type BlockComponent, ShadowlessElement } from '@blocksuite/block-std';
+import { WithDisposable } from '@blocksuite/global/utils';
 import { html } from 'lit';
-import { customElement, property, query } from 'lit/decorators.js';
+import { property, query } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 
-import type { BlockComponent } from '../../../utils/query.js';
 import { embedCardModalStyles } from './styles.js';
 
-@customElement('embed-card-caption-edit-modal')
 export class EmbedCardEditCaptionEditModal extends WithDisposable(
   ShadowlessElement
 ) {
   static override styles = embedCardModalStyles;
 
-  @property({ attribute: false })
-  block!: BlockComponent;
-
-  @query('.embed-card-modal-input.caption')
-  captionInput!: HTMLTextAreaElement;
-
-  private get _model() {
-    return this.block.model;
-  }
-
   private get _doc() {
     return this.block.doc;
   }
 
-  override connectedCallback() {
-    super.connectedCallback();
-
-    this.updateComplete
-      .then(() => {
-        this.captionInput.focus();
-      })
-      .catch(console.error);
-
-    this.disposables.addFromEvent(this, 'keydown', this._onKeydown);
+  private get _model() {
+    return this.block.model as BlockModel<{ caption: string }>;
   }
 
   private _onKeydown(e: KeyboardEvent) {
@@ -56,46 +39,52 @@ export class EmbedCardEditCaptionEditModal extends WithDisposable(
     this.remove();
   }
 
+  override connectedCallback() {
+    super.connectedCallback();
+
+    this.updateComplete
+      .then(() => {
+        this.captionInput.focus();
+      })
+      .catch(console.error);
+
+    this.disposables.addFromEvent(this, 'keydown', this._onKeydown);
+  }
+
   override render() {
     return html`
-      <div class="embed-card-modal blocksuite-overlay">
+      <div class="embed-card-modal">
         <div class="embed-card-modal-mask" @click=${() => this.remove()}></div>
         <div class="embed-card-modal-wrapper">
-          <div class="embed-card-modal-title">Caption</div>
-
-          <div class="embed-card-modal-content">
+          <div class="embed-card-modal-row">
+            <label for="card-title">Caption</label>
             <textarea
               class="embed-card-modal-input caption"
               placeholder="Write a caption..."
               .value=${this._model.caption ?? ''}
-              tabindex="0"
             ></textarea>
           </div>
-
-          <div class="embed-card-modal-action">
-            <div
-              class="embed-card-modal-button cancel"
-              tabindex="0"
-              @click=${() => this.remove()}
-            >
-              Cancel
-            </div>
-
-            <div
+          <div class="embed-card-modal-row">
+            <button
               class=${classMap({
                 'embed-card-modal-button': true,
                 save: true,
               })}
-              tabindex="0"
               @click=${() => this._onSave()}
             >
               Save
-            </div>
+            </button>
           </div>
         </div>
       </div>
     `;
   }
+
+  @property({ attribute: false })
+  accessor block!: BlockComponent;
+
+  @query('.embed-card-modal-input.caption')
+  accessor captionInput!: HTMLTextAreaElement;
 }
 
 export function toggleEmbedCardCaptionEditModal(block: BlockComponent) {

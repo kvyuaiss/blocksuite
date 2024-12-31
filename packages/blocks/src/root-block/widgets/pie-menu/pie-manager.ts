@@ -1,4 +1,4 @@
-import { assertExists, assertNotExists } from '@blocksuite/global/utils';
+import { assertExists } from '@blocksuite/global/utils';
 import { Slot } from '@blocksuite/store';
 
 import type { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
@@ -10,10 +10,11 @@ import type { PieMenuSchema } from './base.js';
  */
 
 export class PieManager {
-  private static schemas: Set<PieMenuSchema> = new Set();
   private static registeredSchemas: Record<string, PieMenuSchema> = {};
 
-  public static settings = {
+  private static schemas = new Set<PieMenuSchema>();
+
+  static settings = {
     /**
      * Specifies the distance between the root-node and the child-nodes
      */
@@ -39,45 +40,36 @@ export class PieManager {
     EXPANDABLE_ACTION_NODE_TIMEOUT: 300,
   };
 
-  public static slots = {
+  static slots = {
     open: new Slot<PieMenuSchema>(),
   };
 
-  public static add(schema: PieMenuSchema) {
-    return this.schemas.add(schema);
+  private static _getSchema(id: string) {
+    const schema = this.registeredSchemas[id];
+    assertExists(schema);
+    return schema;
   }
 
-  public static remove(schema: PieMenuSchema) {
-    return this.schemas.delete(schema);
+  private static _register(schema: PieMenuSchema) {
+    const { id } = schema;
+
+    if (this.registeredSchemas[id]) {
+      return;
+    }
+
+    this.registeredSchemas[id] = schema;
   }
 
-  public static setup({
-    rootElement,
-  }: {
-    rootElement: EdgelessRootBlockComponent;
-  }) {
-    this.schemas.forEach(schema => this._register(schema));
-    this._setupTriggers(rootElement);
-  }
-
-  public static dispose() {
-    this.registeredSchemas = {};
-  }
-
-  public static open(id: PieMenuId) {
-    this.slots.open.emit(this._getSchema(id));
-  }
-
-  private static _setupTriggers(rootElement: EdgelessRootBlockComponent) {
+  private static _setupTriggers(rootComponent: EdgelessRootBlockComponent) {
     Object.values(this.registeredSchemas).forEach(schema => {
       const { trigger } = schema;
 
-      rootElement.handleEvent(
+      rootComponent.handleEvent(
         'keyDown',
         ctx => {
           const ev = ctx.get('keyboardState');
 
-          if (trigger({ keyEvent: ev.raw, rootElement }) && !ev.raw.repeat) {
+          if (trigger({ keyEvent: ev.raw, rootComponent }) && !ev.raw.repeat) {
             this.open(schema.id);
           }
         },
@@ -86,20 +78,28 @@ export class PieManager {
     });
   }
 
-  private static _register(schema: PieMenuSchema) {
-    const { id } = schema;
-
-    assertNotExists(
-      this.registeredSchemas[id],
-      `Menu with id '${id}' already exists. Please provide a unique id`
-    );
-
-    this.registeredSchemas[id] = schema;
+  static add(schema: PieMenuSchema) {
+    return this.schemas.add(schema);
   }
 
-  private static _getSchema(id: string) {
-    const schema = this.registeredSchemas[id];
-    assertExists(schema);
-    return schema;
+  static dispose() {
+    this.registeredSchemas = {};
+  }
+
+  static open(id: PieMenuId) {
+    this.slots.open.emit(this._getSchema(id));
+  }
+
+  static remove(schema: PieMenuSchema) {
+    return this.schemas.delete(schema);
+  }
+
+  static setup({
+    rootComponent,
+  }: {
+    rootComponent: EdgelessRootBlockComponent;
+  }) {
+    this.schemas.forEach(schema => this._register(schema));
+    this._setupTriggers(rootComponent);
   }
 }

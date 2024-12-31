@@ -1,11 +1,19 @@
-import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
-import { CloseIcon, createDefaultDoc } from '@blocksuite/blocks';
 import type { AffineEditorContainer } from '@blocksuite/presets';
-import type { DocCollection } from '@blocksuite/store';
+import type { BlockCollection, DocCollection } from '@blocksuite/store';
+
+import { ShadowlessElement } from '@blocksuite/block-std';
+import {
+  CloseIcon,
+  createDefaultDoc,
+  GenerateDocUrlProvider,
+} from '@blocksuite/blocks';
+import { WithDisposable } from '@blocksuite/global/utils';
 import { css, html, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { styleMap } from 'lit/directives/style-map.js';
+
+import { removeModeFromStorage } from '../mock-services.js';
 
 @customElement('docs-panel')
 export class DocsPanel extends WithDisposable(ShadowlessElement) {
@@ -22,6 +30,9 @@ export class DocsPanel extends WithDisposable(ShadowlessElement) {
     }
     .doc-item:hover .delete-doc-icon {
       display: flex;
+    }
+    .doc-item {
+      color: var(--affine-text-primary-color);
     }
     .delete-doc-icon {
       display: none;
@@ -46,36 +57,65 @@ export class DocsPanel extends WithDisposable(ShadowlessElement) {
       align-items: center;
       justify-content: center;
       cursor: pointer;
+      color: var(--affine-text-primary-color);
     }
     .new-doc-button:hover {
       background-color: var(--affine-hover-color);
     }
   `;
-  @property({ attribute: false })
-  editor!: AffineEditorContainer;
 
-  @state()
+  createDoc = () => {
+    createDocBlock(this.editor.doc.collection);
+  };
+
+  gotoDoc = (doc: BlockCollection) => {
+    const url = this.editor.std
+      .getOptional(GenerateDocUrlProvider)
+      ?.generateDocUrl(doc.id);
+    if (url) history.pushState({}, '', url);
+
+    this.editor.doc = doc.getDoc();
+    this.editor.doc.load();
+    this.editor.doc.resetHistory();
+    this.requestUpdate();
+  };
+
   private get collection() {
     return this.editor.doc.collection;
   }
 
-  @state()
   private get docs() {
     return [...this.collection.docs.values()];
   }
 
-  public override connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
+
+    requestAnimationFrame(() => {
+      const handleClickOutside = (event: MouseEvent) => {
+        if (!(event.target instanceof Node)) return;
+
+        const toggleButton = document.querySelector(
+          'sl-button[data-docs-panel-toggle]'
+        );
+        if (toggleButton?.contains(event.target as Node)) return;
+
+        if (!this.contains(event.target)) {
+          this.onClose?.();
+        }
+      };
+      document.addEventListener('click', handleClickOutside);
+      this.disposables.add(() => {
+        document.removeEventListener('click', handleClickOutside);
+      });
+    });
+
     this.disposables.add(
       this.editor.doc.collection.slots.docUpdated.on(() => {
         this.requestUpdate();
       })
     );
   }
-
-  createDoc = () => {
-    createDocBlock(this.editor.doc.collection);
-  };
 
   protected override render(): unknown {
     const { docs, collection } = this;
@@ -97,16 +137,14 @@ export class DocsPanel extends WithDisposable(ShadowlessElement) {
             justifyContent: 'space-between',
           });
           const click = () => {
-            this.editor.doc = doc.getDoc();
-            this.editor.doc.load();
-            this.editor.doc.resetHistory();
-            this.requestUpdate();
+            this.gotoDoc(doc);
           };
           const deleteDoc = (e: MouseEvent) => {
             e.stopPropagation();
             const isDeleteCurrent = doc.id === this.editor.doc.id;
 
             collection.removeDoc(doc.id);
+            removeModeFromStorage(doc.id);
             // When delete the current doc, we need to set the editor doc to the first remaining doc
             if (isDeleteCurrent) {
               this.editor.doc = this.docs[0].getDoc();
@@ -124,6 +162,12 @@ export class DocsPanel extends WithDisposable(ShadowlessElement) {
       )}
     `;
   }
+
+  @property({ attribute: false })
+  accessor editor!: AffineEditorContainer;
+
+  @property({ attribute: false })
+  accessor onClose!: () => void;
 }
 
 function createDocBlock(collection: DocCollection) {

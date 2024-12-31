@@ -1,6 +1,8 @@
-import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
 import type { AffineEditorContainer } from '@blocksuite/presets';
-import { registerFramePanelComponents } from '@blocksuite/presets';
+
+import { ShadowlessElement } from '@blocksuite/block-std';
+import { WithDisposable } from '@blocksuite/global/utils';
+import { effect } from '@preact/signals-core';
 import { css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
@@ -20,34 +22,24 @@ export class CustomFramePanel extends WithDisposable(ShadowlessElement) {
       z-index: 1;
     }
   `;
-  @state()
-  private _show = false;
-
-  @property({ attribute: false })
-  editor!: AffineEditorContainer;
 
   private _renderPanel() {
-    return html`<frame-panel .editor=${this.editor}></frame-panel>`;
-  }
-
-  public toggleDisplay() {
-    this._show = !this._show;
+    return html`<affine-frame-panel
+      .host=${this.editor.std.host}
+    ></affine-frame-panel>`;
   }
 
   override connectedCallback(): void {
     super.connectedCallback();
 
-    registerFramePanelComponents(components => {
-      Object.entries(components).forEach(([name, component]) => {
-        customElements.define(name, component);
-      });
-    });
-
     this.disposables.add(
-      this.editor.slots.editorModeSwitched.on(() => {
-        this.editor.updateComplete
-          .then(() => this.requestUpdate())
-          .catch(console.error);
+      effect(() => {
+        const std = this.editor.std;
+        if (std) {
+          this.editor.updateComplete
+            .then(() => this.requestUpdate())
+            .catch(console.error);
+        }
       })
     );
   }
@@ -55,12 +47,20 @@ export class CustomFramePanel extends WithDisposable(ShadowlessElement) {
   override render() {
     return html`
       ${this._show
-        ? html`<div class="custom-frame-container blocksuite-overlay">
-            ${this._renderPanel()}
-          </div>`
+        ? html`<div class="custom-frame-container">${this._renderPanel()}</div>`
         : nothing}
     `;
   }
+
+  toggleDisplay() {
+    this._show = !this._show;
+  }
+
+  @state()
+  private accessor _show = false;
+
+  @property({ attribute: false })
+  accessor editor!: AffineEditorContainer;
 }
 
 declare global {

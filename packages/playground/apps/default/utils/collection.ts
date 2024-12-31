@@ -1,19 +1,18 @@
+import type { BlockSuiteFlags } from '@blocksuite/global/types';
+
 import { AffineSchemas } from '@blocksuite/blocks';
-import { assertExists } from '@blocksuite/global/utils';
 import {
-  type BlobStorage,
-  createIndexeddbStorage,
   DocCollection,
   type DocCollectionOptions,
-  Generator,
+  IdGeneratorType,
   Job,
   Schema,
-  type StoreOptions,
   Text,
 } from '@blocksuite/store';
 import {
   BroadcastChannelAwarenessSource,
   BroadcastChannelDocSource,
+  IndexedDBBlobSource,
   IndexedDBDocSource,
 } from '@blocksuite/sync';
 
@@ -23,18 +22,15 @@ import { WebSocketDocSource } from '../../_common/sync/websocket/doc';
 const BASE_WEBSOCKET_URL = new URL(import.meta.env.PLAYGROUND_WS);
 
 export async function createDefaultDocCollection() {
-  const blobStorages: ((id: string) => BlobStorage)[] = [
-    createIndexeddbStorage,
-  ];
-  const idGenerator: Generator = Generator.NanoID;
+  const idGenerator: IdGeneratorType = IdGeneratorType.NanoID;
   const schema = new Schema();
   schema.register(AffineSchemas);
 
   const params = new URLSearchParams(location.search);
-  let docSources: StoreOptions['docSources'] = {
+  let docSources: DocCollectionOptions['docSources'] = {
     main: new IndexedDBDocSource(),
   };
-  let awarenessSources: StoreOptions['awarenessSources'];
+  let awarenessSources: DocCollectionOptions['awarenessSources'];
   const room = params.get('room');
   if (room) {
     const ws = new WebSocket(new URL(`/room/${room}`, BASE_WEBSOCKET_URL));
@@ -45,33 +41,45 @@ export async function createDefaultDocCollection() {
       .then(() => {
         docSources = {
           main: new IndexedDBDocSource(),
-          shadow: [new WebSocketDocSource(ws)],
+          shadows: [new WebSocketDocSource(ws)],
         };
         awarenessSources = [new WebSocketAwarenessSource(ws)];
       })
       .catch(() => {
         docSources = {
           main: new IndexedDBDocSource(),
-          shadow: [new BroadcastChannelDocSource()],
+          shadows: [new BroadcastChannelDocSource()],
         };
-        awarenessSources = [new BroadcastChannelAwarenessSource()];
+        awarenessSources = [
+          new BroadcastChannelAwarenessSource('collabPlayground'),
+        ];
       });
   }
 
+  const flags: Partial<BlockSuiteFlags> = Object.fromEntries(
+    [...params.entries()]
+      .filter(([key]) => key.startsWith('enable_'))
+      .map(([k, v]) => [k, v === 'true'])
+  );
+
   const options: DocCollectionOptions = {
-    id: 'quickEdgeless',
+    id: 'collabPlayground',
     schema,
     idGenerator,
-    blobStorages,
+    blobSources: {
+      main: new IndexedDBBlobSource('collabPlayground'),
+    },
     docSources,
     awarenessSources,
     defaultFlags: {
       enable_synced_doc_block: true,
       enable_pie_menu: true,
+      enable_lasso_tool: true,
+      enable_color_picker: true,
+      ...flags,
     },
   };
   const collection = new DocCollection(options);
-
   collection.start();
 
   // debug info
@@ -90,28 +98,13 @@ export async function initDefaultDocCollection(collection: DocCollection) {
 
   const shouldInit = collection.docs.size === 0 && !params.get('room');
   if (shouldInit) {
+    collection.meta.initialize();
     const doc = collection.createDoc({ id: 'doc:home' });
     doc.load();
     const rootId = doc.addBlock('affine:page', {
       title: new Text(),
     });
     doc.addBlock('affine:surface', {}, rootId);
-    doc.resetHistory();
-  } else {
-    // wait for data injected from provider
-    const firstPageId =
-      collection.docs.size > 0
-        ? collection.docs.keys().next().value
-        : await new Promise<string>(resolve =>
-            collection.slots.docAdded.once(id => resolve(id))
-          );
-    const doc = collection.getDoc(firstPageId);
-    assertExists(doc);
-    doc.load();
-    // wait for data injected from provider
-    if (!doc.root) {
-      await new Promise(resolve => doc.slots.rootAdded.once(resolve));
-    }
     doc.resetHistory();
   }
 }

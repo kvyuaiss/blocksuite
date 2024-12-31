@@ -1,5 +1,6 @@
 import z from 'zod';
 
+import { SelectionExtension } from '../../extension/selection.js';
 import { BaseSelection } from '../base.js';
 
 const CursorSelectionSchema = z.object({
@@ -8,23 +9,29 @@ const CursorSelectionSchema = z.object({
 });
 
 export class CursorSelection extends BaseSelection {
+  static override group = 'gfx';
+
   static override type = 'cursor';
-  static override group = 'edgeless';
 
   readonly x: number;
+
   readonly y: number;
 
   constructor(x: number, y: number) {
-    super({ path: [] });
+    super({ blockId: '[gfx-cursor]' });
     this.x = x;
     this.y = y;
+  }
+
+  static override fromJSON(json: Record<string, unknown>): CursorSelection {
+    const { x, y } = CursorSelectionSchema.parse(json);
+    return new CursorSelection(x, y);
   }
 
   override equals(other: BaseSelection): boolean {
     if (other instanceof CursorSelection) {
       return this.x === other.x && this.y === other.y;
     }
-
     return false;
   }
 
@@ -35,17 +42,6 @@ export class CursorSelection extends BaseSelection {
       y: this.y,
     };
   }
-
-  static override fromJSON(json: Record<string, unknown>): CursorSelection {
-    CursorSelectionSchema.parse(json);
-    return new CursorSelection(json.x as number, json.y as number);
-  }
 }
 
-declare global {
-  namespace BlockSuite {
-    interface Selection {
-      cursor: typeof CursorSelection;
-    }
-  }
-}
+export const CursorSelectionExtension = SelectionExtension(CursorSelection);

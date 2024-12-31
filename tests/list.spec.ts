@@ -1,9 +1,13 @@
-import { expect, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator } from '@playwright/test';
+import { getFormatBar } from 'utils/query.js';
 
 import {
+  dragBetweenIndices,
   enterPlaygroundRoom,
   enterPlaygroundWithList,
   focusRichText,
+  getPageSnapshot,
+  initEmptyEdgelessState,
   initEmptyParagraphState,
   initThreeLists,
   pressArrowLeft,
@@ -16,6 +20,7 @@ import {
   pressSpace,
   pressTab,
   redoByClick,
+  switchEditorMode,
   switchReadonly,
   type,
   undoByClick,
@@ -31,10 +36,25 @@ import {
   assertListPrefix,
   assertRichTextInlineRange,
   assertRichTexts,
-  assertStoreMatchJSX,
   assertTextContent,
 } from './utils/asserts.js';
 import { test } from './utils/playwright.js';
+
+async function isToggleIconVisible(toggleIcon: Locator) {
+  const connected = await toggleIcon.isVisible();
+  if (!connected) return false;
+  const element = await toggleIcon.elementHandle();
+  if (!element) return false;
+  const opacity = await element.evaluate(node => {
+    // https://stackoverflow.com/questions/11365296/how-do-i-get-the-opacity-of-an-element-using-javascript
+    return window.getComputedStyle(node).getPropertyValue('opacity');
+  });
+  if (!opacity || typeof opacity !== 'string') {
+    throw new Error('opacity is not a string');
+  }
+  const isVisible = opacity !== '0';
+  return isVisible;
+}
 
 test('add new bulleted list', async ({ page }) => {
   await enterPlaygroundRoom(page);
@@ -52,6 +72,25 @@ test('add new bulleted list', async ({ page }) => {
   await assertBlockCount(page, 'list', 3);
 });
 
+test('add new todo list', async ({ page }) => {
+  await enterPlaygroundRoom(page);
+  await initEmptyParagraphState(page);
+
+  await focusRichText(page, 0);
+  await updateBlockType(page, 'affine:list', 'todo');
+  await focusRichText(page, 0);
+
+  await type(page, 'aa');
+  await assertRichTexts(page, ['aa']);
+
+  const checkBox = page.locator('.affine-list-block__prefix');
+  await expect(page.locator('.affine-list--checked')).toHaveCount(0);
+  await checkBox.click();
+  await expect(page.locator('.affine-list--checked')).toHaveCount(1);
+  await checkBox.click();
+  await expect(page.locator('.affine-list--checked')).toHaveCount(0);
+});
+
 test('add new toggle list', async ({ page }) => {
   await enterPlaygroundRoom(page);
   await initEmptyParagraphState(page);
@@ -67,6 +106,28 @@ test('add new toggle list', async ({ page }) => {
 
   await assertRichTexts(page, ['top', 'kid 1', '']);
   await assertBlockCount(page, 'list', 3);
+});
+
+test('convert nested paragraph to list', async ({ page }, testInfo) => {
+  await enterPlaygroundRoom(page);
+  await initEmptyParagraphState(page);
+  await focusRichText(page);
+
+  await type(page, 'aaa\nbbb');
+  await pressTab(page);
+
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_init.json`
+  );
+
+  await dragBetweenIndices(page, [0, 1], [1, 2]);
+  const { openParagraphMenu, bulletedBtn } = getFormatBar(page);
+  await openParagraphMenu();
+  await bulletedBtn.click();
+
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_final.json`
+  );
 });
 
 test('convert to numbered list block', async ({ page }) => {
@@ -189,7 +250,7 @@ test('delete at start of list block', async ({ page }) => {
   // await assertSelection(page, 1, 0, 0);
 });
 
-test('nested list blocks', async ({ page }) => {
+test('nested list blocks', async ({ page }, testInfo) => {
   await enterPlaygroundWithList(page);
 
   await focusRichText(page, 0);
@@ -204,94 +265,15 @@ test('nested list blocks', async ({ page }) => {
   await pressTab(page);
   await type(page, '789');
 
-  await assertStoreMatchJSX(
-    page,
-    /*xml*/ `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:list
-      prop:checked={false}
-      prop:collapsed={false}
-      prop:text="123"
-      prop:type="bulleted"
-    >
-      <affine:list
-        prop:checked={false}
-        prop:collapsed={false}
-        prop:text="456"
-        prop:type="bulleted"
-      >
-        <affine:list
-          prop:checked={false}
-          prop:collapsed={false}
-          prop:text="789"
-          prop:type="bulleted"
-        />
-      </affine:list>
-    </affine:list>
-  </affine:note>
-</affine:page>`
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_init.json`
   );
 
   await focusRichText(page, 1);
   await pressShiftTab(page);
 
-  await assertStoreMatchJSX(
-    page,
-    /*xml*/ `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:list
-      prop:checked={false}
-      prop:collapsed={false}
-      prop:text="123"
-      prop:type="bulleted"
-    />
-    <affine:list
-      prop:checked={false}
-      prop:collapsed={false}
-      prop:text="456"
-      prop:type="bulleted"
-    >
-      <affine:list
-        prop:checked={false}
-        prop:collapsed={false}
-        prop:text="789"
-        prop:type="bulleted"
-      />
-    </affine:list>
-  </affine:note>
-</affine:page>`
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_finial.json`
   );
 });
 
@@ -321,7 +303,7 @@ test('update numbered list block prefix', async ({ page }) => {
   await assertListPrefix(page, ['1', '2', 'a', '3']);
 });
 
-test('basic indent and unindent', async ({ page }) => {
+test('basic indent and unindent', async ({ page }, testInfo) => {
   await enterPlaygroundRoom(page);
   await initEmptyParagraphState(page);
   await focusRichText(page);
@@ -330,110 +312,29 @@ test('basic indent and unindent', async ({ page }) => {
   await pressEnter(page);
   await type(page, 'text2');
 
-  await assertStoreMatchJSX(
-    page,
-    /*xml*/ `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:paragraph
-      prop:text="text1"
-      prop:type="text"
-    />
-    <affine:paragraph
-      prop:text="text2"
-      prop:type="text"
-    />
-  </affine:note>
-</affine:page>`
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_init.json`
   );
 
   await page.keyboard.press('Tab');
-  await assertStoreMatchJSX(
-    page,
-    /*xml*/ `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:paragraph
-      prop:text="text1"
-      prop:type="text"
-    >
-      <affine:paragraph
-        prop:text="text2"
-        prop:type="text"
-      />
-    </affine:paragraph>
-  </affine:note>
-</affine:page>`
+
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_after_tab.json`
   );
 
   await page.waitForTimeout(100);
   await pressShiftTab(page);
-  await assertStoreMatchJSX(
-    page,
-    /*xml*/ `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:paragraph
-      prop:text="text1"
-      prop:type="text"
-    />
-    <affine:paragraph
-      prop:text="text2"
-      prop:type="text"
-    />
-  </affine:note>
-</affine:page>`
+
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_after_shift_tab.json`
   );
 });
 
-test('should indent todo block preserve todo status', async ({ page }) => {
+test('should indent todo block preserve todo status', async ({
+  page,
+}, testInfo) => {
   await enterPlaygroundRoom(page);
-  const { noteId } = await initEmptyParagraphState(page);
+  await initEmptyParagraphState(page);
   await focusRichText(page);
   await type(page, 'text1');
   await pressEnter(page);
@@ -443,105 +344,134 @@ test('should indent todo block preserve todo status', async ({ page }) => {
 
   await type(page, 'todo item');
   await pressTab(page);
-  await assertStoreMatchJSX(
-    page,
-    `
-<affine:note
-  prop:background="--affine-background-secondary-color"
-  prop:displayMode="both"
-  prop:edgeless={
-    Object {
-      "style": Object {
-        "borderRadius": 8,
-        "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
-      },
-    }
-  }
-  prop:hidden={false}
-  prop:index="a0"
->
-  <affine:paragraph
-    prop:text="text1"
-    prop:type="text"
-  >
-    <affine:list
-      prop:checked={true}
-      prop:collapsed={false}
-      prop:text="todo item"
-      prop:type="todo"
-    />
-  </affine:paragraph>
-</affine:note>`,
-    noteId
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_init.json`
   );
   await pressShiftTab(page);
-  await assertStoreMatchJSX(
-    page,
-    `
-<affine:note
-  prop:background="--affine-background-secondary-color"
-  prop:displayMode="both"
-  prop:edgeless={
-    Object {
-      "style": Object {
-        "borderRadius": 8,
-        "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
-      },
-    }
-  }
-  prop:hidden={false}
-  prop:index="a0"
->
-  <affine:paragraph
-    prop:text="text1"
-    prop:type="text"
-  />
-  <affine:list
-    prop:checked={true}
-    prop:collapsed={false}
-    prop:text="todo item"
-    prop:type="todo"
-  />
-</affine:note>`,
-    noteId
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_final.json`
   );
 });
 
-test('enter list block with empty text', async ({ page }) => {
+test('enter list block with empty text', async ({ page }, testInfo) => {
   await enterPlaygroundWithList(page); // 0(1(2,3,4))
 
+  /**
+   * -
+   * -
+   * -
+   */
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_init.json`
+  );
+
   await focusRichText(page, 1);
   await pressTab(page);
   await focusRichText(page, 2);
   await pressTab(page);
-  await assertBlockChildrenIds(page, '2', ['3', '4']); // 0(1(2,(3,4)))
 
-  await focusRichText(page, 2);
-  await pressEnter(page);
-  await assertBlockChildrenIds(page, '2', ['3']);
-  await assertBlockType(page, '4', 'bulleted');
+  /**
+   * -
+   *   -
+   *   -|
+   */
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_1.json`
+  );
 
   await pressEnter(page);
-  await assertBlockType(page, '5', 'text');
+
+  /**
+   * -
+   *   -
+   * -|
+   */
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_2.json`
+  );
+
+  await pressEnter(page);
+
+  /**
+   * -
+   *   -
+   * |
+   */
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_3.json`
+  );
+
   await undoByClick(page);
   await undoByClick(page);
-  await assertBlockChildrenIds(page, '2', ['3', '4']); // 0(1(2,(3,4)))
 
+  /**
+   * -
+   *   -
+   *   -|
+   */
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_1.json`
+  );
+
+  /**
+   * -
+   *   -|
+   *   -
+   */
   await focusRichText(page, 1);
+  await waitNextFrame(page);
   await pressEnter(page);
-  await assertBlockChildrenIds(page, '2', ['3', '6', '4']);
-  await undoByClick(page);
-  await assertBlockChildrenIds(page, '2', ['3', '4']); // 0(1(2,(3,4)))
+  await waitNextFrame(page);
 
+  /**
+   * -
+   * -|
+   *   -
+   */
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_4.json`
+  );
+
+  await undoByClick(page);
+
+  /**
+   * -
+   *   -
+   *   -|
+   */
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_1.json`
+  );
+
+  /**
+   * -|
+   *   -
+   *   -
+   */
   await focusRichText(page, 0);
+  await waitNextFrame(page);
   await pressEnter(page);
-  await assertBlockChildrenIds(page, '7', ['3', '4']);
+  await waitNextFrame(page);
+
+  /**
+   * |
+   *   -
+   *   -
+   */
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_5.json`
+  );
+
   await undoByClick(page);
-  await assertBlockChildrenIds(page, '2', ['3', '4']); // 0(1(2,(3,4)))
+
+  /**
+   * -
+   *   -
+   *   -|
+   */
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_1.json`
+  );
 });
 
 test('enter list block with non-empty text', async ({ page }) => {
@@ -565,7 +495,8 @@ test('enter list block with non-empty text', async ({ page }) => {
 
   await focusRichText(page, 0);
   await pressEnter(page);
-  await assertBlockChildrenIds(page, '6', ['3', '4']);
+  await assertBlockChildrenIds(page, '2', ['6', '3', '4']); // 0(1(2,(6,3,4)))
+  await waitNextFrame(page);
   await undoByClick(page);
   await assertBlockChildrenIds(page, '2', ['3', '4']); // 0(1(2,(3,4)))
 });
@@ -715,139 +646,51 @@ test('should not convert to a list when pressing space at the second line', asyn
 });
 
 test.describe('toggle list', () => {
-  const getToggleIcon = (page: Page) => page.locator('.toggle-icon');
-
-  async function isToggleIconVisible(toggleIcon: Locator) {
-    const connected = await toggleIcon.isVisible();
-    if (!connected) return false;
-    const element = await toggleIcon.elementHandle();
-    if (!element) return false;
-    const opacity = await element.evaluate(node => {
-      // https://stackoverflow.com/questions/11365296/how-do-i-get-the-opacity-of-an-element-using-javascript
-      return window.getComputedStyle(node).getPropertyValue('opacity');
-    });
-    if (!opacity || typeof opacity !== 'string') {
-      throw new Error('opacity is not a string');
-    }
-    const isVisible = opacity !== '0';
-    return isVisible;
-  }
-
-  async function assertToggleIconVisible(toggleIcon: Locator, expected = true) {
-    expect(await isToggleIconVisible(toggleIcon)).toBe(expected);
-  }
-
-  test('click toggle icon should collapsed list', async ({ page }) => {
+  test('click toggle icon should collapsed list', async ({
+    page,
+  }, testInfo) => {
     await enterPlaygroundRoom(page);
-    const { noteId } = await initEmptyParagraphState(page);
+    await initEmptyParagraphState(page);
     await initThreeLists(page);
-    const toggleIcon = getToggleIcon(page);
+    const toggleIcon = page.locator('.toggle-icon');
     const prefixes = page.locator('.affine-list-block__prefix');
+    const listChildren = page
+      .locator('[data-block-id="4"] .affine-block-children-container')
+      .nth(0);
     const parentPrefix = prefixes.nth(1);
 
-    await expect(prefixes).toHaveCount(3);
+    expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+      `${testInfo.title}_init.json`
+    );
+
     await parentPrefix.hover();
     await waitNextFrame(page);
-    await assertToggleIconVisible(toggleIcon);
+    expect(await isToggleIconVisible(toggleIcon)).toBe(true);
 
+    await expect(listChildren).toBeVisible();
     await toggleIcon.click();
-    await expect(prefixes).toHaveCount(2);
-    await assertStoreMatchJSX(
-      page,
-      `
-<affine:note
-  prop:background="--affine-background-secondary-color"
-  prop:displayMode="both"
-  prop:edgeless={
-    Object {
-      "style": Object {
-        "borderRadius": 8,
-        "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
-      },
-    }
-  }
-  prop:hidden={false}
-  prop:index="a0"
->
-  <affine:list
-    prop:checked={false}
-    prop:collapsed={false}
-    prop:text="123"
-    prop:type="bulleted"
-  />
-  <affine:list
-    prop:checked={false}
-    prop:collapsed={true}
-    prop:text="456"
-    prop:type="bulleted"
-  >
-    <affine:list
-      prop:checked={false}
-      prop:collapsed={false}
-      prop:text="789"
-      prop:type="bulleted"
-    />
-  </affine:list>
-</affine:note>`,
-      noteId
+    await expect(listChildren).not.toBeVisible();
+    expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+      `${testInfo.title}_toggle.json`
     );
 
     // Collapsed toggle icon should be show always
     await page.mouse.move(0, 0);
-    await assertToggleIconVisible(toggleIcon);
+    expect(await isToggleIconVisible(toggleIcon)).toBe(true);
 
+    await expect(listChildren).not.toBeVisible();
     await toggleIcon.click();
-    await expect(prefixes).toHaveCount(3);
-    await assertStoreMatchJSX(
-      page,
-      `
-<affine:note
-  prop:background="--affine-background-secondary-color"
-  prop:displayMode="both"
-  prop:edgeless={
-    Object {
-      "style": Object {
-        "borderRadius": 8,
-        "borderSize": 4,
-        "borderStyle": "solid",
-        "shadowType": "--affine-note-shadow-box",
-      },
-    }
-  }
-  prop:hidden={false}
-  prop:index="a0"
->
-  <affine:list
-    prop:checked={false}
-    prop:collapsed={false}
-    prop:text="123"
-    prop:type="bulleted"
-  />
-  <affine:list
-    prop:checked={false}
-    prop:collapsed={false}
-    prop:text="456"
-    prop:type="bulleted"
-  >
-    <affine:list
-      prop:checked={false}
-      prop:collapsed={false}
-      prop:text="789"
-      prop:type="bulleted"
-    />
-  </affine:list>
-</affine:note>`,
-      noteId
+    await expect(listChildren).toBeVisible();
+    expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+      `${testInfo.title}_init.json`
     );
 
     await page.mouse.move(0, 0);
     await waitNextFrame(page, 200);
-    await assertToggleIconVisible(toggleIcon, false);
+    expect(await isToggleIconVisible(toggleIcon)).toBe(false);
   });
 
-  test('indent item should expand toggle', async ({ page }) => {
+  test('indent item should expand toggle', async ({ page }, testInfo) => {
     await enterPlaygroundRoom(page);
     await initEmptyParagraphState(page);
     await initThreeLists(page);
@@ -856,59 +699,144 @@ test.describe('toggle list', () => {
     await pressEnter(page);
     await type(page, '012');
 
-    const toggleIcon = getToggleIcon(page);
-    const prefixes = page.locator('.affine-list-block__prefix');
+    const toggleIcon = page.locator('.toggle-icon');
+    const listChildren = page
+      .locator('[data-block-id="4"] .affine-block-children-container')
+      .nth(0);
 
+    expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+      `${testInfo.title}_init.json`
+    );
+
+    await expect(listChildren).toBeVisible();
     await toggleIcon.click();
-    await expect(prefixes).toHaveCount(3);
+    await expect(listChildren).not.toBeVisible();
 
-    await focusRichText(page, 2);
+    expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+      `${testInfo.title}_toggle.json`
+    );
+
+    await focusRichText(page, 3);
     await pressTab(page);
     await waitNextFrame(page, 200);
-    await expect(prefixes).toHaveCount(4);
+    await expect(listChildren).not.toBeVisible();
+
+    expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+      `${testInfo.title}_finial.json`
+    );
   });
 
   test('toggle icon should be show when hover', async ({ page }) => {
     await enterPlaygroundRoom(page);
     await initEmptyParagraphState(page);
     await initThreeLists(page);
-    const toggleIcon = getToggleIcon(page);
+    const toggleIcon = page.locator('.toggle-icon');
 
     const prefixes = page.locator('.affine-list-block__prefix');
     const parentPrefix = prefixes.nth(1);
 
-    await assertToggleIconVisible(toggleIcon, false);
+    expect(await isToggleIconVisible(toggleIcon)).toBe(false);
     await parentPrefix.hover();
     await waitNextFrame(page, 200);
-    await assertToggleIconVisible(toggleIcon);
+    expect(await isToggleIconVisible(toggleIcon)).toBe(true);
 
     await page.mouse.move(0, 0);
     await waitNextFrame(page, 300);
-    await assertToggleIconVisible(toggleIcon, false);
+    expect(await isToggleIconVisible(toggleIcon)).toBe(false);
   });
+});
 
-  test('can expand toggle in readonly mode', async ({ page }) => {
+test.describe('readonly', () => {
+  test('can expand toggle in readonly mode', async ({ page }, testInfo) => {
     await enterPlaygroundRoom(page);
     await initEmptyParagraphState(page);
     await initThreeLists(page);
-    const toggleIcon = getToggleIcon(page);
+    const toggleIcon = page.locator('.toggle-icon');
     const prefixes = page.locator('.affine-list-block__prefix');
+    const listChildren = page
+      .locator('[data-block-id="4"] .affine-block-children-container')
+      .nth(0);
     const parentPrefix = prefixes.nth(1);
-    await expect(prefixes).toHaveCount(3);
 
     await parentPrefix.hover();
-    await assertToggleIconVisible(toggleIcon);
+    await waitNextFrame(page, 200);
+    expect(await isToggleIconVisible(toggleIcon)).toBe(true);
+
+    await expect(listChildren).toBeVisible();
+    await toggleIcon.click();
+    await expect(listChildren).not.toBeVisible();
+
+    expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+      `${testInfo.title}_before_readonly.json`
+    );
+
+    await waitNextFrame(page, 200);
+    await switchReadonly(page);
+
+    await waitNextFrame(page, 200);
+    expect(await isToggleIconVisible(toggleIcon)).toBe(true);
+
+    await expect(listChildren).not.toBeVisible();
+    await toggleIcon.click();
+    await expect(listChildren).toBeVisible();
+
+    expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+      `${testInfo.title}_before_readonly.json`
+    );
 
     await toggleIcon.click();
-    await expect(prefixes).toHaveCount(2);
+    await expect(listChildren).not.toBeVisible();
+
+    expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+      `${testInfo.title}_before_readonly.json`
+    );
+  });
+
+  test('can not modify todo list in readonly mode', async ({ page }) => {
+    await enterPlaygroundRoom(page);
+    await initEmptyParagraphState(page);
+    await focusRichText(page);
+
+    const checkBox = page.locator('.affine-list-block__prefix');
+
+    {
+      await type(page, '[] todo');
+      await switchReadonly(page);
+      await expect(page.locator('.affine-list--checked')).toHaveCount(0);
+      await checkBox.click();
+      await expect(page.locator('.affine-list--checked')).toHaveCount(0);
+    }
+
+    {
+      await switchReadonly(page, false);
+      await checkBox.click();
+      await switchReadonly(page);
+      await expect(page.locator('.affine-list--checked')).toHaveCount(1);
+      await checkBox.click();
+      await expect(page.locator('.affine-list--checked')).toHaveCount(1);
+    }
+  });
+
+  test('should render collapsed list correctly', async ({ page }) => {
+    await enterPlaygroundRoom(page);
+    await initEmptyEdgelessState(page);
+    // await switchEditorMode(page);
+    await initThreeLists(page);
+
+    const toggleIcon = page.locator('.toggle-icon');
+    const listChildren = page
+      .locator('[data-block-id="5"] .affine-block-children-container')
+      .nth(0);
+
+    await expect(listChildren).toBeVisible();
+    await toggleIcon.click();
+    await expect(listChildren).not.toBeVisible();
 
     await switchReadonly(page);
-    await assertToggleIconVisible(toggleIcon);
+    // trick for render a readonly doc from scratch
+    await switchEditorMode(page);
+    await switchEditorMode(page);
 
-    await toggleIcon.click();
-    await expect(prefixes).toHaveCount(3);
-
-    await toggleIcon.click();
-    await expect(prefixes).toHaveCount(2);
+    await expect(listChildren).not.toBeVisible();
   });
 });

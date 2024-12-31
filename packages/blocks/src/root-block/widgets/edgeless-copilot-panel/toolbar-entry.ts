@@ -1,72 +1,77 @@
-import { type EditorHost, WithDisposable } from '@blocksuite/block-std';
-import { css, html, LitElement, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import type { EditorHost } from '@blocksuite/block-std';
+
+import { AIStarIcon } from '@blocksuite/affine-components/icons';
+import { isGfxGroupCompatibleModel } from '@blocksuite/block-std/gfx';
+import { WithDisposable } from '@blocksuite/global/utils';
+import { css, html, LitElement } from 'lit';
+import { property } from 'lit/decorators.js';
 
 import type { AIItemGroupConfig } from '../../../_common/components/ai-item/types.js';
-import { AIStarIcon } from '../../../_common/icons/ai.js';
-import { requestConnectedFrame } from '../../../_common/utils/event.js';
 import type { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
+import type { CopilotTool } from '../../edgeless/gfx-tool/copilot-tool.js';
 
-@customElement('edgeless-copilot-toolbar-entry')
+import { sortEdgelessElements } from '../../edgeless/utils/clone-utils.js';
+
 export class EdgelessCopilotToolbarEntry extends WithDisposable(LitElement) {
   static override styles = css`
     .copilot-icon-button {
-      color: var(--affine-brand-color);
-      font-weight: 500;
-      font-size: var(--affine-font-sm);
-      position: relative;
-    }
+      line-height: 20px;
 
-    .copilot-icon-button span {
-      line-height: 22px;
-      padding-left: 4px;
-    }
-
-    edgeless-copilot-panel {
-      top: 44px;
-      left: 0px;
-      position: absolute;
+      .label.medium {
+        color: var(--affine-brand-color);
+      }
     }
   `;
 
-  @property({ attribute: false })
-  host!: EditorHost;
+  private _onClick = () => {
+    this.onClick?.();
+    this._showCopilotPanel();
+  };
 
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
+  private _showCopilotPanel() {
+    const selectedElements = sortEdgelessElements(
+      this.edgeless.service.selection.selectedElements
+    );
+    const toBeSelected = new Set(selectedElements);
 
-  @property({ attribute: false })
-  groups!: AIItemGroupConfig[];
+    selectedElements.forEach(element => {
+      // its descendants are already selected
+      if (toBeSelected.has(element)) return;
 
-  @state()
-  private _showPanel = false;
+      toBeSelected.add(element);
+
+      if (isGfxGroupCompatibleModel(element)) {
+        element.descendantElements.forEach(descendant => {
+          toBeSelected.add(descendant);
+        });
+      }
+    });
+
+    this.edgeless.gfx.tool.setTool('copilot');
+    (
+      this.edgeless.gfx.tool.currentTool$.peek() as CopilotTool
+    ).updateSelectionWith(Array.from(toBeSelected), 10);
+  }
 
   override render() {
-    return html`
-      <div class="copilot-button">
-        <icon-button
-          class="copilot-icon-button"
-          width="75px"
-          height="32px"
-          @click=${() => (this._showPanel = !this._showPanel)}
-        >
-          ${AIStarIcon} <span>Ask AI</span>
-        </icon-button>
-        <div class="copilot-panel">
-          ${this._showPanel
-            ? html`<edgeless-copilot-panel
-            .edgeless=${this.edgeless}
-            .host=${this.host}
-            .groups=${this.groups}
-            .entry=${'toolbar'}
-            .onClick=${() => {
-              requestConnectedFrame(() => (this._showPanel = false), this);
-            }}
-          ></edgeless-copilot-panel>
-        </div>`
-            : nothing}
-        </div>
-      </div>
-    `;
+    return html`<edgeless-tool-icon-button
+      aria-label="Ask AI"
+      class="copilot-icon-button"
+      @click=${this._onClick}
+    >
+      ${AIStarIcon} <span class="label medium">Ask AI</span>
+    </edgeless-tool-icon-button>`;
   }
+
+  @property({ attribute: false })
+  accessor edgeless!: EdgelessRootBlockComponent;
+
+  @property({ attribute: false })
+  accessor groups!: AIItemGroupConfig[];
+
+  @property({ attribute: false })
+  accessor host!: EditorHost;
+
+  @property({ attribute: false })
+  accessor onClick: (() => void) | undefined = undefined;
 }

@@ -1,15 +1,64 @@
+import { IS_MAC } from '@blocksuite/global/env';
+
+import type { EventOptions, UIEventDispatcher } from '../dispatcher.js';
+
 import {
   type UIEventHandler,
   UIEventState,
   UIEventStateContext,
 } from '../base.js';
-import type { EventOptions, UIEventDispatcher } from '../dispatcher.js';
 import { bindKeymap } from '../keymap.js';
 import { KeyboardEventState } from '../state/index.js';
 import { EventScopeSourceType, EventSourceState } from '../state/source.js';
 
 export class KeyboardControl {
+  private _down = (event: KeyboardEvent) => {
+    if (!this._shouldTrigger(event)) {
+      return;
+    }
+    const keyboardEventState = new KeyboardEventState({
+      event,
+      composing: this.composition,
+    });
+    this._dispatcher.run(
+      'keyDown',
+      this._createContext(event, keyboardEventState)
+    );
+  };
+
+  private _shouldTrigger = (event: KeyboardEvent) => {
+    if (event.isComposing) {
+      return false;
+    }
+    const mod = IS_MAC ? event.metaKey : event.ctrlKey;
+    if (
+      ['c', 'v', 'x'].includes(event.key) &&
+      mod &&
+      !event.shiftKey &&
+      !event.altKey
+    ) {
+      return false;
+    }
+    return true;
+  };
+
+  private _up = (event: KeyboardEvent) => {
+    if (!this._shouldTrigger(event)) {
+      return;
+    }
+    const keyboardEventState = new KeyboardEventState({
+      event,
+      composing: this.composition,
+    });
+
+    this._dispatcher.run(
+      'keyUp',
+      this._createContext(event, keyboardEventState)
+    );
+  };
+
   private composition = false;
+
   constructor(private _dispatcher: UIEventDispatcher) {}
 
   private _createContext(event: Event, keyboardState: KeyboardEventState) {
@@ -20,25 +69,6 @@ export class KeyboardControl {
         sourceType: EventScopeSourceType.Selection,
       }),
       keyboardState
-    );
-  }
-
-  listen() {
-    this._dispatcher.disposables.addFromEvent(document, 'keydown', this._down);
-    this._dispatcher.disposables.addFromEvent(document, 'keyup', this._up);
-    this._dispatcher.disposables.addFromEvent(
-      document,
-      'compositionstart',
-      () => {
-        this.composition = true;
-      }
-    );
-    this._dispatcher.disposables.addFromEvent(
-      document,
-      'compositionend',
-      () => {
-        this.composition = false;
-      }
     );
   }
 
@@ -56,26 +86,28 @@ export class KeyboardControl {
     );
   }
 
-  private _down = (event: KeyboardEvent) => {
-    const keyboardEventState = new KeyboardEventState({
-      event,
-      composing: this.composition,
-    });
-    this._dispatcher.run(
-      'keyDown',
-      this._createContext(event, keyboardEventState)
+  listen() {
+    this._dispatcher.disposables.addFromEvent(document, 'keydown', this._down);
+    this._dispatcher.disposables.addFromEvent(document, 'keyup', this._up);
+    this._dispatcher.disposables.addFromEvent(
+      document,
+      'compositionstart',
+      () => {
+        this.composition = true;
+      },
+      {
+        capture: true,
+      }
     );
-  };
-
-  private _up = (event: KeyboardEvent) => {
-    const keyboardEventState = new KeyboardEventState({
-      event,
-      composing: this.composition,
-    });
-
-    this._dispatcher.run(
-      'keyUp',
-      this._createContext(event, keyboardEventState)
+    this._dispatcher.disposables.addFromEvent(
+      document,
+      'compositionend',
+      () => {
+        this.composition = false;
+      },
+      {
+        capture: true,
+      }
     );
-  };
+  }
 }

@@ -1,96 +1,186 @@
-import { WithDisposable } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import { type BlockModel } from '@blocksuite/store';
-import { html, LitElement, nothing } from 'lit';
-import { customElement, property, query, state } from 'lit/decorators.js';
+import type { AffineInlineEditor } from '@blocksuite/affine-components/rich-text';
+
+import { ArrowDownIcon } from '@blocksuite/affine-components/icons';
+import { createLitPortal } from '@blocksuite/affine-components/portal';
+import { getInlineEditorByModel } from '@blocksuite/affine-components/rich-text';
+import {
+  isControlledKeyboardEvent,
+  isFuzzyMatch,
+  substringMatchScore,
+} from '@blocksuite/affine-shared/utils';
+import { assertExists, WithDisposable } from '@blocksuite/global/utils';
+import { autoPlacement, offset } from '@floating-ui/dom';
+import { html, LitElement, nothing, type PropertyValues } from 'lit';
+import { property, query, state } from 'lit/decorators.js';
+import { ifDefined } from 'lit/directives/if-defined.js';
 import { styleMap } from 'lit/directives/style-map.js';
+
+import type {
+  SlashMenuActionItem,
+  SlashMenuContext,
+  SlashMenuGroupDivider,
+  SlashMenuItem,
+  SlashMenuStaticConfig,
+  SlashMenuStaticItem,
+  SlashSubMenu,
+} from './config.js';
 
 import {
   cleanSpecifiedTail,
   createKeydownObserver,
+  getQuery,
 } from '../../../_common/components/utils.js';
+import { slashItemToolTipStyle, styles } from './styles.js';
 import {
-  getRichTextByModel,
-  isControlledKeyboardEvent,
-} from '../../../_common/utils/index.js';
-import { isFuzzyMatch } from '../../../_common/utils/string.js';
-import type { RootBlockComponent } from '../../../root-block/types.js';
-import { styles } from './styles.js';
-import {
-  collectGroupNames,
-  type InternSlashItem as InternalSlashItem,
-  type SlashItem,
-  type SlashMenuOptions,
+  getFirstNotDividerItem,
+  isActionItem,
+  isGroupDivider,
+  isSubMenuItem,
+  notGroupDivider,
+  slashItemClassName,
 } from './utils.js';
 
-@customElement('affine-slash-menu')
+type InnerSlashMenuContext = SlashMenuContext & {
+  tooltipTimeout: number;
+  onClickItem: (item: SlashMenuActionItem) => void;
+};
+
 export class SlashMenu extends WithDisposable(LitElement) {
   static override styles = styles;
 
-  @property({ attribute: false })
-  rootElement!: RootBlockComponent;
+  private _handleClickItem = (item: SlashMenuActionItem) => {
+    // Need to remove the search string
+    // We must to do clean the slash string before we do the action
+    // Otherwise, the action may change the model and cause the slash string to be changed
+    cleanSpecifiedTail(
+      this.host,
+      this.context.model,
+      this.triggerKey + (this._query || '')
+    );
+    this.inlineEditor
+      .waitForUpdate()
+      .then(() => {
+        item.action(this.context)?.catch(console.error);
+        this.abortController.abort();
+      })
+      .catch(console.error);
+  };
 
-  @property({ attribute: false })
-  model!: BlockModel;
+  private _initItemPathMap = () => {
+    const traverse = (item: SlashMenuStaticItem, path: number[]) => {
+      this._itemPathMap.set(item, [...path]);
+      if (isSubMenuItem(item)) {
+        item.subMenu.forEach((subItem, index) =>
+          traverse(subItem, [...path, index])
+        );
+      }
+    };
 
-  @property({ attribute: false })
-  options!: SlashMenuOptions;
+    this.config.items.forEach((item, index) => traverse(item, [index]));
+  };
 
-  @property({ attribute: false })
-  triggerKey!: string;
+  private _innerSlashMenuContext!: InnerSlashMenuContext;
 
-  @query('.slash-menu')
-  slashMenuElement?: HTMLElement;
+  private _itemPathMap = new Map<SlashMenuItem, number[]>();
 
-  @state()
-  private _leftPanelActivated = false;
+  private _queryState: 'off' | 'on' | 'no_result' = 'off';
 
-  @state()
-  private _activatedItemIndex = 0;
+  private _startRange = this.inlineEditor.getInlineRange();
 
-  @state()
-  private _filterItems: InternalSlashItem[] = [];
+  private _updateFilteredItems = () => {
+    const query = this._query;
+    if (query === null) {
+      this.abortController.abort();
+      return;
+    }
+    this._filteredItems = [];
+    const searchStr = query.toLowerCase();
+    if (searchStr === '' || searchStr.endsWith(' ')) {
+      this._queryState = searchStr === '' ? 'off' : 'no_result';
+      return;
+    }
 
-  @state()
-  private _hide = false;
+    // Layer order traversal
+    let depth = 0;
+    let queue = this.config.items.filter(notGroupDivider);
+    while (queue.length !== 0) {
+      // remove the sub menu item from the previous layer result
+      this._filteredItems = this._filteredItems.filter(
+        item => !isSubMenuItem(item)
+      );
 
-  @state()
-  private _position: {
-    x: string;
-    y: string;
-    height: number;
-  } | null = null;
+      this._filteredItems = this._filteredItems.concat(
+        queue.filter(({ name, alias = [] }) =>
+          [name, ...alias].some(str => isFuzzyMatch(str, searchStr))
+        )
+      );
 
-  abortController = new AbortController();
+      // We search first and second layer
+      if (this._filteredItems.length !== 0 && depth >= 1) break;
 
-  get host() {
-    return this.rootElement.host;
+      queue = queue
+        .map<typeof queue>(item => {
+          if (isSubMenuItem(item)) {
+            return item.subMenu.filter(notGroupDivider);
+          } else {
+            return [];
+          }
+        })
+        .flat();
+
+      depth++;
+    }
+
+    this._filteredItems = this._filteredItems.sort((a, b) => {
+      return -(
+        substringMatchScore(a.name, searchStr) -
+        substringMatchScore(b.name, searchStr)
+      );
+    });
+
+    this._queryState = this._filteredItems.length === 0 ? 'no_result' : 'on';
+  };
+
+  updatePosition = (position: { x: string; y: string; height: number }) => {
+    this._position = position;
+  };
+
+  private get _query() {
+    return getQuery(this.inlineEditor, this._startRange);
   }
 
-  /**
-   * Does not include the slash character
-   */
-  private _searchString = '';
+  get host() {
+    return this.context.rootComponent.host;
+  }
+
+  constructor(
+    private inlineEditor: AffineInlineEditor,
+    private abortController = new AbortController()
+  ) {
+    super();
+  }
 
   override connectedCallback() {
     super.connectedCallback();
-    this._disposables.addFromEvent(window, 'mousedown', this._onClickAway);
+
+    this._innerSlashMenuContext = {
+      ...this.context,
+      onClickItem: this._handleClickItem,
+      tooltipTimeout: this.config.tooltipTimeout,
+    };
+
+    this._initItemPathMap();
+
     this._disposables.addFromEvent(this, 'mousedown', e => {
       // Prevent input from losing focus
       e.preventDefault();
     });
-    this._filterItems = this._updateItem('');
 
-    const richText = getRichTextByModel(this.host, this.model);
-    if (!richText) {
-      console.warn(
-        'Slash Menu may not work properly! No rich text found for model',
-        this.model
-      );
+    const inlineEditor = this.inlineEditor;
+    if (!inlineEditor || !inlineEditor.eventSource) {
+      console.error('inlineEditor or eventSource is not found');
       return;
     }
-    const inlineEditor = richText.inlineEditor;
-    assertExists(inlineEditor, 'RichText InlineEditor not found');
 
     /**
      * Handle arrow key
@@ -104,146 +194,259 @@ export class SlashMenu extends WithDisposable(LitElement) {
      */
     createKeydownObserver({
       target: inlineEditor.eventSource,
-      inlineEditor,
-      abortController: this.abortController,
-      interceptor: (e, next) => {
-        if (e.key === '/') {
+      signal: this.abortController.signal,
+      interceptor: (event, next) => {
+        const { key, isComposing, code } = event;
+        if (key === this.triggerKey) {
           // Can not stopPropagation here,
           // otherwise the rich text will not be able to trigger a new the slash menu
           return;
         }
-        if (this._hide && e.key !== 'Backspace') {
+
+        if (key === 'Process' && !isComposing && code === 'Slash') {
+          // The IME case of above
+          return;
+        }
+
+        if (key !== 'Backspace' && this._queryState === 'no_result') {
           // if the following key is not the backspace key,
           // the slash menu will be closed
           this.abortController.abort();
           return;
         }
-        if (e.key === ' ') {
-          this._hide = true;
-          next();
+
+        if (key === 'ArrowRight' || key === 'ArrowLeft' || key === 'Escape') {
           return;
-        }
-        if (this._hide) {
-          this._hide = false;
         }
 
-        const isControlled = isControlledKeyboardEvent(e);
-        const isShift = e.shiftKey;
-        if (e.key === 'ArrowLeft' && !isControlled && !isShift) {
-          e.stopPropagation();
-          e.preventDefault();
-          // If the left panel is hidden, should not activate it
-          if (this._searchString.length) return;
-          this._leftPanelActivated = true;
-          return;
-        }
-        if (e.key === 'ArrowRight' && !isControlled && !isShift) {
-          e.stopPropagation();
-          e.preventDefault();
-          this._leftPanelActivated = false;
-          return;
-        }
         next();
       },
-      onUpdateQuery: val => {
-        const newFilteredItems = this._updateItem(val);
-        this._filterItems = newFilteredItems;
-        if (!newFilteredItems.length) {
-          this._hide = true;
+      onInput: isComposition => {
+        if (isComposition) {
+          this._updateFilteredItems();
+        } else {
+          this.inlineEditor.slots.renderComplete.once(
+            this._updateFilteredItems
+          );
         }
       },
-      onMove: step => {
-        const configLen = this._filterItems.length;
-        if (this._leftPanelActivated) {
-          const groupNames = collectGroupNames(this._filterItems);
-          const nowGroupIdx = groupNames.findIndex(
-            groupName =>
-              groupName ===
-              this._filterItems[this._activatedItemIndex].groupName
-          );
-          const targetGroup =
-            groupNames[
-              (nowGroupIdx + step + groupNames.length) % groupNames.length
-            ];
-          this._handleClickCategory(targetGroup);
+      onPaste: () => {
+        setTimeout(() => {
+          this._updateFilteredItems();
+        }, 50);
+      },
+      onDelete: () => {
+        const curRange = this.inlineEditor.getInlineRange();
+        if (!this._startRange || !curRange) {
           return;
         }
-        let ejectedCnt = configLen;
-        do {
-          this._activatedItemIndex =
-            (this._activatedItemIndex + step + configLen) % configLen;
-          // Skip disabled items
-        } while (
-          this._filterItems[this._activatedItemIndex].disabled &&
-          // If all items are disabled, the loop will never end
-          ejectedCnt--
-        );
-
-        this._scrollToItem(this._filterItems[this._activatedItemIndex], false);
+        if (curRange.index < this._startRange.index) {
+          this.abortController.abort();
+        }
+        this.inlineEditor.slots.renderComplete.once(this._updateFilteredItems);
       },
-      onConfirm: () => {
-        this._handleClickItem(this._activatedItemIndex);
-      },
-      onEsc: () => {
-        this.abortController.abort();
-      },
+      onAbort: () => this.abortController.abort(),
     });
   }
 
-  updatePosition(position: { x: string; y: string; height: number }) {
-    this._position = position;
+  override render() {
+    const slashMenuStyles = this._position
+      ? {
+          transform: `translate(${this._position.x}, ${this._position.y})`,
+          maxHeight: `${Math.min(this._position.height, this.config.maxHeight)}px`,
+        }
+      : {
+          visibility: 'hidden',
+        };
+
+    return html`${this._queryState !== 'no_result'
+        ? html` <div
+            class="overlay-mask"
+            @click="${() => this.abortController.abort()}"
+          ></div>`
+        : nothing}
+      <inner-slash-menu
+        .context=${this._innerSlashMenuContext}
+        .menu=${this._queryState === 'off'
+          ? this.config.items
+          : this._filteredItems}
+        .onClickItem=${this._handleClickItem}
+        .mainMenuStyle=${slashMenuStyles}
+        .abortController=${this.abortController}
+      >
+      </inner-slash-menu>`;
   }
 
-  // Handle click outside
-  private _onClickAway = () => {
-    // if (e.target === this) return;
-    if (!this._hide) return;
-    // If the slash menu is hidden, click anywhere will close the slash menu
-    this.abortController.abort();
+  @state()
+  private accessor _filteredItems: (SlashMenuActionItem | SlashSubMenu)[] = [];
+
+  @state()
+  private accessor _position: {
+    x: string;
+    y: string;
+    height: number;
+  } | null = null;
+
+  @property({ attribute: false })
+  accessor config!: SlashMenuStaticConfig;
+
+  @property({ attribute: false })
+  accessor context!: SlashMenuContext;
+
+  @query('inner-slash-menu')
+  accessor slashMenuElement!: HTMLElement;
+
+  @property({ attribute: false })
+  accessor triggerKey!: string;
+}
+
+export class InnerSlashMenu extends WithDisposable(LitElement) {
+  static override styles = styles;
+
+  private _closeSubMenu = () => {
+    this._subMenuAbortController?.abort();
+    this._subMenuAbortController = null;
+    this._currentSubMenu = null;
   };
 
-  private _updateItem(query: string): InternalSlashItem[] {
-    this._searchString = query;
-    this._activatedItemIndex = 0;
-    // Activate the right panel when search string is not empty
-    if (this._leftPanelActivated) {
-      this._leftPanelActivated = false;
-    }
-    const searchStr = this._searchString.toLowerCase();
-    let allMenus = this.options.menus
-      .map(group =>
-        typeof group.items === 'function'
-          ? group
-              .items({ rootElement: this.rootElement, model: this.model })
-              .map(item => ({ ...item, groupName: group.name }))
-          : group.items.map(item => ({ ...item, groupName: group.name }))
-      )
-      .flat();
+  private _currentSubMenu: SlashSubMenu | null = null;
 
-    allMenus = allMenus.filter(({ showWhen = () => true }) =>
-      showWhen(this.model, this.rootElement)
+  private _openSubMenu = (item: SlashSubMenu) => {
+    if (item === this._currentSubMenu) return;
+
+    const itemElement = this.shadowRoot?.querySelector(
+      `.${slashItemClassName(item)}`
     );
-    if (!searchStr) {
-      return allMenus;
+    if (!itemElement) return;
+
+    this._closeSubMenu();
+    this._currentSubMenu = item;
+    this._subMenuAbortController = new AbortController();
+    this._subMenuAbortController.signal.addEventListener('abort', () => {
+      this._closeSubMenu();
+    });
+
+    const subMenuElement = createLitPortal({
+      shadowDom: false,
+      template: html`<inner-slash-menu
+        .context=${this.context}
+        .menu=${item.subMenu}
+        .depth=${this.depth + 1}
+        .abortController=${this._subMenuAbortController}
+      >
+        ${item.subMenu.map(this._renderItem)}
+      </inner-slash-menu>`,
+      computePosition: {
+        referenceElement: itemElement,
+        autoUpdate: true,
+        middleware: [
+          offset(12),
+          autoPlacement({
+            allowedPlacements: ['right-start', 'right-end'],
+          }),
+        ],
+      },
+      abortController: this._subMenuAbortController,
+    });
+
+    subMenuElement.style.zIndex = `calc(var(--affine-z-index-popover) + ${this.depth})`;
+    subMenuElement.focus();
+  };
+
+  private _renderActionItem = (item: SlashMenuActionItem) => {
+    const { name, icon, description, tooltip, customTemplate } = item;
+
+    const hover = item === this._activeItem;
+
+    return html`<icon-button
+      class="slash-menu-item ${slashItemClassName(item)}"
+      width="100%"
+      height="44px"
+      text=${customTemplate ?? name}
+      subText=${ifDefined(description)}
+      data-testid="${name}"
+      hover=${hover}
+      @mousemove=${() => {
+        this._activeItem = item;
+        this._closeSubMenu();
+      }}
+      @click=${() => this.context.onClickItem(item)}
+    >
+      ${icon && html`<div class="slash-menu-item-icon">${icon}</div>`}
+      ${tooltip &&
+      html`<affine-tooltip
+        tip-position="right"
+        .offset=${22}
+        .tooltipStyle=${slashItemToolTipStyle}
+        .hoverOptions=${{
+          enterDelay: this.context.tooltipTimeout,
+          allowMultiple: false,
+        }}
+      >
+        <div class="tooltip-figure">${tooltip.figure}</div>
+        <div class="tooltip-caption">${tooltip.caption}</div>
+      </affine-tooltip>`}
+    </icon-button>`;
+  };
+
+  private _renderGroupItem = (item: SlashMenuGroupDivider) => {
+    return html`<div class="slash-menu-group-name">${item.groupName}</div>`;
+  };
+
+  private _renderItem = (item: SlashMenuStaticItem) => {
+    if (isGroupDivider(item)) return this._renderGroupItem(item);
+    else if (isActionItem(item)) return this._renderActionItem(item);
+    else if (isSubMenuItem(item)) return this._renderSubMenuItem(item);
+    else {
+      console.error('Unknown item type for slash menu');
+      console.error(item);
+      return nothing;
     }
+  };
 
-    return allMenus.filter(({ name, alias = [] }) =>
-      [name, ...alias].some(str => isFuzzyMatch(str, searchStr))
-    );
-  }
+  private _renderSubMenuItem = (item: SlashSubMenu) => {
+    const { name, icon, description } = item;
 
-  private _scrollToItem(item: SlashItem, force = true) {
+    const hover = item === this._activeItem;
+
+    return html`<icon-button
+      class="slash-menu-item ${slashItemClassName(item)}"
+      width="100%"
+      height="44px"
+      text=${name}
+      subText=${ifDefined(description)}
+      data-testid="${name}"
+      hover=${hover}
+      @mousemove=${() => {
+        this._activeItem = item;
+        this._openSubMenu(item);
+      }}
+      @touchstart=${() => {
+        isSubMenuItem(item) &&
+          (this._currentSubMenu === item
+            ? this._closeSubMenu()
+            : this._openSubMenu(item));
+      }}
+    >
+      ${icon && html`<div class="slash-menu-item-icon">${icon}</div>`}
+      <div slot="suffix" style="transform: rotate(-90deg);">
+        ${ArrowDownIcon}
+      </div>
+    </icon-button>`;
+  };
+
+  private _subMenuAbortController: AbortController | null = null;
+
+  private _scrollToItem(item: SlashMenuStaticItem) {
     const shadowRoot = this.shadowRoot;
     if (!shadowRoot) {
       return;
     }
-    const ele = shadowRoot.querySelector(`icon-button[text="${item.name}"]`);
+
+    const text = isGroupDivider(item) ? item.groupName : item.name;
+
+    const ele = shadowRoot.querySelector(`icon-button[text="${text}"]`);
     if (!ele) {
-      return;
-    }
-    if (force) {
-      // set parameter to `true` to align to top
-      ele.scrollIntoView(true);
       return;
     }
     ele.scrollIntoView({
@@ -251,129 +454,152 @@ export class SlashMenu extends WithDisposable(LitElement) {
     });
   }
 
-  private _handleClickItem(index: number) {
-    if (
-      this._leftPanelActivated ||
-      index < 0 ||
-      index >= this._filterItems.length
-    ) {
+  override connectedCallback() {
+    super.connectedCallback();
+
+    // close all sub menus
+    this.abortController?.signal?.addEventListener('abort', () => {
+      this._subMenuAbortController?.abort();
+    });
+    this.addEventListener('wheel', event => {
+      if (this._currentSubMenu) {
+        event.preventDefault();
+      }
+    });
+
+    const inlineEditor = getInlineEditorByModel(
+      this.context.rootComponent.host,
+      this.context.model
+    );
+
+    if (!inlineEditor || !inlineEditor.eventSource) {
+      console.error('inlineEditor or eventSource is not found');
       return;
     }
-    // Need to remove the search string
-    // We must to do clean the slash string before we do the action
-    // Otherwise, the action may change the model and cause the slash string to be changed
-    cleanSpecifiedTail(
-      this.host,
-      this.model,
-      this.triggerKey + this._searchString
+
+    inlineEditor.eventSource.addEventListener(
+      'keydown',
+      event => {
+        if (this._currentSubMenu) return;
+        if (event.isComposing) return;
+
+        const { key, ctrlKey, metaKey, altKey, shiftKey } = event;
+
+        const onlyCmd = (ctrlKey || metaKey) && !altKey && !shiftKey;
+        const onlyShift = shiftKey && !isControlledKeyboardEvent(event);
+        const notControlShift = !(ctrlKey || metaKey || altKey || shiftKey);
+
+        let moveStep = 0;
+        if (
+          (key === 'ArrowUp' && notControlShift) ||
+          (key === 'Tab' && onlyShift) ||
+          (key === 'P' && onlyCmd) ||
+          (key === 'p' && onlyCmd)
+        ) {
+          moveStep = -1;
+        }
+
+        if (
+          (key === 'ArrowDown' && notControlShift) ||
+          (key === 'Tab' && notControlShift) ||
+          (key === 'n' && onlyCmd) ||
+          (key === 'N' && onlyCmd)
+        ) {
+          moveStep = 1;
+        }
+
+        if (moveStep !== 0) {
+          let itemIndex = this.menu.indexOf(this._activeItem);
+          do {
+            itemIndex =
+              (itemIndex + moveStep + this.menu.length) % this.menu.length;
+          } while (isGroupDivider(this.menu[itemIndex]));
+
+          this._activeItem = this.menu[itemIndex] as typeof this._activeItem;
+          this._scrollToItem(this._activeItem);
+
+          event.preventDefault();
+          event.stopPropagation();
+        }
+
+        if (key === 'ArrowRight' && notControlShift) {
+          if (isSubMenuItem(this._activeItem)) {
+            this._openSubMenu(this._activeItem);
+          }
+
+          event.preventDefault();
+          event.stopPropagation();
+        }
+
+        if ((key === 'ArrowLeft' || key === 'Escape') && notControlShift) {
+          this.abortController.abort();
+
+          event.preventDefault();
+          event.stopPropagation();
+        }
+
+        if (key === 'Enter' && notControlShift) {
+          if (isSubMenuItem(this._activeItem)) {
+            this._openSubMenu(this._activeItem);
+          } else if (isActionItem(this._activeItem)) {
+            this.context.onClickItem(this._activeItem);
+          }
+
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      },
+      {
+        capture: true,
+        signal: this.abortController.signal,
+      }
     );
+  }
+
+  override disconnectedCallback() {
     this.abortController.abort();
-
-    const { action } = this._filterItems[index];
-    action({ rootElement: this.rootElement, model: this.model })?.catch(
-      console.error
-    );
-  }
-
-  private _handleClickCategory(groupName: string) {
-    const item = this._filterItems.find(item => item.groupName === groupName);
-    if (!item) return;
-    this._scrollToItem(item);
-    this._activatedItemIndex = this._filterItems.findIndex(
-      i => i.name === item.name
-    );
-  }
-
-  private _categoryTemplate() {
-    const showCategory = !this._searchString.length;
-    const activatedGroupName =
-      this._filterItems[this._activatedItemIndex]?.groupName;
-    const groups = collectGroupNames(this._filterItems);
-
-    return html`<div
-      class="slash-category ${!showCategory ? 'slash-category-hide' : ''}"
-    >
-      ${groups.map(
-        groupName =>
-          html`<div
-            class="slash-category-name ${activatedGroupName === groupName
-              ? 'slash-active-category'
-              : ''}"
-            @click=${() => this._handleClickCategory(groupName)}
-          >
-            ${groupName}
-          </div>`
-      )}
-    </div>`;
   }
 
   override render() {
-    if (this._hide) {
-      return nothing;
-    }
+    if (this.menu.length === 0) return nothing;
 
-    const MAX_HEIGHT_WITH_CATEGORY = 408;
-    const MAX_HEIGHT = 344;
-    const showCategory = !this._searchString.length;
+    const style = styleMap(this.mainMenuStyle ?? { position: 'relative' });
 
-    const slashMenuStyles = this._position
-      ? styleMap({
-          transform: `translate(${this._position.x}, ${this._position.y})`,
-          maxHeight: `${Math.min(
-            this._position.height,
-            showCategory ? MAX_HEIGHT_WITH_CATEGORY : MAX_HEIGHT
-          )}px`,
-        })
-      : styleMap({
-          visibility: 'hidden',
-        });
-
-    const btnItems = this._filterItems.map(
-      ({ name, icon, suffix, disabled = false, groupName }, index) => {
-        const showDivider =
-          index !== 0 && this._filterItems[index - 1].groupName !== groupName;
-        const itemClass = name.split(' ').join('-').toLocaleLowerCase();
-        return html`<div
-            class="slash-item-divider"
-            ?hidden=${!showDivider || !!this._searchString.length}
-          ></div>
-          <icon-button
-            class="slash-item ${itemClass}"
-            ?disabled=${disabled}
-            width="100%"
-            height="32px"
-            style="padding-left: 12px; justify-content: flex-start; gap: 8px;"
-            hover=${!disabled &&
-            !this._leftPanelActivated &&
-            this._activatedItemIndex === index
-              ? 'true'
-              : 'false'}
-            text="${name}"
-            data-testid="${name}"
-            @mousemove=${() => {
-              // Use `mousemove` instead of `mouseover` to avoid navigate conflict in left panel
-              this._leftPanelActivated = false;
-              this._activatedItemIndex = index;
-            }}
-            @click=${() => {
-              this._handleClickItem(index);
-            }}
-          >
-            ${icon}
-            <div slot="suffix">${suffix}</div>
-          </icon-button>`;
-      }
-    );
-
-    return html`<div class="slash-menu-container blocksuite-overlay">
-      <div
-        class="overlay-mask"
-        @click="${() => this.abortController.abort()}"
-      ></div>
-      <div class="slash-menu" style="${slashMenuStyles}">
-        ${this._categoryTemplate()}
-        <div class="slash-item-container">${btnItems}</div>
-      </div>
+    return html`<div
+      class="slash-menu"
+      style=${style}
+      data-testid=${`sub-menu-${this.depth}`}
+    >
+      ${this.menu.map(this._renderItem)}
     </div>`;
   }
+
+  override willUpdate(changedProperties: PropertyValues<this>) {
+    if (changedProperties.has('menu') && this.menu.length !== 0) {
+      const firstItem = getFirstNotDividerItem(this.menu);
+      assertExists(firstItem);
+      this._activeItem = firstItem;
+
+      // this case happen on query updated
+      this._subMenuAbortController?.abort();
+    }
+  }
+
+  @state()
+  private accessor _activeItem!: SlashMenuActionItem | SlashSubMenu;
+
+  @property({ attribute: false })
+  accessor abortController!: AbortController;
+
+  @property({ attribute: false })
+  accessor context!: InnerSlashMenuContext;
+
+  @property({ attribute: false })
+  accessor depth: number = 0;
+
+  @property({ attribute: false })
+  accessor mainMenuStyle: Parameters<typeof styleMap>[0] | null = null;
+
+  @property({ attribute: false })
+  accessor menu!: SlashMenuStaticItem[];
 }

@@ -1,85 +1,16 @@
-import type { BlockElement } from '../../view/index.js';
-import { UIEventState, UIEventStateContext } from '../base.js';
+import type { BlockComponent } from '../../view/index.js';
 import type {
+  EventHandlerRunner,
   EventName,
-  EventScope,
   UIEventDispatcher,
 } from '../dispatcher.js';
+
+import { UIEventState, UIEventStateContext } from '../base.js';
 import { EventScopeSourceType, EventSourceState } from '../state/source.js';
 
 export class RangeControl {
-  private _prev: Range | null = null;
-  constructor(private _dispatcher: UIEventDispatcher) {}
-
-  listen() {
-    this._dispatcher.disposables.addFromEvent(
-      document,
-      'selectionchange',
-      this._selectionChange
-    );
-    this._dispatcher.disposables.addFromEvent(
-      this._dispatcher.host,
-      'compositionstart',
-      this._compositionStart
-    );
-    this._dispatcher.disposables.addFromEvent(
-      this._dispatcher.host,
-      'compositionend',
-      this._compositionEnd
-    );
-    this._dispatcher.disposables.addFromEvent(
-      this._dispatcher.host,
-      'compositionupdate',
-      this._compositionUpdate
-    );
-  }
-
-  private _compositionUpdate = (event: Event) => {
-    const scope = this._buildScope('compositionUpdate');
-
-    this._dispatcher.run(
-      'compositionUpdate',
-      this._createContext(event),
-      scope
-    );
-  };
-
-  private _compositionStart = (event: Event) => {
-    const scope = this._buildScope('compositionStart');
-
-    this._dispatcher.run('compositionStart', this._createContext(event), scope);
-  };
-
-  private _compositionEnd = (event: Event) => {
-    const scope = this._buildScope('compositionEnd');
-
-    this._dispatcher.run('compositionEnd', this._createContext(event), scope);
-  };
-
-  private _selectionChange = (event: Event) => {
-    const selection = document.getSelection();
-    if (!selection) return;
-
-    if (!selection.containsNode(this._dispatcher.host, true)) return;
-    if (selection.containsNode(this._dispatcher.host)) return;
-
-    const scope = this._buildScope('selectionChange');
-
-    this._dispatcher.run('selectionChange', this._createContext(event), scope);
-  };
-
-  private _createContext(event: Event) {
-    return UIEventStateContext.from(
-      new UIEventState(event),
-      new EventSourceState({
-        event,
-        sourceType: EventScopeSourceType.Selection,
-      })
-    );
-  }
-
   private _buildScope = (eventName: EventName) => {
-    let scope: EventScope | undefined;
+    let scope: EventHandlerRunner[] | undefined;
     const selection = document.getSelection();
     if (selection && selection.rangeCount > 0) {
       const range = selection.getRangeAt(0);
@@ -93,43 +24,73 @@ export class RangeControl {
     return scope;
   };
 
-  private _buildEventScopeByNativeRange(name: EventName, range: Range) {
-    const blocks = this._findBlockElementPath(range);
-    const paths = blocks
-      .map(blockView => {
-        return blockView;
-      })
-      .filter((path): path is string[] => !!path);
-    const flavours = Array.from(
-      new Set(
-        paths
-          .flatMap(path => {
-            return path.map(blockId => {
-              return this._dispatcher.std.doc.getBlockById(blockId)?.flavour;
-            });
-          })
-          .filter((flavour): flavour is string => {
-            return !!flavour;
-          })
-      )
-    ).reverse();
+  private _compositionEnd = (event: Event) => {
+    const scope = this._buildScope('compositionEnd');
 
-    return this._dispatcher.buildEventScope(name, flavours, paths);
+    this._dispatcher.run('compositionEnd', this._createContext(event), scope);
+  };
+
+  private _compositionStart = (event: Event) => {
+    const scope = this._buildScope('compositionStart');
+
+    this._dispatcher.run('compositionStart', this._createContext(event), scope);
+  };
+
+  private _compositionUpdate = (event: Event) => {
+    const scope = this._buildScope('compositionUpdate');
+
+    this._dispatcher.run(
+      'compositionUpdate',
+      this._createContext(event),
+      scope
+    );
+  };
+
+  private _prev: Range | null = null;
+
+  private _selectionChange = (event: Event) => {
+    const selection = document.getSelection();
+    if (!selection) return;
+
+    if (!selection.containsNode(this._dispatcher.host, true)) return;
+    if (selection.containsNode(this._dispatcher.host)) return;
+
+    const scope = this._buildScope('selectionChange');
+
+    this._dispatcher.run('selectionChange', this._createContext(event), scope);
+  };
+
+  constructor(private _dispatcher: UIEventDispatcher) {}
+
+  private _buildEventScopeByNativeRange(name: EventName, range: Range) {
+    const blockIds = this._findBlockComponentPath(range);
+
+    return this._dispatcher.buildEventScope(name, blockIds);
   }
 
-  private _findBlockElementPath(range: Range): string[][] {
+  private _createContext(event: Event) {
+    return UIEventStateContext.from(
+      new UIEventState(event),
+      new EventSourceState({
+        event,
+        sourceType: EventScopeSourceType.Selection,
+      })
+    );
+  }
+
+  private _findBlockComponentPath(range: Range): string[] {
     const start = range.startContainer;
     const end = range.endContainer;
     const ancestor = range.commonAncestorContainer;
-    const getBlockView = (node: Node) => {
+    const getBlockView = (node: Node): BlockComponent | null => {
       const el = node instanceof Element ? node : node.parentElement;
       // TODO(mirone/#6534): find a better way to get block element from a node
-      return el?.closest<BlockElement>('[data-block-id]');
+      return el?.closest<BlockComponent>('[data-block-id]') ?? null;
     };
     if (ancestor.nodeType === Node.TEXT_NODE) {
       const leaf = getBlockView(ancestor);
       if (leaf) {
-        return [leaf.path];
+        return [leaf.blockId];
       }
     }
     const nodes = new Set<Node>();
@@ -163,17 +124,33 @@ export class RangeControl {
     };
     dfsDOMSearch(ancestor.firstChild, ancestor);
 
-    const blocks = new Set<string[]>();
+    const blocks = new Set<string>();
     nodes.forEach(node => {
       const blockView = getBlockView(node);
       if (!blockView) {
         return;
       }
-      if (blocks.has(blockView.path)) {
+      if (blocks.has(blockView.blockId)) {
         return;
       }
-      blocks.add(blockView.path);
+      blocks.add(blockView.blockId);
     });
     return Array.from(blocks);
+  }
+
+  listen() {
+    const { host, disposables } = this._dispatcher;
+    disposables.addFromEvent(
+      document,
+      'selectionchange',
+      this._selectionChange
+    );
+    disposables.addFromEvent(host, 'compositionstart', this._compositionStart);
+    disposables.addFromEvent(host, 'compositionend', this._compositionEnd);
+    disposables.addFromEvent(
+      host,
+      'compositionupdate',
+      this._compositionUpdate
+    );
   }
 }

@@ -1,27 +1,22 @@
-/* eslint-disable @typescript-eslint/no-non-null-asserted-optional-chain */
-/* eslint-disable @typescript-eslint/no-non-null-assertion */
-
-import './declare-test-window.js';
-
-import type {
-  BlockElement,
-  EditorHost,
-} from '@block-std/view/element/index.js';
-import { BLOCK_ID_ATTR, NOTE_WIDTH } from '@blocks/_common/consts.js';
-import type { CssVariableName } from '@blocks/_common/theme/css-variables.js';
 import type {
   AffineInlineEditor,
   NoteBlockModel,
   RichText,
   RootBlockModel,
 } from '@blocks/index.js';
-import { assertExists } from '@global/utils/index.js';
+import type { BlockComponent, EditorHost } from '@blocksuite/block-std';
 import type { InlineRootElement } from '@inline/inline-editor.js';
-import type { Locator } from '@playwright/test';
-import { expect, type Page } from '@playwright/test';
-import { COLLECTION_VERSION, PAGE_VERSION } from '@store/consts.js';
-import type { BlockModel, SerializedStore } from '@store/index.js';
+import type { BlockModel } from '@store/index.js';
 import type { JSXElement } from '@store/utils/jsx.js';
+
+import {
+  DEFAULT_NOTE_HEIGHT,
+  DEFAULT_NOTE_WIDTH,
+} from '@blocksuite/affine-model';
+import { BLOCK_ID_ATTR } from '@blocksuite/block-std';
+import { assertExists } from '@blocksuite/global/utils';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { COLLECTION_VERSION, PAGE_VERSION } from '@store/consts.js';
 import {
   format as prettyFormat,
   plugins as prettyFormatPlugins,
@@ -30,15 +25,16 @@ import {
 import {
   getCanvasElementsCount,
   getConnectorPath,
-  getEdgelessSelectedRectModel,
-  getGroupChildrenIds,
-  getGroupIds,
-  getGroupOfElements,
+  getContainerChildIds,
+  getContainerIds,
+  getContainerOfElements,
+  getEdgelessElementBound,
   getNoteRect,
   getSelectedBound,
   getSortedIdsInViewport,
   getZoomLevel,
   toIdCountMap,
+  toModelCoord,
 } from './actions/edgeless.js';
 import {
   pressArrowLeft,
@@ -57,12 +53,13 @@ import {
   getEditorLocator,
   inlineEditorInnerTextToString,
 } from './actions/misc.js';
+import './declare-test-window.js';
 import { getStringFromRichText } from './inline-editor.js';
 import { currentEditorIndex } from './multiple-editor.js';
 
 export { assertExists };
 
-export const defaultStore: SerializedStore = {
+export const defaultStore = {
   meta: {
     pages: [
       {
@@ -87,12 +84,14 @@ export const defaultStore: SerializedStore = {
       'affine:embed-linked-doc': 1,
       'affine:embed-synced-doc': 1,
       'affine:image': 1,
+      'affine:latex': 1,
       'affine:frame': 1,
       'affine:code': 1,
       'affine:surface': 5,
       'affine:bookmark': 1,
       'affine:attachment': 1,
       'affine:surface-ref': 1,
+      'affine:edgeless-text': 1,
     },
     workspaceVersion: COLLECTION_VERSION,
     pageVersion: PAGE_VERSION,
@@ -112,8 +111,8 @@ export const defaultStore: SerializedStore = {
           'sys:id': '1',
           'sys:children': ['2'],
           'sys:version': 1,
-          'prop:xywh': `[0,0,${NOTE_WIDTH},95]`,
-          'prop:background': '--affine-background-secondary-color',
+          'prop:xywh': `[0,0,${DEFAULT_NOTE_WIDTH}, ${DEFAULT_NOTE_HEIGHT}]`,
+          'prop:background': '--affine-note-background-white',
           'prop:index': 'a0',
           'prop:hidden': false,
           'prop:displayMode': 'both',
@@ -121,7 +120,7 @@ export const defaultStore: SerializedStore = {
             style: {
               borderRadius: 8,
               borderSize: 4,
-              borderStyle: 'solid',
+              borderStyle: 'none',
               shadowType: '--affine-note-shadow-box',
             },
           },
@@ -213,7 +212,13 @@ export async function assertRichTexts(page: Page, texts: string[]) {
 export async function assertEdgelessCanvasText(page: Page, text: string) {
   const actualTexts = await page.evaluate(() => {
     const editor = document.querySelector(
-      'edgeless-text-editor,edgeless-shape-text-editor,edgeless-frame-title-editor,edgeless-group-title-editor'
+      [
+        'edgeless-text-editor',
+        'edgeless-shape-text-editor',
+        'edgeless-frame-title-editor',
+        'edgeless-group-title-editor',
+        'edgeless-connector-label-editor',
+      ].join(',')
     );
     if (!editor) {
       throw new Error('editor not found');
@@ -227,18 +232,15 @@ export async function assertEdgelessCanvasText(page: Page, text: string) {
 
 export async function assertRichImage(page: Page, count: number) {
   const editor = getEditorLocator(page);
-  const actual = await editor.locator('.resizable-img').count();
-  expect(actual).toEqual(count);
+  await expect(editor.locator('.resizable-img')).toHaveCount(count);
 }
 
 export async function assertDivider(page: Page, count: number) {
-  const actual = await page.locator('affine-divider').count();
-  expect(actual).toEqual(count);
+  await expect(page.locator('affine-divider')).toHaveCount(count);
 }
 
 export async function assertRichDragButton(page: Page) {
-  const actual = await page.locator('.resize').count();
-  expect(actual).toEqual(4);
+  await expect(page.locator('.resize')).toHaveCount(4);
 }
 
 export async function assertImageSize(
@@ -255,7 +257,7 @@ export async function assertImageSize(
 export async function assertImageOption(page: Page) {
   // const actual = await page.locator('.embed-editing-state').count();
   // expect(actual).toEqual(1);
-  const locator = page.locator('.embed-editing-state');
+  const locator = page.locator('.affine-image-toolbar-container');
   await expect(locator).toBeVisible();
 }
 
@@ -288,12 +290,26 @@ export async function assertBlockCount(
   flavour: string,
   count: number
 ) {
-  const actual = await page.locator(`affine-${flavour}`).count();
-  expect(actual).toBe(count);
+  await expect(page.locator(`affine-${flavour}`)).toHaveCount(count);
 }
 export async function assertRowCount(page: Page, count: number) {
-  const actual = await page.locator('.affine-database-block-row').count();
-  expect(actual).toBe(count);
+  await expect(page.locator('.affine-database-block-row')).toHaveCount(count);
+}
+
+export async function assertVisibleBlockCount(
+  page: Page,
+  flavour: string,
+  count: number
+) {
+  // not only count, but also check if all the blocks are visible
+  const locator = page.locator(`affine-${flavour}`);
+  let visibleCount = 0;
+  for (let i = 0; i < count; i++) {
+    if (await locator.nth(i).isVisible()) {
+      visibleCount++;
+    }
+  }
+  expect(visibleCount).toEqual(count);
 }
 
 export async function assertRichTextInlineRange(
@@ -380,12 +396,12 @@ export async function assertRichTextModelType(
       const editorHost =
         document.querySelectorAll('editor-host')[currentEditorIndex];
       const richText = editorHost.querySelectorAll('rich-text')[index];
-      const blockElement = richText.closest<BlockElement>(`[${BLOCK_ID_ATTR}]`);
+      const block = richText.closest<BlockComponent>(`[${BLOCK_ID_ATTR}]`);
 
-      if (!blockElement) {
-        throw new Error('blockElement is undefined');
+      if (!block) {
+        throw new Error('block component is undefined');
       }
-      return (blockElement.model as BlockModel<{ type: string }>).type;
+      return (block.model as BlockModel<{ type: string }>).type;
     },
     { index, BLOCK_ID_ATTR, currentEditorIndex }
   );
@@ -412,12 +428,15 @@ export async function assertTextFormats(page: Page, resultObj: unknown[]) {
   expect(actual).toEqual(resultObj);
 }
 
-export async function assertStore(page: Page, expected: SerializedStore) {
-  const actual = (await page.evaluate(() => {
+export async function assertStore(
+  page: Page,
+  expected: Record<string, unknown>
+) {
+  const actual = await page.evaluate(() => {
     const json = window.collection.doc.toJSON();
     delete json.meta.pages[0].createDate;
     return json;
-  })) as SerializedStore;
+  });
   expect(actual).toEqual(expected);
 }
 
@@ -455,6 +474,42 @@ export async function assertBlockChildrenFlavours(
   expect(actual).toEqual(flavours);
 }
 
+export async function assertParentBlockId(
+  page: Page,
+  blockId: string,
+  parentId: string
+) {
+  const actual = await page.evaluate(
+    ({ blockId }) => {
+      const model = window.doc?.getBlock(blockId)?.model;
+      if (!model) {
+        throw new Error(`Block with id ${blockId} not found`);
+      }
+      return model.doc.getParent(model)?.id;
+    },
+    { blockId }
+  );
+  expect(actual).toEqual(parentId);
+}
+
+export async function assertParentBlockFlavour(
+  page: Page,
+  blockId: string,
+  flavour: string
+) {
+  const actual = await page.evaluate(
+    ({ blockId }) => {
+      const model = window.doc?.getBlock(blockId)?.model;
+      if (!model) {
+        throw new Error(`Block with id ${blockId} not found`);
+      }
+      return model.doc.getParent(model)?.flavour;
+    },
+    { blockId }
+  );
+  expect(actual).toEqual(flavour);
+}
+
 export async function assertClassName(
   page: Page,
   selector: string,
@@ -480,15 +535,67 @@ export async function assertBlockType(
 ) {
   const actual = await page.evaluate(
     ({ id }) => {
-      const element = document.querySelector(`[data-block-id="${id}"]`);
-      // @ts-ignore
-      const model = element.model as BlockModel;
+      const element = document.querySelector<BlockComponent>(
+        `[data-block-id="${id}"]`
+      );
+
+      if (!element) {
+        throw new Error(`Element with id ${id} not found`);
+      }
+
+      const model = element.model;
       // @ts-ignore
       return model.type;
     },
     { id }
   );
   expect(actual).toBe(type);
+}
+
+export async function assertBlockFlavour(
+  page: Page,
+  id: string | number,
+  flavour: BlockSuite.Flavour
+) {
+  const actual = await page.evaluate(
+    ({ id }) => {
+      const element = document.querySelector<BlockComponent>(
+        `[data-block-id="${id}"]`
+      );
+
+      if (!element) {
+        throw new Error(`Element with id ${id} not found`);
+      }
+
+      const model = element.model;
+      return model.flavour;
+    },
+    { id }
+  );
+  expect(actual).toBe(flavour);
+}
+
+export async function assertBlockTextContent(
+  page: Page,
+  id: string | number,
+  str: string
+) {
+  const actual = await page.evaluate(
+    ({ id }) => {
+      const element = document.querySelector<BlockComponent>(
+        `[data-block-id="${id}"]`
+      );
+
+      if (!element) {
+        throw new Error(`Element with id ${id} not found`);
+      }
+
+      const model = element.model;
+      return model.text?.toString() ?? '';
+    },
+    { id }
+  );
+  expect(actual).toBe(str);
 }
 
 export async function assertBlockProps(
@@ -540,7 +647,7 @@ export async function assertBlockTypes(page: Page, blockTypes: string[]) {
 export async function assertMatchMarkdown(page: Page, text: string) {
   const jsonDoc = (await page.evaluate(() =>
     window.collection.doc.toJSON()
-  )) as SerializedStore;
+  )) as Record<string, Record<string, unknown>>;
   const titleNode = jsonDoc['doc:home']['0'] as Record<string, unknown>;
 
   const markdownVisitor = (node: Record<string, unknown>): string => {
@@ -804,14 +911,22 @@ export async function assertEdgelessDraggingArea(page: Page, xywh: number[]) {
   expect(box.height).toBeCloseTo(h, 0);
 }
 
-export async function assertEdgelessSelectedRect(page: Page, xywh: number[]) {
-  const [x, y, w, h] = xywh;
+export async function getSelectedRect(page: Page) {
   const editor = getEditorLocator(page);
   const selectedRect = editor
     .locator('edgeless-selected-rect')
     .locator('.affine-edgeless-selected-rect');
+  // FIXME: remove this timeout
+  await page.waitForTimeout(50);
   const box = await selectedRect.boundingBox();
   if (!box) throw new Error('Missing edgeless selected rect');
+  return box;
+}
+
+// Better to use xxSelectedModelRect
+export async function assertEdgelessSelectedRect(page: Page, xywh: number[]) {
+  const [x, y, w, h] = xywh;
+  const box = await getSelectedRect(page);
 
   expect(box.x).toBeCloseTo(x, 0);
   expect(box.y).toBeCloseTo(y, 0);
@@ -819,17 +934,71 @@ export async function assertEdgelessSelectedRect(page: Page, xywh: number[]) {
   expect(box.height).toBeCloseTo(h, 0);
 }
 
-export async function assertEdgelessSelectedRectModel(
+export async function assertEdgelessSelectedModelRect(
   page: Page,
   xywh: number[]
 ) {
   const [x, y, w, h] = xywh;
-  const box = await getEdgelessSelectedRectModel(page);
+  const box = await getSelectedRect(page);
+  const [mX, mY] = await toModelCoord(page, [box.x, box.y]);
 
-  expect(box[0]).toBeCloseTo(x, 0);
-  expect(box[1]).toBeCloseTo(y, 0);
-  expect(box[2]).toBeCloseTo(w, 0);
-  expect(box[3]).toBeCloseTo(h, 0);
+  expect(mX).toBeCloseTo(x, 0);
+  expect(mY).toBeCloseTo(y, 0);
+  expect(box.width).toBeCloseTo(w, 0);
+  expect(box.height).toBeCloseTo(h, 0);
+}
+
+export async function assertEdgelessSelectedElementHandleCount(
+  page: Page,
+  count: number
+) {
+  const editor = getEditorLocator(page);
+  const handles = editor.locator('.element-handle');
+  await expect(handles).toHaveCount(count);
+}
+
+// Better to use xxSelectedModelRect
+export async function assertEdgelessRemoteSelectedRect(
+  page: Page,
+  xywh: number[],
+  index = 0
+) {
+  const [x, y, w, h] = xywh;
+  const editor = getEditorLocator(page);
+  const remoteSelectedRect = editor
+    .locator('affine-edgeless-remote-selection-widget')
+    .locator('.remote-rect')
+    .nth(index);
+
+  const box = await remoteSelectedRect.boundingBox();
+  if (!box) throw new Error('Missing edgeless remote selected rect');
+
+  expect(box.x).toBeCloseTo(x, 0);
+  expect(box.y).toBeCloseTo(y, 0);
+  expect(box.width).toBeCloseTo(w, 0);
+  expect(box.height).toBeCloseTo(h, 0);
+}
+
+export async function assertEdgelessRemoteSelectedModelRect(
+  page: Page,
+  xywh: number[],
+  index = 0
+) {
+  const [x, y, w, h] = xywh;
+  const editor = getEditorLocator(page);
+  const remoteSelectedRect = editor
+    .locator('affine-edgeless-remote-selection-widget')
+    .locator('.remote-rect')
+    .nth(index);
+
+  const box = await remoteSelectedRect.boundingBox();
+  if (!box) throw new Error('Missing edgeless remote selected rect');
+
+  const [mX, mY] = await toModelCoord(page, [box.x, box.y]);
+  expect(mX).toBeCloseTo(x, 0);
+  expect(mY).toBeCloseTo(y, 0);
+  expect(box.width).toBeCloseTo(w, 0);
+  expect(box.height).toBeCloseTo(h, 0);
 }
 
 export async function assertEdgelessSelectedRectRotation(page: Page, deg = 0) {
@@ -843,36 +1012,75 @@ export async function assertEdgelessSelectedRectRotation(page: Page, deg = 0) {
   expect(transform).toMatch(r);
 }
 
+export async function assertEdgelessSelectedReactCursor(
+  page: Page,
+  expected: (
+    | {
+        mode: 'resize';
+        handle:
+          | 'top'
+          | 'right'
+          | 'bottom'
+          | 'left'
+          | 'top-left'
+          | 'top-right'
+          | 'bottom-right'
+          | 'bottom-left';
+      }
+    | {
+        mode: 'rotate';
+        handle: 'top-left' | 'top-right' | 'bottom-right' | 'bottom-left';
+      }
+  ) & {
+    cursor: string;
+  }
+) {
+  const editor = getEditorLocator(page);
+  const selectedRect = editor
+    .locator('edgeless-selected-rect')
+    .locator('.affine-edgeless-selected-rect');
+
+  const handle = selectedRect
+    .getByLabel(expected.handle, { exact: true })
+    .locator(`.${expected.mode}`);
+
+  await handle.hover();
+  await expect(handle).toHaveCSS('cursor', expected.cursor);
+}
+
 export async function assertEdgelessNonSelectedRect(page: Page) {
   const rect = page.locator('edgeless-selected-rect');
   await expect(rect).toBeHidden();
 }
 
-export async function assertSelectionInNote(page: Page, noteId: string) {
-  const closestNoteId = await page.evaluate(() => {
+export async function assertSelectionInNote(
+  page: Page,
+  noteId: string,
+  blockNote: string = 'affine-note'
+) {
+  const closestNoteId = await page.evaluate(blockNote => {
     const selection = window.getSelection();
-    const note = selection?.anchorNode?.parentElement?.closest('affine-note');
+    const note = selection?.anchorNode?.parentElement?.closest(blockNote);
     return note?.getAttribute('data-block-id');
-  });
+  }, blockNote);
   expect(closestNoteId).toEqual(noteId);
 }
 
 export async function assertEdgelessNoteBackground(
   page: Page,
   noteId: string,
-  color: CssVariableName
+  color: string
 ) {
   const editor = getEditorLocator(page);
   const backgroundColor = await editor
-    .locator(`affine-note[data-block-id="${noteId}"]`)
+    .locator(`affine-edgeless-note[data-block-id="${noteId}"]`)
     .evaluate(ele => {
-      const noteWrapper = ele
-        .closest<HTMLDivElement>('.edgeless-block-portal-note')
-        ?.querySelector<HTMLDivElement>('.note-background');
+      const noteWrapper =
+        ele?.querySelector<HTMLDivElement>('.note-background');
       if (!noteWrapper) {
         throw new Error(`Could not find note: ${noteId}`);
       }
-      return noteWrapper.style.background;
+      return noteWrapper.style.backgroundColor;
     });
 
   expect(backgroundColor).toEqual(`var(${color})`);
@@ -905,12 +1113,12 @@ function toHex(color: string) {
 
 export async function assertEdgelessColorSameWithHexColor(
   page: Page,
-  edgelessColor: CssVariableName,
+  edgelessColor: string,
   hexColor: `#${string}`
 ) {
   const themeColor = await getCurrentThemeCSSPropertyValue(page, edgelessColor);
   expect(themeColor).toBeTruthy();
-  const edgelessHexColor = toHex(themeColor as string);
+  const edgelessHexColor = toHex(themeColor);
 
   assertSameColor(hexColor, edgelessHexColor as `#${string}`);
 }
@@ -935,6 +1143,15 @@ export function assertRectExist(
   expect(rect).not.toBe(null);
 }
 
+export async function assertEdgelessElementBound(
+  page: Page,
+  elementId: string,
+  bound: Bound
+) {
+  const actual = await getEdgelessElementBound(page, elementId);
+  assertBound(actual, bound);
+}
+
 export async function assertSelectedBound(
   page: Page,
   expected: Bound,
@@ -949,11 +1166,11 @@ export async function assertSelectedBound(
  * @param page
  * @param expected the expected group id and the count of of its children
  */
-export async function assertGroupIds(
+export async function assertContainerIds(
   page: Page,
   expected: Record<string, number>
 ) {
-  const ids = await getGroupIds(page);
+  const ids = await getContainerIds(page);
   const result = toIdCountMap(ids);
 
   expect(result).toEqual(expected);
@@ -964,44 +1181,44 @@ export async function assertSortedIds(page: Page, expected: string[]) {
   expect(ids).toEqual(expected);
 }
 
-export async function assertGroupChildrenIds(
+export async function assertContainerChildIds(
   page: Page,
   expected: Record<string, number>,
   id: string
 ) {
-  const ids = await getGroupChildrenIds(page, id);
+  const ids = await getContainerChildIds(page, id);
   const result = toIdCountMap(ids);
 
   expect(result).toEqual(expected);
 }
 
-export async function assertGroupOfElements(
+export async function assertContainerOfElements(
   page: Page,
   elements: string[],
-  groupId: string
+  containerId: string | null
 ) {
-  const elementGroups = await getGroupOfElements(page, elements);
+  const elementContainers = await getContainerOfElements(page, elements);
 
-  elementGroups.forEach(elementGroup => {
-    expect(elementGroup).toEqual(groupId);
+  elementContainers.forEach(elementContainer => {
+    expect(elementContainer).toEqual(containerId);
   });
 }
 
 /**
- * Assert the given group has the expected children count.
- * And the children's group id should equal to the given group id.
+ * Assert the given container has the expected children count.
+ * And the children's container id should equal to the given container id.
  * @param page
- * @param groupId
+ * @param containerId
  * @param childrenCount
  */
-export async function assertGroupChildren(
+export async function assertContainerChildCount(
   page: Page,
-  groupId: string,
+  containerId: string,
   childrenCount: number
 ) {
-  const ids = await getGroupChildrenIds(page, groupId);
+  const ids = await getContainerChildIds(page, containerId);
 
-  await assertGroupOfElements(page, ids, groupId);
+  await assertContainerOfElements(page, ids, containerId);
   expect(new Set(ids).size).toBe(childrenCount);
 }
 
@@ -1009,7 +1226,6 @@ export async function assertCanvasElementsCount(page: Page, expected: number) {
   const number = await getCanvasElementsCount(page);
   expect(number).toEqual(expected);
 }
-
 export function assertBound(received: Bound, expected: Bound) {
   expect(received[0]).toBeCloseTo(expected[0], 0);
   expect(received[1]).toBeCloseTo(expected[1], 0);
@@ -1068,11 +1284,11 @@ export async function assertNotHasClass(locator: Locator, className: string) {
 }
 
 export async function assertNoteSequence(page: Page, expected: string) {
-  const actual = await page.locator('.edgeless-index-label').innerText();
+  const actual = await page.locator('.page-visible-index-label').innerText();
   expect(expected).toBe(actual);
 }
 
-export async function assertBlockSelections(page: Page, paths: string[][]) {
+export async function assertBlockSelections(page: Page, paths: string[]) {
   const selections = await page.evaluate(() => {
     const host = document.querySelector<EditorHost>('editor-host');
     if (!host) {
@@ -1080,14 +1296,45 @@ export async function assertBlockSelections(page: Page, paths: string[][]) {
     }
     return host.selection.filter('block');
   });
-  const actualPaths = selections.map(selection => selection.path);
+  const actualPaths = selections.map(selection => selection.blockId);
   expect(actualPaths).toEqual(paths);
 }
 
-export async function assertConnectorStrokeColor(
+export async function assertTextSelection(
   page: Page,
-  color: CssVariableName
+  from?: {
+    blockId: string;
+    index: number;
+    length: number;
+  },
+  to?: {
+    blockId: string;
+    index: number;
+    length: number;
+  }
 ) {
+  const selection = await page.evaluate(() => {
+    const host = document.querySelector<EditorHost>('editor-host');
+    if (!host) {
+      throw new Error('editor-host host not found');
+    }
+    return host.selection.find('text');
+  });
+
+  if (!from && !to) {
+    expect(selection).toBeUndefined();
+    return;
+  }
+
+  if (from) {
+    expect(selection?.from).toEqual(from);
+  }
+  if (to) {
+    expect(selection?.to).toEqual(to);
+  }
+}
+
+export async function assertConnectorStrokeColor(page: Page, color: string) {
   const colorButton = page
     .locator('edgeless-change-connector-button')
     .locator('edgeless-color-panel')

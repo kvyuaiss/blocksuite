@@ -1,25 +1,26 @@
-import './../button.js';
-
-import { WithDisposable } from '@blocksuite/block-std';
-import { Slice } from '@blocksuite/store';
-import { css, html, LitElement, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
-
 import {
-  isEmbedLinkedDocBlock,
-  isEmbedSyncedDocBlock,
-} from '../../../root-block/edgeless/utils/query.js';
-import {
+  CenterPeekIcon,
   CopyIcon,
   DeleteIcon,
   DuplicateIcon,
   OpenIcon,
   RefreshIcon,
-} from '../../icons/text.js';
-import { toast } from '../toast.js';
-import type { EmbedToolbarBlockElement } from './type.js';
+} from '@blocksuite/affine-components/icons';
+import { isPeekable, peek } from '@blocksuite/affine-components/peek';
+import { toast } from '@blocksuite/affine-components/toast';
+import { WithDisposable } from '@blocksuite/global/utils';
+import { Slice } from '@blocksuite/store';
+import { css, html, LitElement, nothing } from 'lit';
+import { property } from 'lit/decorators.js';
 
-@customElement('embed-card-more-menu')
+import type { EmbedBlockComponent } from './type.js';
+
+import {
+  isEmbedLinkedDocBlock,
+  isEmbedSyncedDocBlock,
+} from '../../../root-block/edgeless/utils/query.js';
+import { getBlockProps } from '../../utils/index.js';
+
 export class EmbedCardMoreMenu extends WithDisposable(LitElement) {
   static override styles = css`
     .embed-card-more-menu {
@@ -65,27 +66,22 @@ export class EmbedCardMoreMenu extends WithDisposable(LitElement) {
     }
   `;
 
-  @property({ attribute: false })
-  block!: EmbedToolbarBlockElement;
-
-  @property({ attribute: false })
-  abortController!: AbortController;
+  private get _doc() {
+    return this.block.doc;
+  }
 
   private get _model() {
     return this.block.model;
   }
 
+  get _openButtonDisabled() {
+    return (
+      isEmbedLinkedDocBlock(this._model) && this._model.pageId === this._doc.id
+    );
+  }
+
   private get _std() {
     return this.block.std;
-  }
-
-  private get _doc() {
-    return this.block.doc;
-  }
-
-  private _open() {
-    this.block.open();
-    this.abortController.abort();
   }
 
   private async _copyBlock() {
@@ -97,11 +93,7 @@ export class EmbedCardMoreMenu extends WithDisposable(LitElement) {
 
   private _duplicateBlock() {
     const model = this._model;
-    const keys = model.keys as (keyof typeof model)[];
-    const values = keys.map(key => model[key]);
-    const blockProps = Object.fromEntries(
-      keys.map((key, i) => [key, values[i]])
-    );
+    const blockProps = getBlockProps(model);
     const { width, height, xywh, rotate, zIndex, ...duplicateProps } =
       blockProps;
 
@@ -115,6 +107,19 @@ export class EmbedCardMoreMenu extends WithDisposable(LitElement) {
       index
     );
     this.abortController.abort();
+  }
+
+  private _open() {
+    this.block.open();
+    this.abortController.abort();
+  }
+
+  private _peek() {
+    peek(this.block);
+  }
+
+  private _peekable() {
+    return isPeekable(this.block);
   }
 
   private _refreshData() {
@@ -135,9 +140,22 @@ export class EmbedCardMoreMenu extends WithDisposable(LitElement) {
             class="menu-item open"
             text="Open"
             @click=${() => this._open()}
+            ?disabled=${this._openButtonDisabled}
           >
             ${OpenIcon}
           </icon-button>
+
+          ${this._peekable()
+            ? html`<icon-button
+                width="126px"
+                height="32px"
+                text="Open in center peek"
+                class="menu-item center-peek"
+                @click=${() => this._peek()}
+              >
+                ${CenterPeekIcon}
+              </icon-button>`
+            : nothing}
 
           <icon-button
             width="126px"
@@ -190,6 +208,12 @@ export class EmbedCardMoreMenu extends WithDisposable(LitElement) {
       </div>
     `;
   }
+
+  @property({ attribute: false })
+  accessor abortController!: AbortController;
+
+  @property({ attribute: false })
+  accessor block!: EmbedBlockComponent;
 }
 
 declare global {

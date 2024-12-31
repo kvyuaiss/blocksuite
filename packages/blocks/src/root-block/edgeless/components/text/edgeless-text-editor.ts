@@ -1,45 +1,52 @@
-import '../../../../_common/components/rich-text/rich-text.js';
+import type { RichText } from '@blocksuite/affine-components/rich-text';
+import type { TextElementModel } from '@blocksuite/affine-model';
 
+import { CommonUtils, TextUtils } from '@blocksuite/affine-block-surface';
+import { ThemeProvider } from '@blocksuite/affine-shared/services';
 import {
-  RangeManager,
+  RANGE_SYNC_EXCLUDE_ATTR,
   ShadowlessElement,
-  WithDisposable,
 } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
+import {
+  assertExists,
+  Bound,
+  Vec,
+  WithDisposable,
+} from '@blocksuite/global/utils';
 import { css, html, nothing } from 'lit';
-import { customElement, property, query } from 'lit/decorators.js';
+import { property, query } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-import type { RichText } from '../../../../_common/components/rich-text/rich-text.js';
-import { isCssVariable } from '../../../../_common/theme/css-variables.js';
-import { getLineHeight } from '../../../../surface-block/canvas-renderer/element-renderer/text/utils.js';
-import type { TextElementModel } from '../../../../surface-block/element-model/text.js';
-import { Bound, toRadian, Vec } from '../../../../surface-block/index.js';
 import type { EdgelessRootBlockComponent } from '../../edgeless-root-block.js';
+
 import { deleteElements } from '../../utils/crud.js';
 import { getSelectedRect } from '../../utils/query.js';
 
-@customElement('edgeless-text-editor')
+const { toRadian } = CommonUtils;
+
 export class EdgelessTextEditor extends WithDisposable(ShadowlessElement) {
-  static PLACEHOLDER_TEXT = 'Type from here';
-  static HORIZONTAL_PADDING = 10;
-  static VERTICAL_PADDING = 6;
   static BORDER_WIDTH = 1;
+
+  static PADDING_HORIZONTAL = 10;
+
+  static PADDING_VERTICAL = 6;
+
+  static PLACEHOLDER_TEXT = 'Type from here';
 
   static override styles = css`
     .edgeless-text-editor {
-      box-sizing: content-box;
       position: absolute;
       left: 0;
       top: 0;
       z-index: 10;
       transform-origin: left top;
+      font-kerning: none;
       border: ${EdgelessTextEditor.BORDER_WIDTH}px solid
         var(--affine-primary-color, #1e96eb);
       border-radius: 4px;
       box-shadow: 0px 0px 0px 2px rgba(30, 150, 235, 0.3);
-      padding: ${EdgelessTextEditor.VERTICAL_PADDING}px
-        ${EdgelessTextEditor.HORIZONTAL_PADDING}px;
+      padding: ${EdgelessTextEditor.PADDING_VERTICAL}px
+        ${EdgelessTextEditor.PADDING_HORIZONTAL}px;
       overflow: visible;
     }
 
@@ -60,103 +67,9 @@ export class EdgelessTextEditor extends WithDisposable(ShadowlessElement) {
     }
   `;
 
-  @query('rich-text')
-  richText!: RichText;
-
-  @property({ attribute: false })
-  element!: TextElementModel;
-
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
-
-  get inlineEditor() {
-    assertExists(this.richText.inlineEditor);
-    return this.richText.inlineEditor;
-  }
-
-  get inlineEditorContainer() {
-    return this.inlineEditor.rootElement;
-  }
-
-  private _keeping = false;
   private _isComposition = false;
 
-  setKeeping(keeping: boolean) {
-    this._keeping = keeping;
-  }
-
-  getCoordsOnRightAlign(
-    rect: { w: number; h: number; r: number; x: number; y: number },
-    w1: number,
-    h1: number
-  ): { x: number; y: number } {
-    const centerX = rect.x + rect.w / 2;
-    const centerY = rect.y + rect.h / 2;
-
-    let deltaXPrime =
-      (rect.w / 2) * Math.cos(rect.r) - (-rect.h / 2) * Math.sin(rect.r);
-    let deltaYPrime =
-      (rect.w / 2) * Math.sin(rect.r) + (-rect.h / 2) * Math.cos(rect.r);
-
-    const vX = centerX + deltaXPrime;
-    const vY = centerY + deltaYPrime;
-
-    deltaXPrime = (w1 / 2) * Math.cos(rect.r) - (-h1 / 2) * Math.sin(rect.r);
-    deltaYPrime = (w1 / 2) * Math.sin(rect.r) + (-h1 / 2) * Math.cos(rect.r);
-
-    const newCenterX = vX - deltaXPrime;
-    const newCenterY = vY - deltaYPrime;
-
-    return { x: newCenterX - w1 / 2, y: newCenterY - h1 / 2 };
-  }
-
-  getCoordsOnCenterAlign(
-    rect: { w: number; h: number; r: number; x: number; y: number },
-    w1: number,
-    h1: number
-  ): { x: number; y: number } {
-    const centerX = rect.x + rect.w / 2;
-    const centerY = rect.y + rect.h / 2;
-
-    let deltaXPrime = 0;
-    let deltaYPrime = (-rect.h / 2) * Math.cos(rect.r);
-
-    const vX = centerX + deltaXPrime;
-    const vY = centerY + deltaYPrime;
-
-    deltaXPrime = 0;
-    deltaYPrime = (-h1 / 2) * Math.cos(rect.r);
-
-    const newCenterX = vX - deltaXPrime;
-    const newCenterY = vY - deltaYPrime;
-
-    return { x: newCenterX - w1 / 2, y: newCenterY - h1 / 2 };
-  }
-
-  getCoordsOnLeftAlign(
-    rect: { w: number; h: number; r: number; x: number; y: number },
-    w1: number,
-    h1: number
-  ): { x: number; y: number } {
-    const cX = rect.x + rect.w / 2;
-    const cY = rect.y + rect.h / 2;
-
-    let deltaXPrime =
-      (-rect.w / 2) * Math.cos(rect.r) + (rect.h / 2) * Math.sin(rect.r);
-    let deltaYPrime =
-      (-rect.w / 2) * Math.sin(rect.r) - (rect.h / 2) * Math.cos(rect.r);
-
-    const vX = cX + deltaXPrime;
-    const vY = cY + deltaYPrime;
-
-    deltaXPrime = (-w1 / 2) * Math.cos(rect.r) + (h1 / 2) * Math.sin(rect.r);
-    deltaYPrime = (-w1 / 2) * Math.sin(rect.r) - (h1 / 2) * Math.cos(rect.r);
-
-    const newCenterX = vX - deltaXPrime;
-    const newCenterY = vY - deltaYPrime;
-
-    return { x: newCenterX - w1 / 2, y: newCenterY - h1 / 2 };
-  }
+  private _keeping = false;
 
   private _updateRect = () => {
     const edgeless = this.edgeless;
@@ -231,29 +144,27 @@ export class EdgelessTextEditor extends WithDisposable(ShadowlessElement) {
     });
   };
 
-  getVisualPosition(element: TextElementModel) {
-    const { x, y, w, h, rotate } = element;
-    return Vec.rotWith([x, y], [x + w / 2, y + h / 2], toRadian(rotate));
+  get inlineEditor() {
+    assertExists(this.richText.inlineEditor);
+    return this.richText.inlineEditor;
   }
 
-  getContainerOffset() {
-    const { VERTICAL_PADDING, HORIZONTAL_PADDING, BORDER_WIDTH } =
-      EdgelessTextEditor;
-    return `-${HORIZONTAL_PADDING + BORDER_WIDTH}px, -${
-      VERTICAL_PADDING + BORDER_WIDTH
-    }px`;
+  get inlineEditorContainer() {
+    return this.inlineEditor.rootElement;
   }
 
   override connectedCallback(): void {
     super.connectedCallback();
     if (!this.edgeless) {
-      throw new Error('edgeless is not set.');
+      console.error('edgeless is not set.');
+      return;
     }
     if (!this.element) {
-      throw new Error('text element is not set.');
+      console.error('text element is not set.');
+      return;
     }
 
-    this.setAttribute(RangeManager.rangeSyncExcludeAttr, 'true');
+    this.setAttribute(RANGE_SYNC_EXCLUDE_ATTR, 'true');
   }
 
   override firstUpdated(): void {
@@ -288,7 +199,7 @@ export class EdgelessTextEditor extends WithDisposable(ShadowlessElement) {
           element.display = true;
 
           if (element.text.length === 0) {
-            deleteElements(edgeless.surface, [element]);
+            deleteElements(edgeless, [element]);
           }
 
           edgeless.service.selection.set({
@@ -325,10 +236,96 @@ export class EdgelessTextEditor extends WithDisposable(ShadowlessElement) {
       .catch(console.error);
   }
 
+  getContainerOffset() {
+    const { PADDING_VERTICAL, PADDING_HORIZONTAL, BORDER_WIDTH } =
+      EdgelessTextEditor;
+    return `-${PADDING_HORIZONTAL + BORDER_WIDTH}px, -${
+      PADDING_VERTICAL + BORDER_WIDTH
+    }px`;
+  }
+
+  getCoordsOnCenterAlign(
+    rect: { w: number; h: number; r: number; x: number; y: number },
+    w1: number,
+    h1: number
+  ): { x: number; y: number } {
+    const centerX = rect.x + rect.w / 2;
+    const centerY = rect.y + rect.h / 2;
+
+    let deltaXPrime = 0;
+    let deltaYPrime = (-rect.h / 2) * Math.cos(rect.r);
+
+    const vX = centerX + deltaXPrime;
+    const vY = centerY + deltaYPrime;
+
+    deltaXPrime = 0;
+    deltaYPrime = (-h1 / 2) * Math.cos(rect.r);
+
+    const newCenterX = vX - deltaXPrime;
+    const newCenterY = vY - deltaYPrime;
+
+    return { x: newCenterX - w1 / 2, y: newCenterY - h1 / 2 };
+  }
+
+  getCoordsOnLeftAlign(
+    rect: { w: number; h: number; r: number; x: number; y: number },
+    w1: number,
+    h1: number
+  ): { x: number; y: number } {
+    const cX = rect.x + rect.w / 2;
+    const cY = rect.y + rect.h / 2;
+
+    let deltaXPrime =
+      (-rect.w / 2) * Math.cos(rect.r) + (rect.h / 2) * Math.sin(rect.r);
+    let deltaYPrime =
+      (-rect.w / 2) * Math.sin(rect.r) - (rect.h / 2) * Math.cos(rect.r);
+
+    const vX = cX + deltaXPrime;
+    const vY = cY + deltaYPrime;
+
+    deltaXPrime = (-w1 / 2) * Math.cos(rect.r) + (h1 / 2) * Math.sin(rect.r);
+    deltaYPrime = (-w1 / 2) * Math.sin(rect.r) - (h1 / 2) * Math.cos(rect.r);
+
+    const newCenterX = vX - deltaXPrime;
+    const newCenterY = vY - deltaYPrime;
+
+    return { x: newCenterX - w1 / 2, y: newCenterY - h1 / 2 };
+  }
+
+  getCoordsOnRightAlign(
+    rect: { w: number; h: number; r: number; x: number; y: number },
+    w1: number,
+    h1: number
+  ): { x: number; y: number } {
+    const centerX = rect.x + rect.w / 2;
+    const centerY = rect.y + rect.h / 2;
+
+    let deltaXPrime =
+      (rect.w / 2) * Math.cos(rect.r) - (-rect.h / 2) * Math.sin(rect.r);
+    let deltaYPrime =
+      (rect.w / 2) * Math.sin(rect.r) + (-rect.h / 2) * Math.cos(rect.r);
+
+    const vX = centerX + deltaXPrime;
+    const vY = centerY + deltaYPrime;
+
+    deltaXPrime = (w1 / 2) * Math.cos(rect.r) - (-h1 / 2) * Math.sin(rect.r);
+    deltaYPrime = (w1 / 2) * Math.sin(rect.r) + (-h1 / 2) * Math.cos(rect.r);
+
+    const newCenterX = vX - deltaXPrime;
+    const newCenterY = vY - deltaYPrime;
+
+    return { x: newCenterX - w1 / 2, y: newCenterY - h1 / 2 };
+  }
+
   override async getUpdateComplete(): Promise<boolean> {
     const result = await super.getUpdateComplete();
     await this.richText?.updateComplete;
     return result;
+  }
+
+  getVisualPosition(element: TextElementModel) {
+    const { x, y, w, h, rotate } = element;
+    return Vec.rotWith([x, y], [x + w / 2, y + h / 2], toRadian(rotate));
   }
 
   override render() {
@@ -337,13 +334,17 @@ export class EdgelessTextEditor extends WithDisposable(ShadowlessElement) {
       fontFamily,
       fontSize,
       fontWeight,
-      color,
+      fontStyle,
       textAlign,
       rotate,
       hasMaxWidth,
       w,
     } = this.element;
-    const lineHeight = getLineHeight(fontFamily, fontSize);
+    const lineHeight = TextUtils.getLineHeight(
+      fontFamily,
+      fontSize,
+      fontWeight
+    );
     const rect = getSelectedRect([this.element]);
 
     const { translateX, translateY, zoom } = this.edgeless.service.viewport;
@@ -358,18 +359,23 @@ export class EdgelessTextEditor extends WithDisposable(ShadowlessElement) {
     ];
 
     const isEmpty = !text.length && !this._isComposition;
+    const color = this.edgeless.std
+      .get(ThemeProvider)
+      .generateColorProperty(this.element.color, '#000000');
 
     return html`<div
       style=${styleMap({
         transform: transformOperation.join(' '),
         minWidth: hasMaxWidth ? `${rect.width}px` : 'none',
         maxWidth: hasMaxWidth ? `${w}px` : 'none',
-        fontFamily: `"${fontFamily}"`,
+        fontFamily: TextUtils.wrapFontFamily(fontFamily),
         fontSize: `${fontSize}px`,
         fontWeight,
-        color: isCssVariable(color) ? `var(${color})` : color,
+        fontStyle,
+        color,
         textAlign,
         lineHeight: `${lineHeight}px`,
+        boxSizing: 'content-box',
       })}
       class="edgeless-text-editor"
     >
@@ -377,14 +383,13 @@ export class EdgelessTextEditor extends WithDisposable(ShadowlessElement) {
         .yText=${text}
         .enableFormat=${false}
         .enableAutoScrollHorizontally=${false}
-        .enableAutoScrollVertically=${false}
         style=${isEmpty
           ? styleMap({
               position: 'absolute',
               left: 0,
               top: 0,
-              padding: `${EdgelessTextEditor.VERTICAL_PADDING}px
-        ${EdgelessTextEditor.HORIZONTAL_PADDING}px`,
+              padding: `${EdgelessTextEditor.PADDING_VERTICAL}px
+        ${EdgelessTextEditor.PADDING_HORIZONTAL}px`,
             })
           : nothing}
       ></rich-text>
@@ -395,6 +400,19 @@ export class EdgelessTextEditor extends WithDisposable(ShadowlessElement) {
         : nothing}
     </div>`;
   }
+
+  setKeeping(keeping: boolean) {
+    this._keeping = keeping;
+  }
+
+  @property({ attribute: false })
+  accessor edgeless!: EdgelessRootBlockComponent;
+
+  @property({ attribute: false })
+  accessor element!: TextElementModel;
+
+  @query('rich-text')
+  accessor richText!: RichText;
 }
 
 declare global {

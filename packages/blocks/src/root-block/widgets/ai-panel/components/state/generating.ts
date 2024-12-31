@@ -1,14 +1,16 @@
-import { WithDisposable } from '@blocksuite/block-std';
-import { baseTheme } from '@toeverything/theme';
-import { css, html, LitElement, unsafeCSS } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import type { ColorScheme } from '@blocksuite/affine-model';
 
 import {
   AIStarIconWithAnimation,
   AIStopIcon,
-} from '../../../../../_common/icons/ai.js';
+} from '@blocksuite/affine-components/icons';
+import { WithDisposable } from '@blocksuite/global/utils';
+import { baseTheme } from '@toeverything/theme';
+import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
+import { property } from 'lit/decorators.js';
 
-@customElement('ai-panel-generating')
+import type { AIPanelGeneratingConfig } from '../../type.js';
+
 export class AIPanelGenerating extends WithDisposable(LitElement) {
   static override styles = css`
     :host {
@@ -25,7 +27,7 @@ export class AIPanelGenerating extends WithDisposable(LitElement) {
       align-items: center;
       gap: 8px;
 
-      color: var(--light-brandColor, #1e96eb);
+      color: var(--affine-brand-color);
 
       .text {
         display: flex;
@@ -43,26 +45,76 @@ export class AIPanelGenerating extends WithDisposable(LitElement) {
       .left,
       .right {
         display: flex;
-        width: 20px;
         height: 20px;
         justify-content: center;
         align-items: center;
       }
+      .left {
+        width: 20px;
+      }
+      .right {
+        gap: 6px;
+      }
+      .right:hover {
+        cursor: pointer;
+      }
+      .stop-icon {
+        height: 20px;
+        width: 20px;
+      }
+      .esc-label {
+        font-size: var(--affine-font-xs);
+        font-weight: 500;
+        line-height: 20px;
+      }
     }
   `;
 
-  @property({ attribute: false })
-  stopGenerating!: () => void;
-
   override render() {
+    const {
+      generatingIcon = AIStarIconWithAnimation,
+      stages,
+      height = 300,
+    } = this.config;
     return html`
+      ${stages && stages.length > 0
+        ? html`<generating-placeholder
+            .height=${height}
+            .theme=${this.theme}
+            .loadingProgress=${this.loadingProgress}
+            .stages=${stages}
+            .showHeader=${!this.withAnswer}
+          ></generating-placeholder>`
+        : nothing}
       <div class="generating-tip">
-        <div class="left">${AIStarIconWithAnimation}</div>
+        <div class="left">${generatingIcon}</div>
         <div class="text">AI is generating...</div>
-        <div @click=${this.stopGenerating} class="right">${AIStopIcon}</div>
+        <div @click=${this.stopGenerating} class="right">
+          <span class="stop-icon">${AIStopIcon}</span>
+          <span class="esc-label">ESC</span>
+        </div>
       </div>
     `;
   }
+
+  updateLoadingProgress(progress: number) {
+    this.loadingProgress = progress;
+  }
+
+  @property({ attribute: false })
+  accessor config!: AIPanelGeneratingConfig;
+
+  @property({ attribute: false })
+  accessor loadingProgress: number = 1;
+
+  @property({ attribute: false })
+  accessor stopGenerating!: () => void;
+
+  @property({ attribute: false })
+  accessor theme!: ColorScheme;
+
+  @property({ attribute: false })
+  accessor withAnswer!: boolean;
 }
 
 declare global {

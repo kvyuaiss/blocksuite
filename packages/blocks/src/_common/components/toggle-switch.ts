@@ -1,5 +1,5 @@
 import { css, html, LitElement } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 
 const styles = css`
   :host {
@@ -52,15 +52,8 @@ const styles = css`
   }
 `;
 
-@customElement('toggle-switch')
 export class ToggleSwitch extends LitElement {
   static override styles = styles;
-
-  @property({ attribute: false })
-  on = false;
-
-  @property({ attribute: false })
-  onChange?: (on: boolean) => void;
 
   private _toggleSwitch() {
     this.on = !this.on;
@@ -81,6 +74,12 @@ export class ToggleSwitch extends LitElement {
       </label>
     `;
   }
+
+  @property({ attribute: false })
+  accessor on = false;
+
+  @property({ attribute: false })
+  accessor onChange: ((on: boolean) => void) | undefined = undefined;
 }
 
 declare global {

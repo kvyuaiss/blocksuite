@@ -1,36 +1,48 @@
-import { BlockElement } from '@blocksuite/block-std';
+import type { SurfaceBlockModel } from '@blocksuite/affine-block-surface';
+import type { Color, ShapeElementModel } from '@blocksuite/affine-model';
+import type { Bound } from '@blocksuite/global/utils';
+
+import {
+  CanvasRenderer,
+  elementRenderers,
+  fitContent,
+} from '@blocksuite/affine-block-surface';
+import { ThemeProvider } from '@blocksuite/affine-shared/services';
+import { BlockComponent } from '@blocksuite/block-std';
+import { GfxControllerIdentifier } from '@blocksuite/block-std/gfx';
 import { html } from 'lit';
-import { customElement, query } from 'lit/decorators.js';
+import { query } from 'lit/decorators.js';
 
-import { ThemeObserver } from '../../_common/theme/theme-observer.js';
-import { updateMindmapNodeRect } from '../canvas-renderer/element-renderer/shape/utils.js';
-import { Renderer } from '../canvas-renderer/renderer.js';
-import type { ShapeElementModel } from '../element-model/shape.js';
-import { LayerManager } from '../managers/layer-manager.js';
-import type { SurfaceBlockModel } from '../surface-model.js';
-import type { Bound } from '../utils/bound.js';
-import type { MindmapService } from './service.js';
+import type { MindmapService } from './minmap-service.js';
 
-@customElement('mini-mindmap-surface-block')
-export class MindmapSurfaceBlock extends BlockElement<SurfaceBlockModel> {
-  private _theme = new ThemeObserver();
-  private _layer!: LayerManager;
-  private _renderer!: Renderer;
+export class MindmapSurfaceBlock extends BlockComponent<SurfaceBlockModel> {
+  renderer?: CanvasRenderer;
 
-  @query('.affine-mini-mindmap-surface')
-  editorContainer!: HTMLDivElement;
+  private get _grid() {
+    return this.std.get(GfxControllerIdentifier).grid;
+  }
+
+  private get _layer() {
+    return this.std.get(GfxControllerIdentifier).layer;
+  }
 
   get mindmapService() {
-    return this.host.spec.getService(
-      'affine:page'
-    ) as unknown as MindmapService;
+    return this.std.getService('affine:page') as unknown as MindmapService;
+  }
+
+  get viewport() {
+    return this.std.get(GfxControllerIdentifier).viewport;
+  }
+
+  constructor() {
+    super();
   }
 
   private _adjustNodeWidth() {
     this.model.doc.transact(() => {
       this.model.elementModels.forEach(element => {
         if (element.type === 'shape') {
-          updateMindmapNodeRect(element as ShapeElementModel);
+          fitContent(element as ShapeElementModel);
         }
       });
     });
@@ -38,7 +50,7 @@ export class MindmapSurfaceBlock extends BlockElement<SurfaceBlockModel> {
 
   private _resizeEffect() {
     const observer = new ResizeObserver(() => {
-      this._renderer.onResize();
+      this.viewport.onResize();
     });
 
     observer.observe(this.editorContainer);
@@ -61,7 +73,7 @@ export class MindmapSurfaceBlock extends BlockElement<SurfaceBlockModel> {
         });
 
         if (bound!) {
-          this._renderer.setViewportByBound(bound, [10, 10, 10, 10]);
+          this.viewport.setViewportByBound(bound, [10, 10, 10, 10]);
         }
       })
     );
@@ -70,30 +82,53 @@ export class MindmapSurfaceBlock extends BlockElement<SurfaceBlockModel> {
   private _setupRenderer() {
     this._disposables.add(
       this.model.elementUpdated.on(() => {
-        this._renderer.refresh();
         this.mindmapService.center();
       })
     );
 
-    this._renderer.ZOOM_MIN = 0.01;
+    this.viewport.ZOOM_MIN = 0.01;
   }
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this._layer = LayerManager.create(this.model.doc, this.model);
-    this._renderer = new Renderer({
+
+    const themeService = this.std.get(ThemeProvider);
+    this.renderer = new CanvasRenderer({
+      viewport: this.viewport,
       layerManager: this._layer,
+      gridManager: this._grid,
       enableStackingCanvas: true,
       provider: {
         selectedElements: () => [],
-        getVariableColor: (val: string) => this._theme.getVariableValue(val),
+        getColorScheme: () => themeService.edgelessTheme,
+        getColorValue: (color: Color, fallback?: string, real?: boolean) =>
+          themeService.getColorValue(
+            color,
+            fallback,
+            real,
+            themeService.edgelessTheme
+          ),
+        generateColorProperty: (color: Color, fallback: string) =>
+          themeService.generateColorProperty(
+            color,
+            fallback,
+            themeService.edgelessTheme
+          ),
+        getPropertyValue: (property: string) =>
+          themeService.getCssVariableColor(
+            property,
+            themeService.edgelessTheme
+          ),
       },
+      elementRenderers,
+      surfaceModel: this.model,
     });
-    this._theme.observe(this.ownerDocument.documentElement);
+    this._disposables.add(this.renderer);
   }
 
   override firstUpdated(_changedProperties: Map<PropertyKey, unknown>): void {
-    this._renderer.attach(this.editorContainer);
+    this.renderer?.attach(this.editorContainer);
+
     this._resizeEffect();
     this._setupCenterEffect();
     this._setupRenderer();
@@ -114,4 +149,7 @@ export class MindmapSurfaceBlock extends BlockElement<SurfaceBlockModel> {
       </div>
     `;
   }
+
+  @query('.affine-mini-mindmap-surface')
+  accessor editorContainer!: HTMLDivElement;
 }

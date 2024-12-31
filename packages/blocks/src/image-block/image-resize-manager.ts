@@ -1,43 +1,38 @@
-import type { PointerEventState } from '@blocksuite/block-std';
+import type { BlockComponent, PointerEventState } from '@blocksuite/block-std';
+
+import { DocModeProvider } from '@blocksuite/affine-shared/services';
+import {
+  getClosestBlockComponentByElement,
+  getModelByElement,
+} from '@blocksuite/affine-shared/utils';
 import { assertExists } from '@blocksuite/global/utils';
 
-import {
-  type BlockComponent,
-  getClosestBlockElementByElement,
-  getModelByElement,
-  isEdgelessPage,
-} from '../_common/utils/query.js';
+import type { EdgelessRootBlockComponent } from '../root-block/index.js';
+
 import { getClosestRootBlockComponent } from '../root-block/utils/query.js';
 
 export class ImageResizeManager {
   private _activeComponent: BlockComponent | null = null;
-  private _imageContainer: HTMLElement | null = null;
-  private _imageCenterX = 0;
+
   private _dragMoveTarget = 'right';
+
+  private _imageCenterX = 0;
+
+  private _imageContainer: HTMLElement | null = null;
+
   private _zoom = 1;
 
-  onStart(e: PointerEventState) {
-    const eventTarget = e.raw.target as HTMLElement;
-    this._activeComponent = getClosestBlockElementByElement(
-      eventTarget
-    ) as BlockComponent;
-
-    const rootElement = getClosestRootBlockComponent(this._activeComponent);
-    if (rootElement && isEdgelessPage(rootElement)) {
-      this._zoom = rootElement.service.viewport.zoom;
-    } else {
-      this._zoom = 1;
-    }
-
-    this._imageContainer = eventTarget.closest('.resizable-img');
+  onEnd() {
+    assertExists(this._activeComponent);
     assertExists(this._imageContainer);
-    const rect = this._imageContainer.getBoundingClientRect() as DOMRect;
-    this._imageCenterX = rect.left + rect.width / 2;
-    if (eventTarget.className.includes('right')) {
-      this._dragMoveTarget = 'right';
-    } else {
-      this._dragMoveTarget = 'left';
-    }
+
+    const dragModel = getModelByElement(this._activeComponent);
+    dragModel?.page.captureSync();
+    const { width, height } = this._imageContainer.getBoundingClientRect();
+    dragModel?.page.updateBlock(dragModel, {
+      width: width / this._zoom,
+      height: height / this._zoom,
+    });
   }
 
   onMove(e: PointerEventState) {
@@ -71,20 +66,36 @@ export class ImageResizeManager {
 
     requestAnimationFrame(() => {
       activeImgContainer.style.width = (width / this._zoom).toFixed(2) + 'px';
-      activeImgContainer.style.height = (height / this._zoom).toFixed(2) + 'px';
     });
   }
 
-  onEnd() {
-    assertExists(this._activeComponent);
-    assertExists(this._imageContainer);
+  onStart(e: PointerEventState) {
+    const eventTarget = e.raw.target as HTMLElement;
+    this._activeComponent = getClosestBlockComponentByElement(
+      eventTarget
+    ) as BlockComponent;
 
-    const dragModel = getModelByElement(this._activeComponent);
-    dragModel.page.captureSync();
-    const { width, height } = this._imageContainer.getBoundingClientRect();
-    dragModel.page.updateBlock(dragModel, {
-      width: width / this._zoom,
-      height: height / this._zoom,
-    });
+    const rootComponent = getClosestRootBlockComponent(this._activeComponent);
+    if (
+      rootComponent &&
+      rootComponent.service.std.get(DocModeProvider).getEditorMode() ===
+        'edgeless'
+    ) {
+      this._zoom = (
+        rootComponent as EdgelessRootBlockComponent
+      ).service.viewport.zoom;
+    } else {
+      this._zoom = 1;
+    }
+
+    this._imageContainer = eventTarget.closest('.resizable-img');
+    assertExists(this._imageContainer);
+    const rect = this._imageContainer.getBoundingClientRect() as DOMRect;
+    this._imageCenterX = rect.left + rect.width / 2;
+    if (eventTarget.className.includes('right')) {
+      this._dragMoveTarget = 'right';
+    } else {
+      this._dragMoveTarget = 'left';
+    }
   }
 }

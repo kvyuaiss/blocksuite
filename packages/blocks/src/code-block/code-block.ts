@@ -1,63 +1,72 @@
-import '../_common/components/rich-text/rich-text.js';
-import './components/code-option.js';
-import './components/lang-list.js';
+import type { CodeBlockModel } from '@blocksuite/affine-model';
+import type { BlockComponent } from '@blocksuite/block-std';
+import type { ThemedToken } from 'shiki';
 
-import { BlockElement, getInlineRangeProvider } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
+import { CaptionedBlockComponent } from '@blocksuite/affine-components/caption';
+import {
+  focusTextModel,
+  type RichText,
+} from '@blocksuite/affine-components/rich-text';
+import { BRACKET_PAIRS, NOTE_SELECTOR } from '@blocksuite/affine-shared/consts';
+import { NotificationProvider } from '@blocksuite/affine-shared/services';
+import { getViewportElement } from '@blocksuite/affine-shared/utils';
+import { getInlineRangeProvider } from '@blocksuite/block-std';
+import { IS_MAC } from '@blocksuite/global/env';
+import { noop } from '@blocksuite/global/utils';
 import {
   INLINE_ROOT_ATTR,
   type InlineRangeProvider,
   type InlineRootElement,
+  type VLine,
 } from '@blocksuite/inline';
-import { limitShift, offset, shift } from '@floating-ui/dom';
-import { html, nothing, render, type TemplateResult } from 'lit';
-import { customElement, query, state } from 'lit/decorators.js';
+import { Slice } from '@blocksuite/store';
+import { computed, effect, type Signal, signal } from '@preact/signals-core';
+import { html, nothing, type TemplateResult } from 'lit';
+import { query } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
-import { ref } from 'lit/directives/ref.js';
-import { repeat } from 'lit/directives/repeat.js';
-import { styleMap } from 'lit/directives/style-map.js';
-import { type BundledLanguage, type Highlighter } from 'shiki';
-import { z } from 'zod';
 
-import { HoverController } from '../_common/components/index.js';
-import { bindContainerHotkey } from '../_common/components/rich-text/keymap/index.js';
-import type { RichText } from '../_common/components/rich-text/rich-text.js';
-import { PAGE_HEADER_HEIGHT } from '../_common/consts.js';
-import { ArrowDownIcon } from '../_common/icons/index.js';
-import { listenToThemeChange } from '../_common/theme/utils.js';
-import type { NoteBlockComponent } from '../note-block/note-block.js';
+import type { CodeBlockService } from './code-block-service.js';
+
 import { EdgelessRootBlockComponent } from '../root-block/edgeless/edgeless-root-block.js';
 import { CodeClipboardController } from './clipboard/index.js';
-import type { CodeBlockModel, HighlightOptionsGetter } from './code-model.js';
-import { CodeOptionTemplate } from './components/code-option.js';
-import { createLangList } from './components/lang-list.js';
+import { CodeBlockInlineManagerExtension } from './code-block-inline.js';
 import { codeBlockStyles } from './styles.js';
-import { getStandardLanguage, isPlaintext } from './utils/code-languages.js';
-import { getCodeLineRenderer } from './utils/code-line-renderer.js';
-import {
-  DARK_THEME,
-  FALLBACK_LANG,
-  LIGHT_THEME,
-  PLAIN_TEXT_LANG_INFO,
-  type StrictLanguageInfo,
-} from './utils/consts.js';
-import { getHighLighter } from './utils/high-lighter.js';
 
-@customElement('affine-code')
-export class CodeBlockComponent extends BlockElement<CodeBlockModel> {
-  @state()
-  private _wrap = false;
+export class CodeBlockComponent extends CaptionedBlockComponent<
+  CodeBlockModel,
+  CodeBlockService
+> {
+  static override styles = codeBlockStyles;
 
-  @query('.lang-button')
-  private _langButton!: HTMLButtonElement;
-
-  @state()
-  private _langListAbortController?: AbortController;
+  private _inlineRangeProvider: InlineRangeProvider | null = null;
 
   clipboardController = new CodeClipboardController(this);
 
-  private get _showLangList() {
-    return !!this._langListAbortController;
+  highlightTokens$: Signal<ThemedToken[][]> = signal([]);
+
+  languageName$: Signal<string> = computed(() => {
+    const lang = this.model.language$.value;
+    if (lang === null) {
+      return 'Plain Text';
+    }
+
+    const matchedInfo = this.service.langs.find(info => info.id === lang);
+    return matchedInfo ? matchedInfo.name : 'Plain Text';
+  });
+
+  get inlineEditor() {
+    const inlineRoot = this.querySelector<InlineRootElement>(
+      `[${INLINE_ROOT_ATTR}]`
+    );
+    return inlineRoot?.inlineEditor;
+  }
+
+  get inlineManager() {
+    return this.std.get(CodeBlockInlineManagerExtension.identifier);
+  }
+
+  get notificationService() {
+    return this.std.getOptional(NotificationProvider);
   }
 
   get readonly() {
@@ -65,177 +74,83 @@ export class CodeBlockComponent extends BlockElement<CodeBlockModel> {
   }
 
   override get topContenteditableElement() {
-    if (this.rootElement instanceof EdgelessRootBlockComponent) {
-      const note = this.closest<NoteBlockComponent>('affine-note');
-      return note;
+    if (this.rootComponent instanceof EdgelessRootBlockComponent) {
+      const el = this.closest<BlockComponent>(NOTE_SELECTOR);
+      return el;
     }
-    return this.rootElement;
+    return this.rootComponent;
   }
 
-  highlightOptionsGetter: HighlightOptionsGetter | null = null;
-
-  readonly attributesSchema = z.object({});
-  readonly getAttributeRenderer = () =>
-    getCodeLineRenderer(() => ({
-      lang:
-        getStandardLanguage(this.model.language.toLowerCase())?.id ??
-        'plaintext',
-      highlighter: this._highlighter,
-    }));
-
-  private _richTextResizeObserver: ResizeObserver = new ResizeObserver(() => {
-    this._updateLineNumbers();
-  });
-
-  /**
-   * Given the high cost associated with updating the highlight,
-   * it is preferable to do so only when a change in language occurs.
-   *
-   * The variable is used to store the "current" language info,
-   * also known as the "previous" language
-   * when a language change occurs and the highlighter is not updated.
-   *
-   * In most cases, the language will be equal to normalizing the language of the model.
-   *
-   * See {@link updated}
-   */
-  private _perviousLanguage: StrictLanguageInfo = PLAIN_TEXT_LANG_INFO;
-  private _highlighter: Highlighter | null = null;
-  private async _startHighlight(lang: StrictLanguageInfo) {
-    if (this._highlighter) {
-      const loadedLangs = this._highlighter.getLoadedLanguages();
-      if (!isPlaintext(lang.id) && !loadedLangs.includes(lang.id)) {
-        this._highlighter
-          .loadLanguage(lang.id)
-          .then(() => {
-            const richText = this.querySelector('rich-text');
-            const inlineEditor = richText?.inlineEditor;
-            if (inlineEditor) {
-              inlineEditor.requestUpdate();
-            }
-          })
-          .catch(console.error);
-      }
+  private _updateHighlightTokens() {
+    const modelLang = this.model.language$.value;
+    if (modelLang === null) {
+      this.highlightTokens$.value = [];
       return;
     }
-    this._highlighter = await getHighLighter({
-      themes: [LIGHT_THEME, DARK_THEME],
-      langs: [lang.id],
-    });
 
-    const richText = this.querySelector('rich-text');
-    const inlineEditor = richText?.inlineEditor;
-    if (!inlineEditor) return;
-
-    inlineEditor.requestUpdate();
-    const range = inlineEditor.getInlineRange();
-    if (range) {
-      inlineEditor.setInlineRange(range);
-    }
-  }
-
-  private _inlineRangeProvider: InlineRangeProvider | null = null;
-
-  get inlineEditor() {
-    const inlineRoot = this.querySelector<InlineRootElement>(
-      `[${INLINE_ROOT_ATTR}]`
+    const matchedInfo = this.service.langs.find(
+      info =>
+        info.id === modelLang ||
+        info.name === modelLang ||
+        info.aliases?.includes(modelLang)
     );
-    if (!inlineRoot) {
-      throw new Error('Inline editor root not found');
+
+    if (matchedInfo) {
+      this.model.language$.value = matchedInfo.id;
+      const langImport = matchedInfo.import;
+      const lang = matchedInfo.id;
+
+      const highlighter = this.service.highlighter$.value;
+      const theme = this.service.themeKey;
+      if (!theme || !highlighter) {
+        this.highlightTokens$.value = [];
+        return;
+      }
+
+      noop(this.model.text.deltas$.value);
+      const code = this.model.text.toString();
+
+      const loadedLanguages = highlighter.getLoadedLanguages();
+      if (!loadedLanguages.includes(lang)) {
+        highlighter
+          .loadLanguage(langImport)
+          .then(() => {
+            this.highlightTokens$.value = highlighter.codeToTokensBase(code, {
+              lang,
+              theme,
+            });
+          })
+          .catch(console.error);
+      } else {
+        this.highlightTokens$.value = highlighter.codeToTokensBase(code, {
+          lang,
+          theme,
+        });
+      }
+    } else {
+      this.highlightTokens$.value = [];
+      // clear language if not found
+      this.model.language$.value = null;
     }
-    return inlineRoot.inlineEditor;
-  }
-
-  @query('rich-text')
-  private _richTextElement?: RichText;
-
-  private _whenHover = new HoverController(this, ({ abortController }) => {
-    const selection = this.host.selection;
-    const textSelection = selection.find('text');
-    if (
-      !!textSelection &&
-      (!!textSelection.to || !!textSelection.from.length)
-    ) {
-      return null;
-    }
-
-    const blockSelections = selection.filter('block');
-    if (
-      blockSelections.length > 1 ||
-      (blockSelections.length === 1 && blockSelections[0].path !== this.path)
-    ) {
-      return null;
-    }
-
-    return {
-      template: ({ updatePortal }) =>
-        CodeOptionTemplate({
-          anchor: this,
-          model: this.model,
-          wrap: this._wrap,
-          onClickWrap: () => {
-            this._wrap = !this._wrap;
-            updatePortal();
-          },
-          abortController,
-        }),
-      computePosition: {
-        referenceElement: this,
-        placement: 'right-start',
-        middleware: [
-          offset({
-            mainAxis: 12,
-            crossAxis: 10,
-          }),
-          shift({
-            crossAxis: true,
-            padding: {
-              top: PAGE_HEADER_HEIGHT + 12,
-              bottom: 12,
-              right: 12,
-            },
-            limiter: limitShift(),
-          }),
-        ],
-        autoUpdate: true,
-      },
-    };
-  });
-
-  override async getUpdateComplete() {
-    const result = await super.getUpdateComplete();
-    await this._richTextElement?.updateComplete;
-    return result;
   }
 
   override connectedCallback() {
     super.connectedCallback();
+
     // set highlight options getter used by "exportToHtml"
     this.clipboardController.hostConnected();
-    this.setHighlightOptionsGetter(() => {
-      return {
-        lang: this._perviousLanguage.id as BundledLanguage,
-        highlighter: this._highlighter,
-      };
-    });
 
-    const themeDisposable = listenToThemeChange(this, () => {
-      if (!this._highlighter) return;
-      const richText = this.querySelector('rich-text');
-      const inlineEditor = richText?.inlineEditor;
-      if (!inlineEditor) return;
-
-      // update code-line theme
-      setTimeout(() => {
-        inlineEditor.requestUpdate();
-      });
-    });
-
-    if (themeDisposable) {
-      this._disposables.add(themeDisposable);
-    }
-
-    bindContainerHotkey(this);
+    this.disposables.add(
+      effect(() => {
+        this._updateHighlightTokens();
+      })
+    );
+    this.disposables.add(
+      effect(() => {
+        noop(this.highlightTokens$.value);
+        this._richTextElement?.inlineEditor?.render();
+      })
+    );
 
     const selectionManager = this.host.selection;
     const INDENT_SYMBOL = '  ';
@@ -260,6 +175,7 @@ export class CodeBlockComponent extends BlockElement<CodeBlockModel> {
       return indexArr;
     };
 
+    // TODO: move to service for better performance
     this.bindHotKey({
       Backspace: ctx => {
         const state = ctx.get('keyboardState');
@@ -274,17 +190,39 @@ export class CodeBlockComponent extends BlockElement<CodeBlockModel> {
         if (from.index === 0 && from.length === 0) {
           state.raw.preventDefault();
           selectionManager.setGroup('note', [
-            selectionManager.create('block', { path: this.path }),
+            selectionManager.create('block', { blockId: this.blockId }),
           ]);
+          return true;
+        }
+
+        const inlineEditor = this.inlineEditor;
+        const inlineRange = inlineEditor?.getInlineRange();
+        if (!inlineRange || !inlineEditor) return;
+        const left = inlineEditor.yText.toString()[inlineRange.index - 1];
+        const right = inlineEditor.yText.toString()[inlineRange.index];
+        const leftBrackets = BRACKET_PAIRS.map(pair => pair.left);
+        if (BRACKET_PAIRS[leftBrackets.indexOf(left)]?.right === right) {
+          const index = inlineRange.index - 1;
+          inlineEditor.deleteText({
+            index: index,
+            length: 2,
+          });
+          inlineEditor.setInlineRange({
+            index: index,
+            length: 0,
+          });
+          state.raw.preventDefault();
           return true;
         }
 
         return;
       },
       Tab: ctx => {
+        if (this.doc.readonly) return;
         const state = ctx.get('keyboardState');
         const event = state.raw;
         const inlineEditor = this.inlineEditor;
+        if (!inlineEditor) return;
         const inlineRange = inlineEditor.getInlineRange();
         if (inlineRange) {
           event.stopPropagation();
@@ -309,6 +247,7 @@ export class CodeBlockComponent extends BlockElement<CodeBlockModel> {
             indexArr.push(0);
           }
           indexArr.forEach(i => {
+            if (!this.inlineEditor) return;
             this.inlineEditor.insertText(
               {
                 index: i,
@@ -332,6 +271,7 @@ export class CodeBlockComponent extends BlockElement<CodeBlockModel> {
         const state = ctx.get('keyboardState');
         const event = state.raw;
         const inlineEditor = this.inlineEditor;
+        if (!inlineEditor) return;
         const inlineRange = inlineEditor.getInlineRange();
         if (inlineRange) {
           event.stopPropagation();
@@ -359,6 +299,7 @@ export class CodeBlockComponent extends BlockElement<CodeBlockModel> {
             i => text.slice(i, i + 2) === INDENT_SYMBOL
           );
           indexArr.forEach(i => {
+            if (!this.inlineEditor) return;
             this.inlineEditor.deleteText({
               index: i,
               length: 2,
@@ -380,157 +321,118 @@ export class CodeBlockComponent extends BlockElement<CodeBlockModel> {
 
         return;
       },
+      'Control-d': () => {
+        if (!IS_MAC) return;
+        return true;
+      },
+      Delete: () => {
+        return true;
+      },
+      Enter: () => {
+        this.doc.captureSync();
+        return true;
+      },
+      'Mod-Enter': () => {
+        const { model, std } = this;
+        if (!model || !std) return;
+        const inlineEditor = this.inlineEditor;
+        const inlineRange = inlineEditor?.getInlineRange();
+        if (!inlineRange || !inlineEditor) return;
+        const isEnd = model.text.length === inlineRange.index;
+        if (!isEnd) return;
+        const parent = this.doc.getParent(model);
+        if (!parent) return;
+        const index = parent.children.indexOf(model);
+        if (index === -1) return;
+        const id = this.doc.addBlock('affine:paragraph', {}, parent, index + 1);
+        focusTextModel(std, id);
+        return true;
+      },
     });
 
     this._inlineRangeProvider = getInlineRangeProvider(this);
   }
 
+  copyCode() {
+    const model = this.model;
+    const slice = Slice.fromModels(model.doc, [model]);
+    this.std.clipboard
+      .copySlice(slice)
+      .then(() => {
+        this.notificationService?.toast('Copied to clipboard');
+      })
+      .catch(e => {
+        this.notificationService?.toast('Copied failed, something went wrong');
+        console.error(e);
+      });
+  }
+
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.clipboardController.hostDisconnected();
-    this._richTextResizeObserver.disconnect();
   }
 
-  override updated() {
-    if (this.model.language !== this._perviousLanguage.id) {
-      const lang = getStandardLanguage(this.model.language);
-      this._perviousLanguage = lang ?? PLAIN_TEXT_LANG_INFO;
-      if (lang) {
-        this._startHighlight(lang).catch(console.error);
-      } else {
-        this._highlighter = null;
-      }
-
-      const richText = this.querySelector('rich-text');
-      const inlineEditor = richText?.inlineEditor;
-      if (inlineEditor) {
-        inlineEditor.requestUpdate();
-      }
-    }
-
-    assertExists(this._richTextElement);
-    this._richTextResizeObserver.disconnect();
-    this._richTextResizeObserver.observe(this._richTextElement);
-  }
-
-  setHighlightOptionsGetter(fn: HighlightOptionsGetter) {
-    this.highlightOptionsGetter = fn;
-  }
-
-  setLang(lang: string | null) {
-    const standardLang = lang ? getStandardLanguage(lang) : null;
-    const langName = standardLang?.id ?? FALLBACK_LANG;
-    this.doc.updateBlock(this.model, {
-      language: langName,
-    });
-  }
-
-  private _onClickLangBtn() {
-    if (this.readonly) return;
-    if (this._langListAbortController) return;
-    const abortController = new AbortController();
-    this._langListAbortController = abortController;
-    abortController.signal.addEventListener('abort', () => {
-      this._langListAbortController = undefined;
-    });
-
-    createLangList({
-      abortController,
-      currentLanguage: this._perviousLanguage,
-      onSelectLanguage: lang => {
-        this.setLang(lang ? lang.id : null);
-        abortController.abort();
-      },
-      referenceElement: this._langButton,
-    });
-  }
-
-  private _curLanguageButtonTemplate() {
-    const curLanguage =
-      getStandardLanguage(this.model.language) ?? PLAIN_TEXT_LANG_INFO;
-    const curLanguageDisplayName = curLanguage.name ?? curLanguage.id;
-    return html`<div
-      contenteditable="false"
-      class="lang-list-wrapper caret-ignore"
-      style="${this._showLangList ? 'visibility: visible;' : ''}"
-    >
-      <icon-button
-        class="lang-button"
-        data-testid="lang-button"
-        width="auto"
-        height="24px"
-        ?hover=${this._showLangList}
-        ?disabled=${this.readonly}
-        @click=${this._onClickLangBtn}
-      >
-        ${curLanguageDisplayName} ${!this.readonly ? ArrowDownIcon : nothing}
-      </icon-button>
-    </div>`;
-  }
-
-  private _updateLineNumbers() {
-    const lineNumbersContainer =
-      this.querySelector<HTMLElement>('#line-numbers');
-    assertExists(lineNumbersContainer);
-
-    const next = this._wrap ? generateLineNumberRender() : lineNumberRender;
-
-    render(
-      repeat(Array.from(this.querySelectorAll('v-line')), next),
-      lineNumbersContainer
-    );
+  override async getUpdateComplete() {
+    const result = await super.getUpdateComplete();
+    await this._richTextElement?.updateComplete;
+    return result;
   }
 
   override renderBlock(): TemplateResult<1> {
+    const showLineNumbers =
+      this.std.getConfig('affine:code')?.showLineNumbers ?? true;
+
     return html`
       <div
-        ${ref(this._whenHover.setReference)}
         class=${classMap({
           'affine-code-block-container': true,
-          wrap: this._wrap,
+          wrap: this.model.wrap,
         })}
       >
-        <style>
-          ${codeBlockStyles}
-        </style>
-        ${this._curLanguageButtonTemplate()}
-        <div class="rich-text-container">
-          <div contenteditable="false" id="line-numbers"></div>
-          <rich-text
-            .yText=${this.model.text.yText}
-            .inlineEventSource=${this.topContenteditableElement ?? nothing}
-            .undoManager=${this.doc.history}
-            .attributesSchema=${this.attributesSchema}
-            .attributeRenderer=${this.getAttributeRenderer()}
-            .readonly=${this.doc.readonly}
-            .inlineRangeProvider=${this._inlineRangeProvider}
-            .enableClipboard=${false}
-            .enableUndoRedo=${false}
-            .wrapText=${this._wrap}
-          >
-          </rich-text>
-        </div>
+        <rich-text
+          .yText=${this.model.text.yText}
+          .inlineEventSource=${this.topContenteditableElement ?? nothing}
+          .undoManager=${this.doc.history}
+          .attributesSchema=${this.inlineManager.getSchema()}
+          .attributeRenderer=${this.inlineManager.getRenderer()}
+          .readonly=${this.doc.readonly}
+          .inlineRangeProvider=${this._inlineRangeProvider}
+          .enableClipboard=${false}
+          .enableUndoRedo=${false}
+          .wrapText=${this.model.wrap}
+          .verticalScrollContainerGetter=${() => getViewportElement(this.host)}
+          .vLineRenderer=${showLineNumbers
+            ? (vLine: VLine) => {
+                return html`
+                  <span contenteditable="false" class="line-number"
+                    >${vLine.index + 1}</span
+                  >
+                  ${vLine.renderVElements()}
+                `;
+              }
+            : undefined}
+        >
+        </rich-text>
 
-        ${this.renderChildren(this.model)}
-
-        <affine-block-selection .block=${this}></affine-block-selection>
+        ${this.renderChildren(this.model)} ${Object.values(this.widgets)}
       </div>
     `;
   }
-}
 
-function generateLineNumberRender(top = 0) {
-  return function lineNumberRender(e: HTMLElement, index: number) {
-    const style = {
-      '--top': `${top}px`,
-    };
-    top = e.getBoundingClientRect().height;
-    return html`<div style=${styleMap(style)}>${index + 1}</div>`;
+  setWrap(wrap: boolean) {
+    this.doc.updateBlock(this.model, { wrap });
+  }
+
+  @query('rich-text')
+  private accessor _richTextElement: RichText | null = null;
+
+  override accessor blockContainerStyles = {
+    margin: '18px 0',
   };
-}
 
-function lineNumberRender(_: HTMLElement, index: number) {
-  return html`<div>${index + 1}</div>`;
+  override accessor useCaptionEditor = true;
+
+  override accessor useZeroWidth = true;
 }
 
 declare global {

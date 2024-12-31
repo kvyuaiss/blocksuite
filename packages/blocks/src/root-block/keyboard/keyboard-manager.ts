@@ -1,14 +1,61 @@
-import type { BlockSelection } from '@blocksuite/block-std';
-import type { BlockElement } from '@blocksuite/block-std';
+import type { BlockComponent, BlockSelection } from '@blocksuite/block-std';
+
+import { matchFlavours } from '@blocksuite/affine-shared/utils';
 import { IS_MAC, IS_WINDOWS } from '@blocksuite/global/env';
 import { assertExists } from '@blocksuite/global/utils';
 
-import { matchFlavours } from '../../_common/utils/model.js';
-import { createLinkedDocFromSelectedBlocks } from '../../_common/utils/render-linked-doc.js';
+import {
+  convertSelectedBlocksToLinkedDoc,
+  getTitleFromSelectedModels,
+  notifyDocCreated,
+  promptDocTitle,
+} from '../../_common/utils/render-linked-doc.js';
 
 export class PageKeyboardManager {
-  constructor(public rootElement: BlockElement) {
-    this.rootElement.bindHotKey(
+  private _handleDelete = () => {
+    const blockSelections = this._currentSelection.filter(sel =>
+      sel.is('block')
+    );
+    if (blockSelections.length === 0) {
+      return;
+    }
+
+    this._doc.transact(() => {
+      const selection = this._replaceBlocksBySelection(
+        blockSelections,
+        'affine:paragraph',
+        {}
+      );
+
+      if (selection) {
+        this._selection.setGroup('note', [
+          this._selection.create('text', {
+            from: {
+              index: 0,
+              length: 0,
+              blockId: selection.blockId,
+            },
+            to: null,
+          }),
+        ]);
+      }
+    });
+  };
+
+  private get _currentSelection() {
+    return this._selection.value;
+  }
+
+  private get _doc() {
+    return this.rootComponent.doc;
+  }
+
+  private get _selection() {
+    return this.rootComponent.host.selection;
+  }
+
+  constructor(public rootComponent: BlockComponent) {
+    this.rootComponent.bindHotKey(
       {
         'Mod-z': ctx => {
           ctx.get('defaultState').event.preventDefault();
@@ -48,47 +95,40 @@ export class PageKeyboardManager {
     );
   }
 
-  private get _doc() {
-    return this.rootElement.doc;
-  }
-
-  private get _selection() {
-    return this.rootElement.host.selection;
-  }
-
-  private get _currentSelection() {
-    return this._selection.value;
-  }
-
-  private _handleDelete = () => {
-    const blockSelections = this._currentSelection.filter(sel =>
-      sel.is('block')
+  private _createEmbedBlock() {
+    const rootComponent = this.rootComponent;
+    const [_, ctx] = this.rootComponent.std.command
+      .chain()
+      .getSelectedModels({
+        types: ['block'],
+        mode: 'highest',
+      })
+      .draftSelectedModels()
+      .run();
+    const selectedModels = ctx.selectedModels?.filter(
+      block =>
+        !block.flavour.startsWith('affine:embed-') &&
+        matchFlavours(doc.getParent(block), ['affine:note'])
     );
-    if (blockSelections.length === 0) {
+
+    const draftedModels = ctx.draftedModels;
+    if (!selectedModels?.length || !draftedModels) {
       return;
     }
 
-    this._doc.transact(() => {
-      const selection = this._replaceBlocksBySelection(
-        blockSelections,
-        'affine:paragraph',
-        {}
-      );
-
-      if (selection) {
-        this._selection.set([
-          this._selection.create('text', {
-            from: {
-              index: 0,
-              length: 0,
-              path: selection.path,
-            },
-            to: null,
-          }),
-        ]);
-      }
+    const doc = rootComponent.host.doc;
+    const autofill = getTitleFromSelectedModels(selectedModels);
+    void promptDocTitle(rootComponent.host, autofill).then(title => {
+      if (title === null) return;
+      convertSelectedBlocksToLinkedDoc(
+        this.rootComponent.std,
+        doc,
+        draftedModels,
+        title
+      ).catch(console.error);
+      notifyDocCreated(rootComponent.host, doc);
     });
-  };
+  }
 
   private _deleteBlocksBySelection(selections: BlockSelection[]) {
     selections.forEach(selection => {
@@ -106,18 +146,10 @@ export class PageKeyboardManager {
   ) {
     const current = selections[0];
     const first = this._doc.getBlockById(current.blockId);
-    const firstElement = this.rootElement.host.view.viewFromPath(
-      'block',
-      current.path
-    );
+    const firstElement = this.rootComponent.host.view.getBlock(current.blockId);
 
     assertExists(first, `Cannot find block ${current.blockId}`);
-    assertExists(
-      firstElement,
-      `Cannot find block view ${current.path.join(' -> ')}`
-    );
-
-    const parentPath = firstElement.parentPath;
+    assertExists(firstElement, `Cannot find block view ${current.blockId}`);
 
     const parent = this._doc.getParent(first);
     const index = parent?.children.indexOf(first);
@@ -134,34 +166,7 @@ export class PageKeyboardManager {
 
     return {
       blockId,
-      path: parentPath.concat(blockId),
+      path: blockId,
     };
-  }
-
-  private _createEmbedBlock() {
-    const rootElement = this.rootElement;
-    const [_, ctx] = this.rootElement.std.command
-      .chain()
-      .getSelectedModels({
-        types: ['block'],
-        mode: 'highest',
-      })
-      .run();
-    const selectedModels = ctx.selectedModels?.filter(
-      block =>
-        !block.flavour.startsWith('affine:embed-') &&
-        matchFlavours(doc.getParent(block), ['affine:note'])
-    );
-
-    if (!selectedModels?.length) {
-      return;
-    }
-
-    const doc = rootElement.host.doc;
-    const linkedDoc = createLinkedDocFromSelectedBlocks(doc, selectedModels);
-    const linkedDocService = rootElement.host.spec.getService(
-      'affine:embed-linked-doc'
-    );
-    linkedDocService.slots.linkedDocCreated.emit({ docId: linkedDoc.id });
   }
 }

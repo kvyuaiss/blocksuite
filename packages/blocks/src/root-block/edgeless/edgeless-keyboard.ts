@@ -1,244 +1,255 @@
-import { IS_MAC } from '@blocksuite/global/env';
-
-import { type EdgelessTool, LassoMode } from '../../_common/types.js';
-import { matchFlavours } from '../../_common/utils/model.js';
-import type { MindmapElementModel } from '../../surface-block/element-model/mindmap.js';
-import type { ShapeElementModel } from '../../surface-block/index.js';
 import {
-  Bound,
+  LayoutType,
+  MindmapElementModel,
+  type ShapeElementModel,
+} from '@blocksuite/affine-model';
+import {
   ConnectorElementModel,
   ConnectorMode,
+  EdgelessTextBlockModel,
   GroupElementModel,
-  ShapeType,
-} from '../../surface-block/index.js';
-import { EdgelessBlockModel } from '../edgeless/type.js';
-import { PageKeyboardManager } from '../keyboard/keyboard-manager.js';
-import { CopilotSelectionController } from './controllers/tools/copilot-tool.js';
-import { LassoToolController } from './controllers/tools/lasso-tool.js';
-import { ShapeToolController } from './controllers/tools/shape-tool.js';
+  NoteDisplayMode,
+} from '@blocksuite/affine-model';
+import {
+  EditPropsStore,
+  TelemetryProvider,
+} from '@blocksuite/affine-shared/services';
+import { matchFlavours } from '@blocksuite/affine-shared/utils';
+import {
+  type GfxToolsMap,
+  type GfxToolsOption,
+  isGfxGroupCompatibleModel,
+} from '@blocksuite/block-std/gfx';
+import { IS_MAC } from '@blocksuite/global/env';
+import { Bound } from '@blocksuite/global/utils';
+
 import type { EdgelessRootBlockComponent } from './edgeless-root-block.js';
+
+import {
+  getNearestTranslation,
+  isElementOutsideViewport,
+  isSingleMindMapNode,
+} from '../../_common/edgeless/mindmap/index.js';
+import { LassoMode } from '../../_common/types.js';
+import { EdgelessTextBlockComponent } from '../../edgeless-text-block/edgeless-text-block.js';
+import { PageKeyboardManager } from '../keyboard/keyboard-manager.js';
+import { GfxBlockModel } from './block-model.js';
+import { CopilotTool } from './gfx-tool/copilot-tool.js';
+import { LassoTool } from './gfx-tool/lasso-tool.js';
+import { ShapeTool } from './gfx-tool/shape-tool.js';
 import {
   DEFAULT_NOTE_CHILD_FLAVOUR,
   DEFAULT_NOTE_CHILD_TYPE,
   DEFAULT_NOTE_TIP,
 } from './utils/consts.js';
 import { deleteElements } from './utils/crud.js';
-import { getNextShapeType, updateShapeProps } from './utils/hotkey-utils.js';
+import { getNextShapeType } from './utils/hotkey-utils.js';
 import { isCanvasElement, isNoteBlock } from './utils/query.js';
-import { mountShapeTextEditor } from './utils/text.js';
+import {
+  mountConnectorLabelEditor,
+  mountShapeTextEditor,
+} from './utils/text.js';
 
 export class EdgelessPageKeyboardManager extends PageKeyboardManager {
-  constructor(override rootElement: EdgelessRootBlockComponent) {
-    super(rootElement);
-    this.rootElement.bindHotKey(
+  constructor(override rootComponent: EdgelessRootBlockComponent) {
+    super(rootComponent);
+    this.rootComponent.bindHotKey(
       {
         v: () => {
-          this._setEdgelessTool(rootElement, {
-            type: 'default',
-          });
+          this._setEdgelessTool('default');
         },
         t: () => {
-          this._setEdgelessTool(rootElement, {
-            type: 'text',
-          });
+          this._setEdgelessTool('text');
         },
         c: () => {
-          rootElement.service.editSession.record('connector', {
-            mode: ConnectorMode.Straight,
+          const mode = ConnectorMode.Curve;
+          rootComponent.std.get(EditPropsStore).recordLastProps('connector', {
+            mode,
           });
-          this._setEdgelessTool(rootElement, {
-            type: 'connector',
-            mode: ConnectorMode.Straight,
-          });
+          this._setEdgelessTool('connector', { mode });
         },
         l: () => {
-          // select the current lasso mode
-          const edgeless = rootElement;
-          const lassoController = edgeless.tools.controllers['lasso'];
-          const tool: EdgelessTool = {
-            type: 'lasso',
+          if (!rootComponent.doc.awarenessStore.getFlag('enable_lasso_tool')) {
+            return;
+          }
+
+          this._setEdgelessTool('lasso', {
             mode: LassoMode.Polygonal,
-          };
-
-          if (lassoController instanceof LassoToolController)
-            tool.mode = lassoController.tool.mode;
-
-          this._setEdgelessTool(edgeless, tool);
+          });
         },
         'Shift-l': () => {
+          if (!rootComponent.doc.awarenessStore.getFlag('enable_lasso_tool')) {
+            return;
+          }
           // toggle between lasso modes
-          const edgeless = rootElement;
-          const cur = edgeless.edgelessTool;
-          const tool: EdgelessTool = {
-            type: 'lasso',
+          const edgeless = rootComponent;
+          const cur = edgeless.gfx.tool.currentTool$.peek();
+
+          this._setEdgelessTool('lasso', {
             mode:
-              cur.type === 'lasso'
-                ? cur.mode === LassoMode.FreeHand
+              cur?.toolName === 'lasso'
+                ? (cur as LassoTool).activatedOption.mode === LassoMode.FreeHand
                   ? LassoMode.Polygonal
                   : LassoMode.FreeHand
                 : LassoMode.FreeHand,
-          };
-          this._setEdgelessTool(edgeless, tool);
+          });
         },
         h: () => {
-          this._setEdgelessTool(rootElement, {
-            type: 'pan',
+          this._setEdgelessTool('pan', {
             panning: false,
           });
         },
-        m: () => {
-          if (this.rootElement.service.locked) return;
-          if (this.rootElement.service.selection.editing) return;
-          const edgelessService = this.rootElement.service;
-          const lastMousePosition = edgelessService.tool.lastMousePos;
-          const [x, y] = edgelessService.viewport.toModelCoord(
-            lastMousePosition.x,
-            lastMousePosition.y
-          );
-          const mindmapId = edgelessService.addElement('mindmap', {}) as string;
-          const mindmap = edgelessService.getElementById(
-            mindmapId
-          ) as MindmapElementModel;
-          const nodeId = mindmap.addNode(null, 'shape', undefined, undefined, {
-            text: 'Mind Map',
-            xywh: `[${x},${y},150,30]`,
-          });
-
-          requestAnimationFrame(() => {
-            mountShapeTextEditor(
-              this.rootElement.service.getElementById(
-                nodeId
-              )! as ShapeElementModel,
-              this.rootElement
-            );
-          });
-        },
         n: () => {
-          this._setEdgelessTool(rootElement, {
-            type: 'affine:note',
+          this._setEdgelessTool('affine:note', {
             childFlavour: DEFAULT_NOTE_CHILD_FLAVOUR,
             childType: DEFAULT_NOTE_CHILD_TYPE,
             tip: DEFAULT_NOTE_TIP,
           });
         },
         p: () => {
-          this._setEdgelessTool(rootElement, {
-            type: 'brush',
-          });
+          this._setEdgelessTool('brush');
         },
         e: () => {
-          this._setEdgelessTool(rootElement, {
-            type: 'eraser',
-          });
-        },
-        s: () => {
-          const attributes =
-            rootElement.service.editSession.getLastProps('shape');
-          this._setEdgelessTool(rootElement, {
-            type: 'shape',
-            shapeType: attributes.shapeType,
-          });
+          this._setEdgelessTool('eraser');
         },
         k: () => {
-          if (this.rootElement.service.locked) return;
-          const { selection } = rootElement.service;
+          if (this.rootComponent.service.locked) return;
+          const { selection } = rootComponent.service;
 
           if (
-            selection.elements.length === 1 &&
-            selection.firstElement instanceof EdgelessBlockModel &&
-            matchFlavours(selection.firstElement as EdgelessBlockModel, [
+            selection.selectedElements.length === 1 &&
+            selection.firstElement instanceof GfxBlockModel &&
+            matchFlavours(selection.firstElement as GfxBlockModel, [
               'affine:note',
             ])
           ) {
-            rootElement.slots.toggleNoteSlicer.emit();
+            rootComponent.slots.toggleNoteSlicer.emit();
           }
         },
         f: () => {
-          if (this.rootElement.service.locked) return;
+          if (this.rootComponent.service.locked) return;
           if (
-            this.rootElement.service.selection.elements.length !== 0 &&
-            !this.rootElement.service.selection.editing
+            this.rootComponent.service.selection.selectedElements.length !==
+              0 &&
+            !this.rootComponent.service.selection.editing
           ) {
-            const frame = rootElement.service.frame.createFrameOnSelected();
-            rootElement.surface.fitToViewport(Bound.deserialize(frame.xywh));
-          } else if (!this.rootElement.service.selection.editing) {
-            this._setEdgelessTool(rootElement, { type: 'frame' });
+            const frame = rootComponent.service.frame.createFrameOnSelected();
+            if (!frame) return;
+            this.rootComponent.std
+              .getOptional(TelemetryProvider)
+              ?.track('CanvasElementAdded', {
+                control: 'shortcut',
+                page: 'whiteboard editor',
+                module: 'toolbar',
+                segment: 'toolbar',
+                type: 'frame',
+              });
+            rootComponent.surface.fitToViewport(Bound.deserialize(frame.xywh));
+          } else if (!this.rootComponent.service.selection.editing) {
+            this._setEdgelessTool('frame');
           }
         },
         '-': () => {
-          if (this.rootElement.service.locked) return;
-          const { elements } = rootElement.service.selection;
+          if (this.rootComponent.service.locked) return;
+          const { selectedElements: elements } =
+            rootComponent.service.selection;
           if (
-            !rootElement.service.selection.editing &&
+            !rootComponent.service.selection.editing &&
             elements.length === 1 &&
             isNoteBlock(elements[0])
           ) {
-            rootElement.slots.toggleNoteSlicer.emit();
+            rootComponent.slots.toggleNoteSlicer.emit();
           }
         },
-        'Shift-s': () => {
-          if (this.rootElement.service.locked) return;
+        '@': () => {
+          const std = this.rootComponent.std;
           if (
-            this.rootElement.service.selection.editing ||
-            !(
-              rootElement.tools.currentController instanceof ShapeToolController
-            )
+            std.selection.getGroup('note').length > 0 ||
+            // eslint-disable-next-line unicorn/prefer-array-some
+            std.selection.find('text') ||
+            Boolean(std.selection.find('surface')?.editing)
           ) {
             return;
           }
-
-          const attr = rootElement.service.editSession.getLastProps('shape');
-
-          const nextShapeType = getNextShapeType(
-            attr.radius > 0 && attr.shapeType === ShapeType.Rect
-              ? 'roundedRect'
-              : attr.shapeType
+          const { insertedLinkType } = std.command.exec(
+            'insertLinkByQuickSearch'
           );
-          this._setEdgelessTool(rootElement, {
-            type: 'shape',
-            shapeType:
-              nextShapeType === 'roundedRect' ? ShapeType.Rect : nextShapeType,
+
+          insertedLinkType
+            ?.then(type => {
+              const flavour = type?.flavour;
+              if (!flavour) return;
+
+              rootComponent.std
+                .getOptional(TelemetryProvider)
+                ?.track('CanvasElementAdded', {
+                  control: 'shortcut',
+                  page: 'whiteboard editor',
+                  module: 'toolbar',
+                  segment: 'toolbar',
+                  type: flavour.split(':')[1],
+                });
+            })
+            .catch(console.error);
+        },
+        'Shift-s': () => {
+          if (this.rootComponent.service.locked) return;
+          const controller = rootComponent.gfx.tool.currentTool$.peek();
+          if (
+            this.rootComponent.service.selection.editing ||
+            !(controller instanceof ShapeTool)
+          ) {
+            return;
+          }
+          const { shapeName } = controller.activatedOption;
+          const nextShapeName = getNextShapeType(shapeName);
+          this._setEdgelessTool('shape', {
+            shapeName: nextShapeName,
           });
 
-          updateShapeProps(nextShapeType, rootElement);
-
-          const controller = rootElement.tools
-            .currentController as ShapeToolController;
           controller.createOverlay();
         },
         'Mod-g': ctx => {
-          if (this.rootElement.service.locked) return;
+          if (this.rootComponent.service.locked) return;
           if (
-            this.rootElement.service.selection.elements.length > 1 &&
-            !this.rootElement.service.selection.editing
+            this.rootComponent.service.selection.selectedElements.length > 1 &&
+            !this.rootComponent.service.selection.editing
           ) {
             ctx.get('keyboardState').event.preventDefault();
-            rootElement.service.createGroupFromSelected();
+            rootComponent.service.createGroupFromSelected();
           }
         },
         'Shift-Mod-g': ctx => {
-          if (this.rootElement.service.locked) return;
-          const { selection } = this.rootElement.service;
+          if (this.rootComponent.service.locked) return;
+          const { selection } = this.rootComponent.service;
           if (
-            selection.elements.length === 1 &&
-            selection.firstElement instanceof GroupElementModel
+            selection.selectedElements.length === 1 &&
+            selection.firstElement instanceof GroupElementModel &&
+            !selection.firstElement.isLocked()
           ) {
             ctx.get('keyboardState').event.preventDefault();
-            rootElement.service.ungroup(selection.firstElement);
+            rootComponent.service.ungroup(selection.firstElement);
           }
         },
         'Mod-a': ctx => {
-          if (this.rootElement.service.locked) return;
-          if (this.rootElement.service.selection.editing) {
+          if (this.rootComponent.service.locked) return;
+          if (this.rootComponent.service.selection.editing) {
             return;
           }
 
           ctx.get('defaultState').event.preventDefault();
-          const { service } = this.rootElement;
-          this.rootElement.service.selection.set({
+          const { service } = this.rootComponent;
+          this.rootComponent.service.selection.set({
             elements: [
               ...service.blocks
-                .filter(block => block.group === null)
+                .filter(
+                  block =>
+                    block.group === null &&
+                    !(
+                      matchFlavours(block, ['affine:note']) &&
+                      block.displayMode === NoteDisplayMode.DocOnly
+                    )
+                )
                 .map(block => block.id),
               ...service.elements
                 .filter(el => el.group === null)
@@ -249,19 +260,19 @@ export class EdgelessPageKeyboardManager extends PageKeyboardManager {
         },
         'Mod-1': ctx => {
           ctx.get('defaultState').event.preventDefault();
-          this.rootElement.service.setZoomByAction('fit');
+          this.rootComponent.service.setZoomByAction('fit');
         },
         'Mod--': ctx => {
           ctx.get('defaultState').event.preventDefault();
-          this.rootElement.service.setZoomByAction('out');
+          this.rootComponent.service.setZoomByAction('out');
         },
         'Mod-0': ctx => {
           ctx.get('defaultState').event.preventDefault();
-          this.rootElement.service.setZoomByAction('reset');
+          this.rootComponent.service.setZoomByAction('reset');
         },
         'Mod-=': ctx => {
           ctx.get('defaultState').event.preventDefault();
-          this.rootElement.service.setZoomByAction('in');
+          this.rootComponent.service.setZoomByAction('in');
         },
         Backspace: () => {
           this._delete();
@@ -274,19 +285,16 @@ export class EdgelessPageKeyboardManager extends PageKeyboardManager {
           this._delete();
         },
         Escape: () => {
-          const curController = this.rootElement.tools.currentController;
-          if (
-            curController instanceof LassoToolController &&
-            curController.isSelecting
-          ) {
-            curController.abort();
+          const currentTool = this.rootComponent.gfx.tool.currentTool$.peek();
+          if (currentTool instanceof LassoTool && currentTool.isSelecting) {
+            currentTool.abort();
           }
-          if (curController instanceof CopilotSelectionController) {
-            curController.abort();
+          if (currentTool instanceof CopilotTool) {
+            currentTool.abort();
           }
 
-          if (!this.rootElement.service.selection.empty) {
-            rootElement.selection.clear();
+          if (!this.rootComponent.service.selection.empty) {
+            rootComponent.selection.clear();
           }
         },
 
@@ -321,6 +329,103 @@ export class EdgelessPageKeyboardManager extends PageKeyboardManager {
         'Shift-ArrowRight': () => {
           this._move('ArrowRight', true);
         },
+
+        Enter: () => {
+          const { service } = rootComponent;
+          const selection = service.selection;
+          const elements = selection.selectedElements;
+          const onlyOne = elements.length === 1;
+
+          if (onlyOne) {
+            const element = elements[0];
+            const id = element.id;
+
+            if (element.isLocked()) return;
+
+            if (element instanceof ConnectorElementModel) {
+              selection.set({
+                elements: [id],
+                editing: true,
+              });
+              requestAnimationFrame(() => {
+                mountConnectorLabelEditor(element, rootComponent);
+              });
+              return;
+            }
+
+            if (element instanceof EdgelessTextBlockModel) {
+              selection.set({
+                elements: [id],
+                editing: true,
+              });
+              const textBlock = rootComponent.host.view.getBlock(id);
+              if (textBlock instanceof EdgelessTextBlockComponent) {
+                textBlock.tryFocusEnd();
+              }
+
+              return;
+            }
+          }
+
+          if (!isSingleMindMapNode(elements)) {
+            return;
+          }
+
+          const mindmap = elements[0].group as MindmapElementModel;
+          const currentNode = mindmap.getNode(elements[0].id)!;
+          const node = mindmap.getNode(elements[0].id)!;
+          const parent = mindmap.getParentNode(node.id) ?? node;
+          const id = mindmap.addNode(parent.id, currentNode.id, 'after');
+          const target = service.getElementById(id) as ShapeElementModel;
+
+          requestAnimationFrame(() => {
+            mountShapeTextEditor(target, rootComponent);
+
+            if (isElementOutsideViewport(service.viewport, target, [20, 20])) {
+              const { elementBound } = target;
+
+              service.viewport.smoothTranslate(
+                elementBound.x + elementBound.w / 2,
+                elementBound.y + elementBound.h / 2
+              );
+            }
+          });
+        },
+        Tab: ctx => {
+          ctx.get('defaultState').event.preventDefault();
+
+          const { service } = rootComponent;
+          const selection = service.selection;
+          const elements = selection.selectedElements;
+
+          if (!isSingleMindMapNode(elements)) {
+            return;
+          }
+
+          const mindmap = elements[0].group as MindmapElementModel;
+          if (mindmap.isLocked()) return;
+
+          const node = mindmap.getNode(elements[0].id)!;
+          const id = mindmap.addNode(node.id);
+          const target = service.getElementById(id) as ShapeElementModel;
+
+          if (node.detail.collapsed) {
+            mindmap.toggleCollapse(node, { layout: true });
+          }
+
+          requestAnimationFrame(() => {
+            mountShapeTextEditor(target, rootComponent);
+
+            if (isElementOutsideViewport(service.viewport, target, [20, 20])) {
+              const { elementBound } = target;
+
+              service.viewport.smoothTranslate(
+                elementBound.x + elementBound.w / 2,
+                elementBound.y + elementBound.h / 2
+              );
+            }
+          });
+        },
       },
       {
         global: true,
@@ -332,7 +437,7 @@ export class EdgelessPageKeyboardManager extends PageKeyboardManager {
   }
 
   private _bindShiftKey() {
-    this.rootElement.handleEvent(
+    this.rootComponent.handleEvent(
       'keyDown',
       ctx => {
         const event = ctx.get('defaultState').event;
@@ -342,7 +447,7 @@ export class EdgelessPageKeyboardManager extends PageKeyboardManager {
       },
       { global: true }
     );
-    this.rootElement.handleEvent(
+    this.rootComponent.handleEvent(
       'keyUp',
       ctx => {
         const event = ctx.get('defaultState').event;
@@ -357,17 +462,45 @@ export class EdgelessPageKeyboardManager extends PageKeyboardManager {
   }
 
   private _bindToggleHand() {
-    this.rootElement.handleEvent(
+    this.rootComponent.handleEvent(
       'keyDown',
       ctx => {
         const event = ctx.get('keyboardState').raw;
+        const service = this.rootComponent.service;
+        const selection = service.selection;
         if (event.code === 'Space' && !event.repeat) {
           this._space(event);
+        } else if (
+          !selection.editing &&
+          event.key.length === 1 &&
+          !event.shiftKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.metaKey
+        ) {
+          const elements = selection.selectedElements;
+          const doc = this.rootComponent.doc;
+
+          if (isSingleMindMapNode(elements)) {
+            const target = service.getElementById(
+              elements[0].id
+            ) as ShapeElementModel;
+            if (target.text) {
+              doc.transact(() => {
+                target.text!.delete(0, target.text!.length);
+                target.text!.insert(0, event.key);
+              });
+            }
+            mountShapeTextEditor(target, this.rootComponent);
+            return true;
+          }
         }
+
+        return false;
       },
       { global: true }
     );
-    this.rootElement.handleEvent(
+    this.rootComponent.handleEvent(
       'keyUp',
       ctx => {
         const event = ctx.get('keyboardState').raw;
@@ -379,100 +512,126 @@ export class EdgelessPageKeyboardManager extends PageKeyboardManager {
     );
   }
 
-  private _space(event: KeyboardEvent) {
-    /*
-    Call this function with a check for !event.repeat to consider only the first keydown (not repeat). This way, you can use onPressSpaceBar in a tool to determine if the space bar is pressed or not.
-  */
-
-    const edgeless = this.rootElement;
-    const selection = edgeless.service.selection;
-    const currentTool = edgeless.edgelessTool;
-    const type = currentTool.type;
-
-    const isKeyDown = event.type === 'keydown';
-
-    if (isKeyDown) {
-      edgeless.tools.spaceBar = true;
-    } else {
-      edgeless.tools.spaceBar = false;
-    }
-
-    if (edgeless.service.tool.dragging) {
-      return; // Don't do anything if currently dragging
-    }
-
-    const revertToPrevTool = (ev: KeyboardEvent) => {
-      if (ev.code === 'Space') {
-        this._setEdgelessTool(edgeless, currentTool);
-        document.removeEventListener('keyup', revertToPrevTool, false);
-      }
-    };
-
-    if (isKeyDown) {
-      if (type === 'pan' || (type === 'default' && selection.editing)) {
-        return;
-      }
-      this._setEdgelessTool(edgeless, { type: 'pan', panning: false });
-
-      edgeless.dispatcher.disposables.addFromEvent(
-        document,
-        'keyup',
-        revertToPrevTool
-      );
-    }
-  }
-
-  private _shift(event: KeyboardEvent) {
-    const edgeless = this.rootElement;
-
-    if (event.repeat) return;
-
-    const shiftKeyPressed =
-      event.key.toLowerCase() === 'shift' && event.shiftKey;
-
-    if (shiftKeyPressed) {
-      edgeless.slots.pressShiftKeyUpdated.emit(true);
-    } else {
-      edgeless.slots.pressShiftKeyUpdated.emit(false);
-    }
-  }
-
   private _delete() {
-    const edgeless = this.rootElement;
+    const edgeless = this.rootComponent;
 
     if (edgeless.service.locked) return;
     if (edgeless.service.selection.editing) {
       return;
     }
 
-    deleteElements(edgeless.surface, edgeless.service.selection.elements);
+    const selectedElements = edgeless.service.selection.selectedElements;
+    if (selectedElements.some(e => e.isLocked())) return;
 
-    edgeless.service.selection.clear();
-    edgeless.service.selection.set(edgeless.service.selection.selections);
-  }
+    if (isSingleMindMapNode(selectedElements)) {
+      const node = selectedElements[0];
+      const mindmap = node.group as MindmapElementModel;
+      const focusNode =
+        mindmap.getSiblingNode(node.id, 'prev') ??
+        mindmap.getSiblingNode(node.id, 'next') ??
+        mindmap.getParentNode(node.id);
 
-  private _setEdgelessTool(
-    edgeless: EdgelessRootBlockComponent,
-    edgelessTool: EdgelessTool,
-    ignoreActiveState = false
-  ) {
-    // when editing, should not update mouse mode by shortcut
-    if (!ignoreActiveState && edgeless.service.selection.editing) {
-      return;
+      if (focusNode) {
+        edgeless.service.selection.set({
+          elements: [focusNode.element.id],
+          editing: false,
+        });
+      }
+
+      deleteElements(edgeless, selectedElements);
+    } else {
+      deleteElements(edgeless, selectedElements);
+      edgeless.service.selection.clear();
     }
-    edgeless.tools.setEdgelessTool(edgelessTool);
   }
 
   private _move(key: string, shift = false) {
-    const edgeless = this.rootElement;
+    const edgeless = this.rootComponent;
 
     if (edgeless.service.locked) return;
     if (edgeless.service.selection.editing) return;
 
-    const { elements } = edgeless.service.selection;
+    const { selectedElements } = edgeless.service.selection;
     const inc = shift ? 10 : 1;
+    const mindmapNodes = selectedElements.filter(
+      el => el.group instanceof MindmapElementModel
+    );
 
-    elements.forEach(element => {
+    if (mindmapNodes.length > 0) {
+      const node = mindmapNodes[0];
+      const mindmap = node.group as MindmapElementModel;
+      const nodeDirection = mindmap.getLayoutDir(node.id);
+      let targetNode: BlockSuite.SurfaceElementModel | null = null;
+
+      switch (key) {
+        case 'ArrowUp':
+        case 'ArrowDown':
+          targetNode =
+            mindmap.getSiblingNode(
+              node.id,
+              key === 'ArrowDown' ? 'next' : 'prev',
+              nodeDirection === LayoutType.RIGHT
+                ? 'right'
+                : nodeDirection === LayoutType.LEFT
+                  ? 'left'
+                  : undefined
+            )?.element ?? null;
+          break;
+        case 'ArrowLeft':
+          targetNode =
+            nodeDirection === LayoutType.RIGHT
+              ? (mindmap.getParentNode(node.id)?.element ?? null)
+              : (mindmap.getChildNodes(node.id, 'left')[0]?.element ?? null);
+
+          break;
+        case 'ArrowRight':
+          targetNode =
+            nodeDirection === LayoutType.RIGHT ||
+            nodeDirection === LayoutType.BALANCE
+              ? (mindmap.getChildNodes(node.id, 'right')[0]?.element ?? null)
+              : (mindmap.getParentNode(node.id)?.element ?? null);
+          break;
+      }
+
+      if (targetNode) {
+        edgeless.service.selection.set({
+          elements: [targetNode.id],
+          editing: false,
+        });
+
+        if (
+          isElementOutsideViewport(
+            edgeless.service.viewport,
+            targetNode,
+            [90, 20]
+          )
+        ) {
+          const [dx, dy] = getNearestTranslation(
+            edgeless.service.viewport,
+            targetNode,
+            [100, 20]
+          );
+
+          edgeless.service.viewport.smoothTranslate(
+            edgeless.service.viewport.centerX - dx,
+            edgeless.service.viewport.centerY + dy
+          );
+        }
+      }
+
+      return;
+    }
+
+    if (selectedElements.some(e => e.isLocked())) return;
+
+    const movedElements = new Set([
+      ...selectedElements,
+      ...selectedElements
+        .map(el => (isGfxGroupCompatibleModel(el) ? el.descendantElements : []))
+        .flat(),
+    ]);
+
+    movedElements.forEach(element => {
       const bound = Bound.deserialize(element.xywh).clone();
 
       switch (key) {
@@ -499,5 +658,89 @@ export class EdgelessPageKeyboardManager extends PageKeyboardManager {
         element['xywh'] = bound.serialize();
       }
     });
+  }
+
+  private _setEdgelessTool<K extends keyof GfxToolsMap>(
+    toolName: K,
+    ...options: K extends keyof GfxToolsOption
+      ? [option: GfxToolsOption[K], ignoreActiveState?: boolean]
+      : [option: void, ignoreActiveState?: boolean]
+  ) {
+    const ignoreActiveState =
+      typeof options === 'boolean'
+        ? options[0]
+        : options[1] === undefined
+          ? false
+          : options[1];
+
+    // when editing, should not update mouse mode by shortcut
+    if (!ignoreActiveState && this.rootComponent.gfx.selection.editing) {
+      return;
+    }
+
+    this.rootComponent.gfx.tool.setTool<K>(
+      toolName,
+      // @ts-ignore
+      options[0] !== undefined && typeof options[0] !== 'boolean'
+        ? options[0]
+        : undefined
+    );
+  }
+
+  private _shift(event: KeyboardEvent) {
+    const edgeless = this.rootComponent;
+
+    if (event.repeat) return;
+
+    const shiftKeyPressed =
+      event.key.toLowerCase() === 'shift' && event.shiftKey;
+
+    if (shiftKeyPressed) {
+      edgeless.slots.pressShiftKeyUpdated.emit(true);
+    } else {
+      edgeless.slots.pressShiftKeyUpdated.emit(false);
+    }
+  }
+
+  private _space(event: KeyboardEvent) {
+    /*
+    Call this function with a check for !event.repeat to consider only the first keydown (not repeat). This way, you can use onPressSpaceBar in a tool to determine if the space bar is pressed or not.
+  */
+
+    const edgeless = this.rootComponent;
+    const selection = edgeless.service.selection;
+    const currentTool = edgeless.gfx.tool.currentTool$.peek()!;
+    const isKeyDown = event.type === 'keydown';
+
+    if (edgeless.gfx.tool.dragging$.peek()) {
+      return; // Don't do anything if currently dragging
+    }
+
+    const revertToPrevTool = (ev: KeyboardEvent) => {
+      if (ev.code === 'Space') {
+        this._setEdgelessTool(
+          // @ts-ignore
+          currentTool.toolName,
+          currentTool?.activatedOption
+        );
+        document.removeEventListener('keyup', revertToPrevTool, false);
+      }
+    };
+
+    if (isKeyDown) {
+      if (
+        currentTool.toolName === 'pan' ||
+        (currentTool.toolName === 'default' && selection.editing)
+      ) {
+        return;
+      }
+      this._setEdgelessTool('pan', { panning: false });
+
+      edgeless.dispatcher.disposables.addFromEvent(
+        document,
+        'keyup',
+        revertToPrevTool
+      );
+    }
   }
 }

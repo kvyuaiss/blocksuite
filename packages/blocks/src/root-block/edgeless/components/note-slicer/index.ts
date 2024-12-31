@@ -1,26 +1,29 @@
-import { WithDisposable } from '@blocksuite/block-std';
-import { DisposableGroup } from '@blocksuite/global/utils';
-import { css, html, LitElement, nothing, type PropertyValues } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { SmallScissorsIcon } from '@blocksuite/affine-components/icons';
+import { DEFAULT_NOTE_HEIGHT } from '@blocksuite/affine-model';
+import { EDGELESS_BLOCK_CHILD_PADDING } from '@blocksuite/affine-shared/consts';
+import { TelemetryProvider } from '@blocksuite/affine-shared/services';
+import { getRectByBlockComponent } from '@blocksuite/affine-shared/utils';
+import { WidgetComponent } from '@blocksuite/block-std';
+import { GfxControllerIdentifier } from '@blocksuite/block-std/gfx';
+import {
+  deserializeXYWH,
+  DisposableGroup,
+  Point,
+  serializeXYWH,
+} from '@blocksuite/global/utils';
+import { css, html, nothing, type PropertyValues } from 'lit';
+import { state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-import { SmallScissorsIcon } from '../../../../_common/icons/edgeless.js';
-import {
-  buildPath,
-  getRectByBlockElement,
-  Point,
-} from '../../../../_common/utils/index.js';
 import type {
   EdgelessRootBlockComponent,
   NoteBlockComponent,
   NoteBlockModel,
+  RootBlockModel,
 } from '../../../../index.js';
-import {
-  deserializeXYWH,
-  serializeXYWH,
-} from '../../../../surface-block/utils/xywh.js';
-import { DEFAULT_NOTE_HEIGHT } from '../../utils/consts.js';
+
+import { isNoteBlock } from '../../utils/query.js';
 
 const DIVIDING_LINE_OFFSET = 4;
 const NEW_NOTE_GAP = 40;
@@ -95,93 +98,106 @@ const styles = css`
     }
   }
 `;
-@customElement('note-slicer')
-export class NoteSlicer extends WithDisposable(LitElement) {
+
+export const NOTE_SLICER_WIDGET = 'note-slicer';
+
+export class NoteSlicer extends WidgetComponent<
+  RootBlockModel,
+  EdgelessRootBlockComponent
+> {
   static override styles = styles;
 
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
-
-  @property({ attribute: false })
-  anchorNote: NoteBlockModel | null = null;
-
-  @state()
-  private _activeSlicerIndex = 0;
+  private _divingLinePositions: Point[] = [];
 
   private _hidden = false;
-  private _divingLinePositions: Point[] = [];
+
   private _noteBlockIds: string[] = [];
+
   private _noteDisposables: DisposableGroup | null = null;
 
   get _editorHost() {
-    return this.edgeless.host;
+    return this.std.host;
   }
 
-  get _noteBlockElement() {
+  get _noteBlock() {
     if (!this._editorHost) return null;
-    const noteBlock = this._editorHost.view.viewFromPath(
-      'block',
-      buildPath(this.anchorNote)
+    const noteBlock = this._editorHost.view.getBlock(
+      this._anchorNote?.id ?? ''
     );
     return noteBlock ? (noteBlock as NoteBlockComponent) : null;
   }
 
-  get _notePortalElement() {
-    return this._noteBlockElement?.closest('.edgeless-block-portal-note');
+  get _selection() {
+    return this.gfx.selection;
   }
 
   get _viewportOffset() {
-    const { viewport } = this.edgeless;
+    const { viewport } = this.gfx;
     return {
       left: viewport.left ?? 0,
       top: viewport.top ?? 0,
     };
   }
 
-  get _selection() {
-    return this.edgeless.service.selection;
-  }
-
   get _zoom() {
-    return this.edgeless.service.viewport.zoom;
+    return this.gfx.viewport.zoom;
   }
 
-  private _updateDivingLineAndBlockIds() {
-    if (!this.anchorNote || !this._notePortalElement) {
-      this._divingLinePositions = [];
-      this._noteBlockIds = [];
-      return;
-    }
+  get gfx() {
+    return this.std.get(GfxControllerIdentifier);
+  }
 
-    const divingLinePositions: Point[] = [];
-    const noteBlockIds: string[] = [];
-    const notePortalRect = this._notePortalElement.getBoundingClientRect();
-    const notePortalTop = notePortalRect.top;
-    const notePortalBottom = notePortalRect.bottom;
+  get selectedRectEle() {
+    return this.block.selectedRectWidget;
+  }
 
-    for (let i = 0; i < this.anchorNote.children.length - 1; i++) {
-      const child = this.anchorNote.children[i];
-      const rect = this.edgeless.host.view
-        .viewFromPath('block', buildPath(child))
-        ?.getBoundingClientRect();
+  private _sliceNote() {
+    if (!this._anchorNote || !this._noteBlockIds.length) return;
+    const doc = this.doc;
 
-      if (
-        rect &&
-        rect.bottom > notePortalTop &&
-        rect.bottom < notePortalBottom
-      ) {
-        const x = rect.x - this._viewportOffset.left;
-        const y =
-          rect.bottom +
-          DIVIDING_LINE_OFFSET * this._zoom -
-          this._viewportOffset.top;
-        divingLinePositions.push(new Point(x, y));
-        noteBlockIds.push(child.id);
-      }
-    }
+    const {
+      index: originIndex,
+      xywh,
+      background,
+      children,
+      displayMode,
+    } = this._anchorNote;
+    const {
+      collapse: _,
+      collapsedHeight: __,
+      ...restOfEdgeless
+    } = this._anchorNote.edgeless;
+    const anchorBlockId = this._noteBlockIds[this._activeSlicerIndex];
+    if (!anchorBlockId) return;
+    const sliceIndex = children.findIndex(block => block.id === anchorBlockId);
+    const resetBlocks = children.slice(sliceIndex + 1);
+    const [x, , width] = deserializeXYWH(xywh);
+    const sliceVerticalPos =
+      this._divingLinePositions[this._activeSlicerIndex].y;
+    const newY = this.gfx.viewport.toModelCoord(x, sliceVerticalPos)[1];
+    const newNoteId = this.doc.addBlock(
+      'affine:note',
+      {
+        background,
+        displayMode,
+        xywh: serializeXYWH(x, newY + NEW_NOTE_GAP, width, DEFAULT_NOTE_HEIGHT),
+        index: originIndex + 1,
+        edgeless: restOfEdgeless,
+      },
+      doc.root?.id
+    );
 
-    this._divingLinePositions = divingLinePositions;
-    this._noteBlockIds = noteBlockIds;
+    doc.moveBlocks(resetBlocks, doc.getBlockById(newNoteId) as NoteBlockModel);
+
+    this._activeSlicerIndex = 0;
+    this._selection.set({
+      elements: [newNoteId],
+      editing: false,
+    });
+
+    this.std.getOptional(TelemetryProvider)?.track('SplitNote', {
+      control: 'NoteSlicer',
+    });
   }
 
   private _updateActiveSlicerIndex(pos: Point) {
@@ -202,15 +218,73 @@ export class NoteSlicer extends WithDisposable(LitElement) {
     this._activeSlicerIndex = index;
   }
 
+  private _updateDivingLineAndBlockIds() {
+    if (!this._anchorNote || !this._noteBlock) {
+      this._divingLinePositions = [];
+      this._noteBlockIds = [];
+      return;
+    }
+
+    const divingLinePositions: Point[] = [];
+    const noteBlockIds: string[] = [];
+    const noteRect = this._noteBlock.getBoundingClientRect();
+    const noteTop = noteRect.top;
+    const noteBottom = noteRect.bottom;
+
+    for (let i = 0; i < this._anchorNote.children.length - 1; i++) {
+      const child = this._anchorNote.children[i];
+      const rect = this.host.view.getBlock(child.id)?.getBoundingClientRect();
+
+      if (rect && rect.bottom > noteTop && rect.bottom < noteBottom) {
+        const x = rect.x - this._viewportOffset.left;
+        const y =
+          rect.bottom +
+          DIVIDING_LINE_OFFSET * this._zoom -
+          this._viewportOffset.top;
+        divingLinePositions.push(new Point(x, y));
+        noteBlockIds.push(child.id);
+      }
+    }
+
+    this._divingLinePositions = divingLinePositions;
+    this._noteBlockIds = noteBlockIds;
+  }
+
+  private _updateSlicedNote() {
+    const { selectedElements } = this.gfx.selection;
+
+    if (
+      !this.gfx.selection.editing &&
+      selectedElements.length === 1 &&
+      isNoteBlock(selectedElements[0])
+    ) {
+      this._anchorNote = selectedElements[0];
+    } else {
+      this._anchorNote = null;
+    }
+  }
+
   override connectedCallback(): void {
     super.connectedCallback();
 
-    if (!this.edgeless.service) return;
+    const { disposables, std, block, gfx } = this;
+
     this._updateDivingLineAndBlockIds();
-    const { disposables } = this;
 
     disposables.add(
-      this.edgeless.service.uiEventDispatcher.add('pointerMove', ctx => {
+      block.slots.elementResizeStart.on(() => {
+        this._isResizing = true;
+      })
+    );
+
+    disposables.add(
+      block.slots.elementResizeEnd.on(() => {
+        this._isResizing = false;
+      })
+    );
+
+    disposables.add(
+      std.event.add('pointerMove', ctx => {
         if (this._hidden) this._hidden = false;
 
         const state = ctx.get('pointerState');
@@ -220,58 +294,50 @@ export class NoteSlicer extends WithDisposable(LitElement) {
     );
 
     disposables.add(
-      this.edgeless.service.viewport.viewportUpdated.on(() => {
+      gfx.viewport.viewportUpdated.on(() => {
         this._hidden = true;
         this.requestUpdate();
       })
     );
 
-    const { surface } = this.edgeless;
+    disposables.add(
+      gfx.selection.slots.updated.on(() => {
+        this._enableNoteSlicer = false;
+        this._updateSlicedNote();
+
+        if (this.selectedRectEle) {
+          this.selectedRectEle.autoCompleteOff = false;
+        }
+      })
+    );
+
+    disposables.add(
+      block.slots.toggleNoteSlicer.on(() => {
+        this._enableNoteSlicer = !this._enableNoteSlicer;
+
+        if (this.selectedRectEle && this._enableNoteSlicer) {
+          this.selectedRectEle.autoCompleteOff = true;
+        }
+      })
+    );
+
+    const { surface } = block;
     requestAnimationFrame(() => {
-      if (surface.isConnected && surface.edgeless.dispatcher) {
+      if (surface.isConnected && std.event) {
         disposables.add(
-          surface.edgeless.dispatcher.add('click', ctx => {
+          std.event.add('click', ctx => {
             const event = ctx.get('pointerState');
             const { raw } = event;
             const target = raw.target as HTMLElement;
-            if (!target) return false;
+            if (!target) return;
+
             if (target.closest('note-slicer')) {
               this._sliceNote();
-              return true;
             }
-            return false;
           })
         );
       }
     });
-  }
-
-  protected override updated(_changedProperties: PropertyValues) {
-    super.updated(_changedProperties);
-    if (_changedProperties.has('anchorNote')) {
-      this._noteDisposables?.dispose();
-      this._noteDisposables = null;
-      if (this.anchorNote) {
-        this._noteDisposables = new DisposableGroup();
-        this._noteDisposables.add(
-          this.anchorNote.propsUpdated.on(({ key }) => {
-            if (key === 'children' || key === 'xywh') {
-              this.requestUpdate();
-            }
-          })
-        );
-      }
-    }
-  }
-
-  override firstUpdated() {
-    if (!this.edgeless.service) return;
-    this.disposables.add(
-      this.edgeless.service.uiEventDispatcher.add('wheel', () => {
-        this._hidden = true;
-        this.requestUpdate();
-      })
-    );
   }
 
   override disconnectedCallback(): void {
@@ -281,63 +347,34 @@ export class NoteSlicer extends WithDisposable(LitElement) {
     this._noteDisposables = null;
   }
 
-  private _sliceNote() {
-    if (!this.anchorNote || !this._noteBlockIds.length) return;
-    const doc = this.edgeless.doc;
-
-    const {
-      index: originIndex,
-      xywh,
-      background,
-      children,
-      displayMode,
-    } = this.anchorNote;
-    const {
-      collapse: _,
-      collapsedHeight: __,
-      ...restOfEdgeless
-    } = this.anchorNote.edgeless;
-    const anchorBlockId = this._noteBlockIds[this._activeSlicerIndex];
-    if (!anchorBlockId) return;
-    const sliceIndex = children.findIndex(block => block.id === anchorBlockId);
-    const resetBlocks = children.slice(sliceIndex + 1);
-    const [x, , width] = deserializeXYWH(xywh);
-    const sliceVerticalPos =
-      this._divingLinePositions[this._activeSlicerIndex].y;
-    const newY = this.edgeless.service.viewport.toModelCoord(
-      x,
-      sliceVerticalPos
-    )[1];
-    const newNoteId = this.edgeless.service.addBlock(
-      'affine:note',
-      {
-        background,
-        displayMode,
-        xywh: serializeXYWH(x, newY + NEW_NOTE_GAP, width, DEFAULT_NOTE_HEIGHT),
-        index: originIndex + 1,
-        edgeless: restOfEdgeless,
-      },
-      doc.root?.id
+  override firstUpdated() {
+    if (!this.block.service) return;
+    this.disposables.add(
+      this.block.service.uiEventDispatcher.add('wheel', () => {
+        this._hidden = true;
+        this.requestUpdate();
+      })
     );
-
-    doc.moveBlocks(resetBlocks, doc.getBlockById(newNoteId) as NoteBlockModel);
-
-    this._activeSlicerIndex = 0;
-    this._selection.set({
-      elements: [newNoteId],
-      editing: false,
-    });
   }
 
   override render() {
-    if (!this.anchorNote || this._hidden) return nothing;
+    if (
+      this.doc.readonly ||
+      this._hidden ||
+      this._isResizing ||
+      !this._anchorNote ||
+      !this._enableNoteSlicer
+    ) {
+      return nothing;
+    }
+
     this._updateDivingLineAndBlockIds();
 
-    const noteBlockElement = this._noteBlockElement;
-    if (!noteBlockElement || !this._divingLinePositions.length) return nothing;
+    const noteBlock = this._noteBlock;
+    if (!noteBlock || !this._divingLinePositions.length) return nothing;
 
-    const rect = getRectByBlockElement(noteBlockElement);
-    const width = rect.width;
+    const rect = getRectByBlockComponent(noteBlock);
+    const width = rect.width - 2 * EDGELESS_BLOCK_CHILD_PADDING;
     const buttonPosition = this._divingLinePositions[this._activeSlicerIndex];
 
     return html`<div class="note-slicer-container">
@@ -371,6 +408,36 @@ export class NoteSlicer extends WithDisposable(LitElement) {
       })}
     </div> `;
   }
+
+  protected override updated(_changedProperties: PropertyValues) {
+    super.updated(_changedProperties);
+    if (_changedProperties.has('anchorNote')) {
+      this._noteDisposables?.dispose();
+      this._noteDisposables = null;
+      if (this._anchorNote) {
+        this._noteDisposables = new DisposableGroup();
+        this._noteDisposables.add(
+          this._anchorNote.propsUpdated.on(({ key }) => {
+            if (key === 'children' || key === 'xywh') {
+              this.requestUpdate();
+            }
+          })
+        );
+      }
+    }
+  }
+
+  @state()
+  private accessor _activeSlicerIndex = 0;
+
+  @state()
+  private accessor _anchorNote: NoteBlockModel | null = null;
+
+  @state()
+  private accessor _enableNoteSlicer = false;
+
+  @state()
+  private accessor _isResizing = false;
 }
 
 declare global {

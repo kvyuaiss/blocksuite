@@ -1,10 +1,10 @@
 import z from 'zod';
 
-import { PathFinder } from '../../utils/path-finder.js';
+import { SelectionExtension } from '../../extension/selection.js';
 import { BaseSelection } from '../base.js';
 
 export type TextRangePoint = {
-  path: string[];
+  blockId: string;
   index: number;
   length: number;
 };
@@ -17,13 +17,13 @@ export type TextSelectionProps = {
 
 const TextSelectionSchema = z.object({
   from: z.object({
-    path: z.array(z.string()),
+    blockId: z.string(),
     index: z.number(),
     length: z.number(),
   }),
   to: z
     .object({
-      path: z.array(z.string()),
+      blockId: z.string(),
       index: z.number(),
       length: z.number(),
     })
@@ -34,18 +34,27 @@ const TextSelectionSchema = z.object({
 });
 
 export class TextSelection extends BaseSelection {
-  static override type = 'text';
   static override group = 'note';
+
+  static override type = 'text';
 
   from: TextRangePoint;
 
+  reverse: boolean;
+
   to: TextRangePoint | null;
 
-  reverse: boolean;
+  get end(): TextRangePoint {
+    return this.reverse ? this.from : (this.to ?? this.from);
+  }
+
+  get start(): TextRangePoint {
+    return this.reverse ? (this.to ?? this.from) : this.from;
+  }
 
   constructor({ from, to, reverse }: TextSelectionProps) {
     super({
-      path: from.path,
+      blockId: from.blockId,
     });
     this.from = from;
 
@@ -54,16 +63,9 @@ export class TextSelection extends BaseSelection {
     this.reverse = !!reverse;
   }
 
-  get start(): TextRangePoint {
-    return this.reverse ? this.to ?? this.from : this.from;
-  }
-
-  get end(): TextRangePoint {
-    return this.reverse ? this.from : this.to ?? this.from;
-  }
-
-  empty(): boolean {
-    return !!this.to;
+  static override fromJSON(json: Record<string, unknown>): TextSelection {
+    const result = TextSelectionSchema.parse(json);
+    return new TextSelection(result);
   }
 
   private _equalPoint(
@@ -72,25 +74,36 @@ export class TextSelection extends BaseSelection {
   ): boolean {
     if (a && b) {
       return (
-        PathFinder.equals(a.path, b.path) &&
-        a.index === b.index &&
-        a.length === b.length
+        a.blockId === b.blockId && a.index === b.index && a.length === b.length
       );
     }
 
     return a === b;
   }
 
+  empty(): boolean {
+    return !!this.to;
+  }
+
   override equals(other: BaseSelection): boolean {
     if (other instanceof TextSelection) {
       return (
-        PathFinder.equals(this.path, other.path) &&
+        this.blockId === other.blockId &&
         this._equalPoint(other.from, this.from) &&
         this._equalPoint(other.to, this.to)
       );
     }
     return false;
   }
+
+  isCollapsed(): boolean {
+    return this.to === null && this.from.length === 0;
+  }
+
+  isInSameBlock(): boolean {
+    return this.to === null || this.from.blockId === this.to.blockId;
+  }
+
   override toJSON(): Record<string, unknown> {
     return {
       type: 'text',
@@ -99,29 +112,6 @@ export class TextSelection extends BaseSelection {
       reverse: this.reverse,
     };
   }
-
-  static override fromJSON(json: Record<string, unknown>): TextSelection {
-    TextSelectionSchema.parse(json);
-    return new TextSelection({
-      from: json.from as TextRangePoint,
-      to: json.to as TextRangePoint | null,
-      reverse: !!json.reverse,
-    });
-  }
-
-  isCollapsed(): boolean {
-    return this.to === null && this.from.length === 0;
-  }
-
-  isInSameBlock(): boolean {
-    return this.to === null || PathFinder.equals(this.from.path, this.to.path);
-  }
 }
 
-declare global {
-  namespace BlockSuite {
-    interface Selection {
-      text: typeof TextSelection;
-    }
-  }
-}
+export const TextSelectionExtension = SelectionExtension(TextSelection);

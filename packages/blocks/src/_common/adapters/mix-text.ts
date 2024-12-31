@@ -1,6 +1,12 @@
+import type { ExtensionType } from '@blocksuite/block-std';
 import type { DeltaInsert } from '@blocksuite/inline';
-import type { AssetsManager } from '@blocksuite/store';
+
 import {
+  DEFAULT_NOTE_BACKGROUND_COLOR,
+  NoteDisplayMode,
+} from '@blocksuite/affine-model';
+import {
+  type AssetsManager,
   ASTWalker,
   BaseAdapter,
   type BlockSnapshot,
@@ -12,14 +18,15 @@ import {
   type FromDocSnapshotResult,
   type FromSliceSnapshotPayload,
   type FromSliceSnapshotResult,
+  type Job,
   nanoid,
   type SliceSnapshot,
   type ToBlockSnapshotPayload,
   type ToDocSnapshotPayload,
 } from '@blocksuite/store';
 
-import { NoteDisplayMode } from '../types.js';
-import { MarkdownAdapter } from './markdown.js';
+import { MarkdownAdapter } from './markdown/index.js';
+import { AdapterFactoryIdentifier } from './type.js';
 
 export type MixText = string;
 
@@ -27,18 +34,93 @@ type MixTextToSliceSnapshotPayload = {
   file: MixText;
   assets?: AssetsManager;
   blockVersions: Record<string, number>;
-  pageVersion: number;
-  workspaceVersion: number;
   workspaceId: string;
   pageId: string;
 };
 
 export class MixTextAdapter extends BaseAdapter<MixText> {
   private _markdownAdapter: MarkdownAdapter;
-  constructor() {
-    super();
-    this._markdownAdapter = new MarkdownAdapter();
+
+  constructor(job: Job) {
+    super(job);
+    this._markdownAdapter = new MarkdownAdapter(job);
   }
+
+  private _splitDeltas(deltas: DeltaInsert[]): DeltaInsert[][] {
+    const result: DeltaInsert[][] = [[]];
+    const pending: DeltaInsert[] = deltas;
+    while (pending.length > 0) {
+      const delta = pending.shift();
+      if (!delta) {
+        break;
+      }
+      if (delta.insert.includes('\n')) {
+        const splitIndex = delta.insert.indexOf('\n');
+        const line = delta.insert.slice(0, splitIndex);
+        const rest = delta.insert.slice(splitIndex + 1);
+        result[result.length - 1].push({ ...delta, insert: line });
+        result.push([]);
+        if (rest) {
+          pending.unshift({ ...delta, insert: rest });
+        }
+      } else {
+        result[result.length - 1].push(delta);
+      }
+    }
+    return result;
+  }
+
+  private async _traverseSnapshot(
+    snapshot: BlockSnapshot
+  ): Promise<{ mixtext: string }> {
+    let buffer = '';
+    const walker = new ASTWalker<BlockSnapshot, never>();
+    walker.setONodeTypeGuard(
+      (node): node is BlockSnapshot =>
+        BlockSnapshotSchema.safeParse(node).success
+    );
+    walker.setEnter(o => {
+      const text = (o.node.props.text ?? { delta: [] }) as {
+        delta: DeltaInsert[];
+      };
+      if (buffer.length > 0) {
+        buffer += '\n';
+      }
+      switch (o.node.flavour) {
+        case 'affine:code': {
+          buffer += text.delta.map(delta => delta.insert).join('');
+          break;
+        }
+        case 'affine:paragraph': {
+          buffer += text.delta.map(delta => delta.insert).join('');
+          break;
+        }
+        case 'affine:list': {
+          buffer += text.delta.map(delta => delta.insert).join('');
+          break;
+        }
+        case 'affine:divider': {
+          buffer += '---';
+          break;
+        }
+      }
+    });
+    await walker.walkONode(snapshot);
+    return {
+      mixtext: buffer,
+    };
+  }
+
+  async fromBlockSnapshot({
+    snapshot,
+  }: FromBlockSnapshotPayload): Promise<FromBlockSnapshotResult<MixText>> {
+    const { mixtext } = await this._traverseSnapshot(snapshot);
+    return {
+      file: mixtext,
+      assetsIds: [],
+    };
+  }
+
   async fromDocSnapshot({
     snapshot,
     assets,
@@ -58,16 +140,6 @@ export class MixTextAdapter extends BaseAdapter<MixText> {
     };
   }
 
-  async fromBlockSnapshot({
-    snapshot,
-  }: FromBlockSnapshotPayload): Promise<FromBlockSnapshotResult<MixText>> {
-    const { mixtext } = await this._traverseSnapshot(snapshot);
-    return {
-      file: mixtext,
-      assetsIds: [],
-    };
-  }
-
   async fromSliceSnapshot({
     snapshot,
   }: FromSliceSnapshotPayload): Promise<FromSliceSnapshotResult<MixText>> {
@@ -82,6 +154,41 @@ export class MixTextAdapter extends BaseAdapter<MixText> {
     return {
       file: mixtext,
       assetsIds: sliceAssetsIds,
+    };
+  }
+
+  toBlockSnapshot(payload: ToBlockSnapshotPayload<MixText>): BlockSnapshot {
+    payload.file = payload.file.replaceAll('\r', '');
+    return {
+      type: 'block',
+      id: nanoid(),
+      flavour: 'affine:note',
+      props: {
+        xywh: '[0,0,800,95]',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
+        index: 'a0',
+        hidden: false,
+        displayMode: NoteDisplayMode.DocAndEdgeless,
+      },
+      children: payload.file.split('\n').map((line): BlockSnapshot => {
+        return {
+          type: 'block',
+          id: nanoid(),
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [
+                {
+                  insert: line,
+                },
+              ],
+            },
+          },
+          children: [],
+        };
+      }),
     };
   }
 
@@ -125,7 +232,7 @@ export class MixTextAdapter extends BaseAdapter<MixText> {
             flavour: 'affine:note',
             props: {
               xywh: '[0,0,800,95]',
-              background: '--affine-background-secondary-color',
+              background: DEFAULT_NOTE_BACKGROUND_COLOR,
               index: 'a0',
               hidden: false,
               displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -155,45 +262,9 @@ export class MixTextAdapter extends BaseAdapter<MixText> {
     };
   }
 
-  toBlockSnapshot(payload: ToBlockSnapshotPayload<MixText>): BlockSnapshot {
-    payload.file = payload.file.replaceAll('\r', '');
-    return {
-      type: 'block',
-      id: nanoid(),
-      flavour: 'affine:note',
-      props: {
-        xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
-        index: 'a0',
-        hidden: false,
-        displayMode: NoteDisplayMode.DocAndEdgeless,
-      },
-      children: payload.file.split('\n').map((line): BlockSnapshot => {
-        return {
-          type: 'block',
-          id: nanoid(),
-          flavour: 'affine:paragraph',
-          props: {
-            type: 'text',
-            text: {
-              '$blocksuite:internal:text$': true,
-              delta: [
-                {
-                  insert: line,
-                },
-              ],
-            },
-          },
-          children: [],
-        };
-      }),
-    };
-  }
-
   async toSliceSnapshot(
     payload: MixTextToSliceSnapshotPayload
   ): Promise<SliceSnapshot | null> {
-    this._markdownAdapter.applyConfigs(this.configs);
     if (payload.file.trim().length === 0) {
       return null;
     }
@@ -201,52 +272,93 @@ export class MixTextAdapter extends BaseAdapter<MixText> {
     const sliceSnapshot = await this._markdownAdapter.toSliceSnapshot({
       file: payload.file,
       assets: payload.assets,
-      pageVersion: payload.pageVersion,
-      workspaceVersion: payload.workspaceVersion,
       workspaceId: payload.workspaceId,
       pageId: payload.pageId,
     });
+    if (!sliceSnapshot) {
+      return null;
+    }
+    for (const contentSlice of sliceSnapshot.content) {
+      const blockSnapshotRoot = {
+        type: 'block',
+        id: nanoid(),
+        flavour: 'affine:note',
+        props: {
+          xywh: '[0,0,800,95]',
+          background: DEFAULT_NOTE_BACKGROUND_COLOR,
+          index: 'a0',
+          hidden: false,
+          displayMode: NoteDisplayMode.DocAndEdgeless,
+        },
+        children: [],
+      } as BlockSnapshot;
+      const walker = new ASTWalker<BlockSnapshot, BlockSnapshot>();
+      walker.setONodeTypeGuard(
+        (node): node is BlockSnapshot =>
+          BlockSnapshotSchema.safeParse(node).success
+      );
+      walker.setEnter((o, context) => {
+        switch (o.node.flavour) {
+          case 'affine:note': {
+            break;
+          }
+          case 'affine:paragraph': {
+            if (o.parent?.node.flavour !== 'affine:note') {
+              context.openNode({ ...o.node, children: [] });
+              break;
+            }
+            const text = (o.node.props.text ?? { delta: [] }) as {
+              delta: DeltaInsert[];
+            };
+            const newDeltas = this._splitDeltas(text.delta);
+            for (const [i, delta] of newDeltas.entries()) {
+              context.openNode({
+                ...o.node,
+                id: i === 0 ? o.node.id : nanoid(),
+                props: {
+                  ...o.node.props,
+                  text: {
+                    '$blocksuite:internal:text$': true,
+                    delta,
+                  },
+                },
+                children: [],
+              });
+              if (i < newDeltas.length - 1) {
+                context.closeNode();
+              }
+            }
+            break;
+          }
+          default: {
+            context.openNode({ ...o.node, children: [] });
+          }
+        }
+      });
+      walker.setLeave((o, context) => {
+        switch (o.node.flavour) {
+          case 'affine:note': {
+            break;
+          }
+          default: {
+            context.closeNode();
+          }
+        }
+      });
+      await walker.walk(contentSlice, blockSnapshotRoot);
+      contentSlice.children = blockSnapshotRoot.children;
+    }
     return sliceSnapshot;
   }
-
-  private async _traverseSnapshot(
-    snapshot: BlockSnapshot
-  ): Promise<{ mixtext: string }> {
-    let buffer = '';
-    const walker = new ASTWalker<BlockSnapshot, never>();
-    walker.setONodeTypeGuard(
-      (node): node is BlockSnapshot =>
-        BlockSnapshotSchema.safeParse(node).success
-    );
-    walker.setEnter(o => {
-      const text = (o.node.props.text ?? { delta: [] }) as {
-        delta: DeltaInsert[];
-      };
-      switch (o.node.flavour) {
-        case 'affine:code': {
-          buffer += text.delta.map(delta => delta.insert).join('');
-          buffer += '\n';
-          break;
-        }
-        case 'affine:paragraph': {
-          buffer += text.delta.map(delta => delta.insert).join('');
-          buffer += '\n';
-          break;
-        }
-        case 'affine:list': {
-          buffer += text.delta.map(delta => delta.insert).join('');
-          buffer += '\n';
-          break;
-        }
-        case 'affine:divider': {
-          buffer += '---\n';
-          break;
-        }
-      }
-    });
-    await walker.walkONode(snapshot);
-    return {
-      mixtext: buffer,
-    };
-  }
 }
+
+export const MixTextAdapterFactoryIdentifier =
+  AdapterFactoryIdentifier('MixText');
+
+export const MixTextAdapterFactoryExtension: ExtensionType = {
+  setup: di => {
+    di.addImpl(MixTextAdapterFactoryIdentifier, () => ({
+      get: (job: Job) => new MixTextAdapter(job),
+    }));
+  },
+};

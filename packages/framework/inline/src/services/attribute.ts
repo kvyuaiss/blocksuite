@@ -1,59 +1,38 @@
 import type { z, ZodTypeDef } from 'zod';
 
 import type { InlineEditor } from '../inline-editor.js';
-import type { AttributeRenderer } from '../types.js';
-import type { InlineRange } from '../types.js';
+import type { AttributeRenderer, InlineRange } from '../types.js';
 import type { BaseTextAttributes } from '../utils/index.js';
+
 import {
   baseTextAttributes,
   getDefaultAttributeRenderer,
 } from '../utils/index.js';
 
 export class AttributeService<TextAttributes extends BaseTextAttributes> {
-  private _marks: TextAttributes | null = null;
-
   private _attributeRenderer: AttributeRenderer<TextAttributes> =
     getDefaultAttributeRenderer<TextAttributes>();
 
   private _attributeSchema: z.ZodSchema<TextAttributes, ZodTypeDef, unknown> =
     baseTextAttributes as z.ZodSchema<TextAttributes, ZodTypeDef, unknown>;
 
-  constructor(public readonly editor: InlineEditor<TextAttributes>) {}
-
-  get marks() {
-    return this._marks;
-  }
-
-  get attributeRenderer() {
-    return this._attributeRenderer;
-  }
-
-  setMarks = (marks: TextAttributes): void => {
-    this._marks = marks;
-  };
-
-  resetMarks = (): void => {
-    this._marks = null;
-  };
-
-  setAttributeSchema = (
-    schema: z.ZodSchema<TextAttributes, ZodTypeDef, unknown>
-  ) => {
-    this._attributeSchema = schema;
-  };
-
-  setAttributeRenderer = (renderer: AttributeRenderer<TextAttributes>) => {
-    this._attributeRenderer = renderer;
-  };
+  private _marks: TextAttributes | null = null;
 
   getFormat = (inlineRange: InlineRange, loose = false): TextAttributes => {
     const deltas = this.editor.deltaService
       .getDeltasByInlineRange(inlineRange)
-      .filter(
-        ([_, position]) =>
-          position.index + position.length > inlineRange.index &&
-          position.index <= inlineRange.index + inlineRange.length
-      );
+      .filter(([_, position]) => {
+        const deltaStart = position.index;
+        const deltaEnd = position.index + position.length;
+        const inlineStart = inlineRange.index;
+        const inlineEnd = inlineRange.index + inlineRange.length;
+
+        if (inlineStart === inlineEnd) {
+          return deltaStart < inlineStart && inlineStart <= deltaEnd;
+        } else {
+          return deltaEnd > inlineStart && deltaStart <= inlineEnd;
+        }
+      });
     const maybeAttributesList = deltas.map(([delta]) => delta.attributes);
     if (loose) {
       return maybeAttributesList.reduce(
@@ -97,7 +76,35 @@ export class AttributeService<TextAttributes extends BaseTextAttributes> {
     }
     return Object.fromEntries(
       // filter out undefined values
-      Object.entries(attributeResult.data).filter(([_, v]) => v || v === null)
+      Object.entries(attributeResult.data).filter(([_, v]) => v !== undefined)
     ) as TextAttributes;
   };
+
+  resetMarks = (): void => {
+    this._marks = null;
+  };
+
+  setAttributeRenderer = (renderer: AttributeRenderer<TextAttributes>) => {
+    this._attributeRenderer = renderer;
+  };
+
+  setAttributeSchema = (
+    schema: z.ZodSchema<TextAttributes, ZodTypeDef, unknown>
+  ) => {
+    this._attributeSchema = schema;
+  };
+
+  setMarks = (marks: TextAttributes): void => {
+    this._marks = marks;
+  };
+
+  get attributeRenderer() {
+    return this._attributeRenderer;
+  }
+
+  get marks() {
+    return this._marks;
+  }
+
+  constructor(readonly editor: InlineEditor<TextAttributes>) {}
 }

@@ -1,9 +1,10 @@
 import type { BlockModel, InternalPrimitives } from '../schema/index.js';
-import { internalPrimitives } from '../schema/index.js';
 import type { AssetsManager } from './assets.js';
 import type { DraftModel } from './draft.js';
-import { fromJSON, toJSON } from './json.js';
 import type { BlockSnapshot } from './type.js';
+
+import { internalPrimitives } from '../schema/index.js';
+import { fromJSON, toJSON } from './json.js';
 
 type BlockSnapshotLeaf = Pick<
   BlockSnapshot,
@@ -21,7 +22,7 @@ export type ToSnapshotPayload<Props extends object> = {
   assets: AssetsManager;
 };
 
-export type SnapshotReturn<Props extends object> = {
+export type SnapshotNode<Props extends object> = {
   id: string;
   flavour: string;
   version: number;
@@ -50,9 +51,7 @@ export class BaseBlockTransformer<Props extends object = object> {
 
   fromSnapshot({
     json,
-  }: FromSnapshotPayload):
-    | Promise<SnapshotReturn<Props>>
-    | SnapshotReturn<Props> {
+  }: FromSnapshotPayload): Promise<SnapshotNode<Props>> | SnapshotNode<Props> {
     const { flavour, id, version, props: _props } = json;
 
     const props = this._propsFromSnapshot(_props);
@@ -65,9 +64,7 @@ export class BaseBlockTransformer<Props extends object = object> {
     };
   }
 
-  toSnapshot({
-    model,
-  }: ToSnapshotPayload<Props>): Promise<BlockSnapshotLeaf> | BlockSnapshotLeaf {
+  toSnapshot({ model }: ToSnapshotPayload<Props>): BlockSnapshotLeaf {
     const { id, flavour, version } = model;
 
     const props = this._propsToSnapshot(model);

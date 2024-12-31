@@ -1,9 +1,8 @@
-import type { PointerEventState } from '@blocksuite/block-std';
-import type { BlockElement, EditorHost } from '@blocksuite/block-std';
-import type { Disposable } from '@blocksuite/global/utils';
-
-import type { Point, Rect } from '../../../_common/utils/index.js';
-import type { DragPreview } from './components/drag-preview.js';
+import type {
+  DragHandleOption,
+  DropType,
+} from '@blocksuite/affine-shared/services';
+import type { Disposable, Rect } from '@blocksuite/global/utils';
 
 export const DRAG_HANDLE_CONTAINER_HEIGHT = 24;
 export const DRAG_HANDLE_CONTAINER_WIDTH = 16;
@@ -25,54 +24,34 @@ export const NOTE_CONTAINER_PADDING = 24;
 export const EDGELESS_NOTE_EXTRA_PADDING = 20;
 export const DRAG_HOVER_RECT_PADDING = 4;
 
-export const BLOCK_CHILDREN_CONTAINER_PADDING_LEFT = 26;
-
-export type DropType = 'before' | 'after' | 'in';
 export type DropResult = {
   rect: Rect | null;
   dropBlockId: string;
   dropType: DropType;
 };
 
-export type OnDragStartProps = {
-  state: PointerEventState;
-  startDragging: (
-    blockElements: BlockElement[],
-    state: PointerEventState,
-    dragPreview?: HTMLElement,
-    dragPreviewOffset?: Point
-  ) => void;
-  anchorBlockId: string;
-  anchorBlockPath: string[] | null;
-  editorHost: EditorHost;
-};
-
-export type OnDragEndProps = {
-  state: PointerEventState;
-  draggingElements: BlockElement[];
-  dropBlockId: string;
-  dropType: DropType | null;
-  dragPreview: DragPreview;
-  noteScale: number;
-  editorHost: EditorHost;
-};
-
-export type DragHandleOption = {
-  flavour: string | RegExp;
-  edgeless?: boolean;
-  onDragStart?: (props: OnDragStartProps) => boolean;
-  onDragMove?: (
-    state: PointerEventState,
-    draggingElements?: BlockElement[]
-  ) => boolean;
-  onDragEnd?: (props: OnDragEndProps) => boolean;
-};
-
 export class DragHandleOptionsRunner {
-  private optionMap: Map<DragHandleOption, number> = new Map();
+  private optionMap = new Map<DragHandleOption, number>();
 
   get options(): DragHandleOption[] {
     return Array.from(this.optionMap.keys());
+  }
+
+  private _decreaseOptionCount(option: DragHandleOption) {
+    const count = this.optionMap.get(option) || 0;
+    if (count > 1) {
+      this.optionMap.set(option, count - 1);
+    } else {
+      this.optionMap.delete(option);
+    }
+  }
+
+  private _getExistingOptionWithSameFlavour(
+    option: DragHandleOption
+  ): DragHandleOption | undefined {
+    return Array.from(this.optionMap.keys()).find(
+      op => op.flavour === option.flavour
+    );
   }
 
   getOption(flavour: string): DragHandleOption | undefined {
@@ -96,22 +75,5 @@ export class DragHandleOptionsRunner {
         this._decreaseOptionCount(currentOption);
       },
     };
-  }
-
-  private _getExistingOptionWithSameFlavour(
-    option: DragHandleOption
-  ): DragHandleOption | undefined {
-    return Array.from(this.optionMap.keys()).find(
-      op => op.flavour === option.flavour
-    );
-  }
-
-  private _decreaseOptionCount(option: DragHandleOption) {
-    const count = this.optionMap.get(option) || 0;
-    if (count > 1) {
-      this.optionMap.set(option, count - 1);
-    } else {
-      this.optionMap.delete(option);
-    }
   }
 }

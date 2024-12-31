@@ -1,10 +1,16 @@
 import {
-  AttachmentService,
+  BlockFlavourIdentifier,
+  BlockServiceIdentifier,
+  type ExtensionType,
+  StdIdentifier,
+} from '@blocksuite/block-std';
+import {
+  AttachmentBlockService,
   EdgelessEditorBlockSpecs,
   PageEditorBlockSpecs,
 } from '@blocksuite/blocks';
 
-class CustomAttachmentService extends AttachmentService {
+class CustomAttachmentBlockService extends AttachmentBlockService {
   override mounted(): void {
     super.mounted();
     this.maxFileSize = 100 * 1000 * 1000; // 100MB
@@ -12,24 +18,30 @@ class CustomAttachmentService extends AttachmentService {
 }
 
 export function getCustomAttachmentSpecs() {
-  const pageModeSpecs = PageEditorBlockSpecs.map(spec => {
-    if (spec.schema.model.flavour === 'affine:attachment') {
-      return {
-        ...spec,
-        service: CustomAttachmentService,
-      };
-    }
-    return spec;
-  });
-  const edgelessModeSpecs = EdgelessEditorBlockSpecs.map(spec => {
-    if (spec.schema.model.flavour === 'affine:attachment') {
-      return {
-        ...spec,
-        service: CustomAttachmentService,
-      };
-    }
-    return spec;
-  });
+  const pageModeSpecs: ExtensionType[] = [
+    ...PageEditorBlockSpecs,
+    {
+      setup: di => {
+        di.override(
+          BlockServiceIdentifier('affine:attachment'),
+          CustomAttachmentBlockService,
+          [StdIdentifier, BlockFlavourIdentifier('affine:attachment')]
+        );
+      },
+    },
+  ];
+  const edgelessModeSpecs: ExtensionType[] = [
+    ...EdgelessEditorBlockSpecs,
+    {
+      setup: di => {
+        di.override(
+          BlockServiceIdentifier('affine:attachment'),
+          CustomAttachmentBlockService,
+          [StdIdentifier, BlockFlavourIdentifier('affine:attachment')]
+        );
+      },
+    },
+  ];
 
   return {
     pageModeSpecs,

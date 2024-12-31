@@ -1,17 +1,16 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion */
-import '@shoelace-style/shoelace';
-
 import { ShadowlessElement } from '@blocksuite/block-std';
 import {
   type AttributeRenderer,
   type BaseTextAttributes,
   baseTextAttributes,
   createInlineKeyDownHandler,
-  type DeltaInsert,
   InlineEditor,
   KEYBOARD_ALLOW_DEFAULT,
   ZERO_WIDTH_NON_JOINER,
 } from '@blocksuite/inline';
+import { effects } from '@blocksuite/inline/effects';
+import { effect } from '@preact/signals-core';
+import '@shoelace-style/shoelace';
 import { css, html, nothing } from 'lit';
 import { customElement, property, query } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
@@ -19,6 +18,8 @@ import * as Y from 'yjs';
 import { z } from 'zod';
 
 import { markdownMatches } from './markdown.js';
+
+effects();
 
 function inlineTextStyles(
   props: BaseTextAttributes
@@ -46,8 +47,6 @@ function inlineTextStyles(
   }
 
   return styleMap({
-    'word-wrap': 'break-word',
-    'white-space': 'break-spaces',
     'font-weight': props.bold ? 'bold' : 'normal',
     'font-style': props.italic ? 'italic' : 'normal',
     'text-decoration': textDecorations.length > 0 ? textDecorations : 'none',
@@ -55,10 +54,7 @@ function inlineTextStyles(
   });
 }
 
-const attributeRenderer: AttributeRenderer = (
-  delta: DeltaInsert,
-  selected: boolean
-) => {
+const attributeRenderer: AttributeRenderer = ({ delta, selected }) => {
   // @ts-ignore
   if (delta.attributes?.embed) {
     return html`<span
@@ -73,10 +69,7 @@ const attributeRenderer: AttributeRenderer = (
 
   const style = delta.attributes
     ? inlineTextStyles(delta.attributes)
-    : styleMap({
-        'white-space': 'break-spaces',
-        'word-wrap': 'break-word',
-      });
+    : styleMap({});
 
   return html`<span style=${style}
     ><v-text .str=${delta.insert}></v-text
@@ -114,7 +107,7 @@ function toggleStyle(
     Object.entries(attrs).map(([k, v]) => {
       if (
         typeof v === 'boolean' &&
-        v === (oldAttributes as { [k: string]: unknown })[k]
+        v === (oldAttributes as Record<string, unknown>)[k]
       ) {
         return [k, null];
       } else {
@@ -133,15 +126,6 @@ function toggleStyle(
 
 @customElement('test-rich-text')
 export class TestRichText extends ShadowlessElement {
-  @query('.rich-text-container')
-  private _container!: HTMLDivElement;
-
-  @property({ attribute: false })
-  inlineEditor!: InlineEditor;
-
-  @property({ attribute: false })
-  undoManager!: Y.UndoManager;
-
   override firstUpdated() {
     this.contentEditable = 'true';
     this.style.outline = 'none';
@@ -180,15 +164,13 @@ export class TestRichText extends ShadowlessElement {
         el.replaceChildren(span);
       }
     });
-    this.inlineEditor.slots.inlineRangeUpdate.on(() => {
+    effect(() => {
+      const inlineRange = this.inlineEditor.inlineRange$.value;
       const el = this.querySelector('.v-range');
-      if (el) {
-        const inlineRange = this.inlineEditor.getInlineRange();
-        if (inlineRange) {
-          const span = document.createElement('span');
-          span.innerHTML = JSON.stringify(inlineRange);
-          el.replaceChildren(span);
-        }
+      if (el && inlineRange) {
+        const span = document.createElement('span');
+        span.innerHTML = JSON.stringify(inlineRange);
+        el.replaceChildren(span);
       }
     });
   }
@@ -204,8 +186,6 @@ export class TestRichText extends ShadowlessElement {
 
         .rich-text-container {
           outline: none;
-          word-break: break-word;
-          white-space: break-spaces;
         }
 
         code {
@@ -237,6 +217,15 @@ export class TestRichText extends ShadowlessElement {
       <div contenteditable="false" class="v-range"></div>
       <div contenteditable="false" class="y-text"></div>`;
   }
+
+  @query('.rich-text-container')
+  private accessor _container!: HTMLDivElement;
+
+  @property({ attribute: false })
+  accessor inlineEditor!: InlineEditor;
+
+  @property({ attribute: false })
+  accessor undoManager!: Y.UndoManager;
 }
 
 const TEXT_ID = 'inline-editor';
@@ -260,12 +249,6 @@ export class CustomToolbar extends ShadowlessElement {
       grid-template-rows: repeat(2, minmax(0, 1fr));
     }
   `;
-
-  @property({ attribute: false })
-  inlineEditor!: InlineEditor;
-
-  @property({ attribute: false })
-  undoManager!: Y.UndoManager;
 
   override firstUpdated() {
     const boldButton = this.querySelector('.bold');
@@ -368,6 +351,12 @@ export class CustomToolbar extends ShadowlessElement {
       </div>
     `;
   }
+
+  @property({ attribute: false })
+  accessor inlineEditor!: InlineEditor;
+
+  @property({ attribute: false })
+  accessor undoManager!: Y.UndoManager;
 }
 
 @customElement('test-page')
@@ -402,8 +391,11 @@ export class TestPage extends ShadowlessElement {
   `;
 
   private _editorA: InlineEditor | null = null;
+
   private _editorB: InlineEditor | null = null;
+
   private _undoManagerA: Y.UndoManager | null = null;
+
   private _undoManagerB: Y.UndoManager | null = null;
 
   override firstUpdated() {

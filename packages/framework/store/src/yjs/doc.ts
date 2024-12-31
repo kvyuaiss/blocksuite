@@ -1,4 +1,5 @@
 import type { Transaction } from 'yjs';
+
 import * as Y from 'yjs';
 
 import { createYProxy } from '../reactive/proxy.js';
@@ -16,18 +17,14 @@ export class BlockSuiteDoc extends Y.Doc {
     return this._spaces;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  override toJSON(): Record<string, any> {
-    const json = super.toJSON();
-    delete json.spaces;
-    const spaces: Record<string, unknown> = {};
-    this.spaces.forEach((doc, key) => {
-      spaces[key] = doc.toJSON();
-    });
-    return {
-      ...json,
-      spaces,
-    };
+  getArrayProxy<
+    Key extends keyof BlockSuiteDocData & string,
+    Value extends unknown[] = BlockSuiteDocData[Key] extends unknown[]
+      ? BlockSuiteDocData[Key]
+      : never,
+  >(key: Key): Value {
+    const array = super.getArray(key);
+    return createYProxy(array) as Value;
   }
 
   getMapProxy<
@@ -43,14 +40,18 @@ export class BlockSuiteDoc extends Y.Doc {
     return createYProxy(map);
   }
 
-  getArrayProxy<
-    Key extends keyof BlockSuiteDocData & string,
-    Value extends unknown[] = BlockSuiteDocData[Key] extends unknown[]
-      ? BlockSuiteDocData[Key]
-      : never,
-  >(key: Key): Value {
-    const array = super.getArray(key);
-    return createYProxy(array) as Value;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  override toJSON(): Record<string, any> {
+    const json = super.toJSON();
+    delete json.spaces;
+    const spaces: Record<string, unknown> = {};
+    this.spaces.forEach((doc, key) => {
+      spaces[key] = doc.toJSON();
+    });
+    return {
+      ...json,
+      spaces,
+    };
   }
 
   override transact<T>(f: (arg0: Transaction) => T, origin?: number | string) {

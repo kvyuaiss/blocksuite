@@ -1,27 +1,20 @@
-import { WithDisposable } from '@blocksuite/block-std';
+import { EdgelessIcon, PageIcon } from '@blocksuite/affine-components/icons';
+import { NoteDisplayMode } from '@blocksuite/affine-model';
+import { stopPropagation } from '@blocksuite/affine-shared/utils';
+import { WithDisposable } from '@blocksuite/global/utils';
 import { css, html, LitElement } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
-import { EdgelessIcon, PageIcon } from '../../../../_common/icons/edgeless.js';
-import { NoteDisplayMode } from '../../../../_common/types.js';
-import { stopPropagation } from '../../../../_common/utils/event.js';
-
-@customElement('note-display-mode-panel')
 export class NoteDisplayModePanel extends WithDisposable(LitElement) {
   static override styles = css`
     :host {
       display: flex;
-      width: var(--panel-width);
-      min-width: 180px;
-      padding: 8px;
       flex-direction: column;
       align-items: flex-start;
+      min-width: 180px;
+      width: var(--panel-width);
       gap: 4px;
-      border-radius: 8px;
-      background: var(--affine-background-overlay-panel-color);
-      box-shadow: var(--affine-shadow-2);
-      box-sizing: border-box;
     }
     .item {
       display: flex;
@@ -36,17 +29,12 @@ export class NoteDisplayModePanel extends WithDisposable(LitElement) {
     }
     .item-label {
       flex: 1 1 0;
-      font-size: var(--affine-font-sm);
-      color: var(--affine-text-primary-color);
-      line-height: 22px;
-      font-weight: 400;
     }
     .item-icon {
       display: flex;
       justify-content: center;
       align-items: center;
       gap: 4px;
-      fill: var(--affine-icon-color);
       color: var(--affine-icon-color);
     }
     .item:hover,
@@ -54,15 +42,6 @@ export class NoteDisplayModePanel extends WithDisposable(LitElement) {
       background-color: var(--affine-hover-color);
     }
   `;
-
-  @property({ attribute: false })
-  displayMode!: NoteDisplayMode;
-
-  @property({ attribute: false })
-  onSelect!: (displayMode: NoteDisplayMode) => void;
-
-  @property({ attribute: false })
-  panelWidth = 296;
 
   private _DisplayModeIcon(mode: NoteDisplayMode) {
     switch (mode) {
@@ -87,11 +66,10 @@ export class NoteDisplayModePanel extends WithDisposable(LitElement) {
   }
 
   override render() {
-    const displayModes = Object.keys(NoteDisplayMode);
-
     this.style.setProperty('--panel-width', `${this.panelWidth}px`);
-    return html`${repeat(
-      displayModes,
+
+    return repeat(
+      Object.keys(NoteDisplayMode),
       mode => mode,
       mode => {
         const displayMode =
@@ -99,10 +77,7 @@ export class NoteDisplayModePanel extends WithDisposable(LitElement) {
         const isSelected = displayMode === this.displayMode;
         return html`<div
           class="item ${isSelected ? 'selected' : ''} ${displayMode}"
-          @click=${(e: MouseEvent) => {
-            e.stopPropagation();
-            this.onSelect(displayMode);
-          }}
+          @click=${() => this.onSelect(displayMode)}
           @dblclick=${stopPropagation}
           @pointerdown=${stopPropagation}
         >
@@ -110,8 +85,17 @@ export class NoteDisplayModePanel extends WithDisposable(LitElement) {
           <div class="item-icon">${this._DisplayModeIcon(displayMode)}</div>
         </div>`;
       }
-    )}`;
+    );
   }
+
+  @property({ attribute: false })
+  accessor displayMode!: NoteDisplayMode;
+
+  @property({ attribute: false })
+  accessor onSelect!: (displayMode: NoteDisplayMode) => void;
+
+  @property({ attribute: false })
+  accessor panelWidth = 240;
 }
 
 declare global {

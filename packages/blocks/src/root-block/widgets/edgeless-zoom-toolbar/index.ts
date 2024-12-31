@@ -1,18 +1,16 @@
-import './zoom-toolbar.js';
-import './zoom-bar-toggle-button.js';
+import type { RootBlockModel } from '@blocksuite/affine-model';
 
-import { WidgetElement } from '@blocksuite/block-std';
+import { WidgetComponent } from '@blocksuite/block-std';
+import { effect } from '@preact/signals-core';
 import { css, html, nothing } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { state } from 'lit/decorators.js';
 
 import type { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
-import type { RootBlockModel } from '../../root-model.js';
 
 export const AFFINE_EDGELESS_ZOOM_TOOLBAR_WIDGET =
   'affine-edgeless-zoom-toolbar-widget';
 
-@customElement(AFFINE_EDGELESS_ZOOM_TOOLBAR_WIDGET)
-export class AffineEdgelessZoomToolbarWidget extends WidgetElement<
+export class AffineEdgelessZoomToolbarWidget extends WidgetComponent<
   RootBlockModel,
   EdgelessRootBlockComponent
 > {
@@ -24,6 +22,7 @@ export class AffineEdgelessZoomToolbarWidget extends WidgetElement<
       z-index: var(--affine-z-index-popover);
       display: flex;
       justify-content: center;
+      -webkit-user-select: none;
       user-select: none;
     }
 
@@ -33,18 +32,30 @@ export class AffineEdgelessZoomToolbarWidget extends WidgetElement<
       }
     }
 
-    @container viewport (width >= 1200px) {
+    @container viewport (width > 1200px) {
       zoom-bar-toggle-button {
         display: none;
       }
     }
   `;
 
-  @state()
-  private _hide = false;
-
   get edgeless() {
-    return this.blockElement;
+    return this.block;
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+
+    this.disposables.add(
+      effect(() => {
+        const currentTool = this.edgeless.gfx.tool.currentToolName$.value;
+
+        if (currentTool !== 'frameNavigator') {
+          this._hide = false;
+        }
+        this.requestUpdate();
+      })
+    );
   }
 
   override firstUpdated() {
@@ -52,14 +63,7 @@ export class AffineEdgelessZoomToolbarWidget extends WidgetElement<
       disposables,
       edgeless: { slots },
     } = this;
-    disposables.add(
-      slots.edgelessToolUpdated.on(tool => {
-        if (tool.type !== 'frameNavigator') {
-          this._hide = false;
-        }
-        this.requestUpdate();
-      })
-    );
+
     disposables.add(
       slots.navigatorSettingUpdated.on(({ hideToolbar }) => {
         if (hideToolbar !== undefined) {
@@ -81,6 +85,9 @@ export class AffineEdgelessZoomToolbarWidget extends WidgetElement<
       ></zoom-bar-toggle-button>
     `;
   }
+
+  @state()
+  private accessor _hide = false;
 }
 
 declare global {

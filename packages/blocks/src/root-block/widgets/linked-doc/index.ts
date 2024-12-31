@@ -1,128 +1,50 @@
-import type { EditorHost, UIEventStateContext } from '@blocksuite/block-std';
-import { WidgetElement } from '@blocksuite/block-std';
-import {
-  assertExists,
-  DisposableGroup,
-  throttle,
-} from '@blocksuite/global/utils';
-import { InlineEditor } from '@blocksuite/inline';
-import { customElement } from 'lit/decorators.js';
+import type { AffineInlineEditor } from '@blocksuite/affine-components/rich-text';
+import type { RootBlockModel } from '@blocksuite/affine-model';
+import type { SelectionRect } from '@blocksuite/affine-shared/commands';
+import type { UIEventStateContext } from '@blocksuite/block-std';
+import type { Disposable } from '@blocksuite/global/utils';
 
-import type { AffineInlineEditor } from '../../../_common/inline/presets/affine-inline-specs.js';
-import { isControlledKeyboardEvent } from '../../../_common/utils/event.js';
-import { matchFlavours } from '../../../_common/utils/index.js';
+import { getInlineEditorByModel } from '@blocksuite/affine-components/rich-text';
 import {
-  getInlineEditorByModel,
   getViewportElement,
-} from '../../../_common/utils/query.js';
-import { getCurrentNativeRange } from '../../../_common/utils/selection.js';
-import { getPopperPosition } from '../../../root-block/utils/position.js';
-import { getMenus, type LinkedDocOptions } from './config.js';
-import { LinkedDocPopover } from './linked-doc-popover.js';
+  matchFlavours,
+} from '@blocksuite/affine-shared/utils';
+import { WidgetComponent } from '@blocksuite/block-std';
+import { IS_MOBILE } from '@blocksuite/global/env';
+import { InlineEditor, type InlineRange } from '@blocksuite/inline';
+import { signal } from '@preact/signals-core';
+import { html, nothing } from 'lit';
+import { state } from 'lit/decorators.js';
+import { choose } from 'lit/directives/choose.js';
+import { repeat } from 'lit/directives/repeat.js';
+import { styleMap } from 'lit/directives/style-map.js';
 
-export function showLinkedDocPopover({
-  editorHost,
-  inlineEditor,
-  range,
-  container = document.body,
-  abortController = new AbortController(),
-  options,
-  triggerKey,
-}: {
-  editorHost: EditorHost;
-  inlineEditor: AffineInlineEditor;
-  range: Range;
-  container?: HTMLElement;
-  abortController?: AbortController;
-  options: LinkedDocOptions;
-  triggerKey: string;
-}) {
-  const disposables = new DisposableGroup();
-  abortController.signal.addEventListener('abort', () => disposables.dispose());
+import type { PageRootBlockComponent } from '../../index.js';
 
-  const linkedDoc = new LinkedDocPopover(
-    editorHost,
-    inlineEditor,
-    abortController
-  );
-  linkedDoc.options = options;
-  linkedDoc.triggerKey = triggerKey;
-  // Mount
-  container.append(linkedDoc);
-  disposables.add(() => linkedDoc.remove());
-
-  // Handle position
-  const updatePosition = throttle(() => {
-    const linkedDocElement = linkedDoc.linkedDocElement;
-    assertExists(
-      linkedDocElement,
-      'You should render the linked doc node even if no position'
-    );
-    const position = getPopperPosition(linkedDocElement, range);
-    linkedDoc.updatePosition(position);
-  }, 10);
-  disposables.addFromEvent(window, 'resize', updatePosition);
-  const scrollContainer = getViewportElement(editorHost);
-  if (scrollContainer) {
-    // Note: in edgeless mode, the scroll container is not exist!
-    disposables.addFromEvent(scrollContainer, 'scroll', updatePosition, {
-      passive: true,
-    });
-  }
-
-  // Wait for node to be mounted
-  setTimeout(updatePosition);
-
-  disposables.addFromEvent(window, 'mousedown', (e: Event) => {
-    if (e.target === linkedDoc) return;
-    abortController.abort();
-  });
-
-  return linkedDoc;
-}
+import {
+  getMenus,
+  type LinkedDocContext,
+  type LinkedWidgetConfig,
+} from './config.js';
+import { linkedDocWidgetStyles } from './styles.js';
+export { type LinkedWidgetConfig } from './config.js';
 
 export const AFFINE_LINKED_DOC_WIDGET = 'affine-linked-doc-widget';
 
-@customElement(AFFINE_LINKED_DOC_WIDGET)
-export class AffineLinkedDocWidget extends WidgetElement {
-  static DEFAULT_OPTIONS: LinkedDocOptions = {
-    /**
-     * The first item of the trigger keys will be the primary key
-     */
-    triggerKeys: ['@', '[[', '【【'],
-    ignoreBlockTypes: ['affine:code'],
-    /**
-     * Convert trigger key to primary key (the first item of the trigger keys)
-     */
-    convertTriggerKey: true,
-    getMenus,
-  };
+export class AffineLinkedDocWidget extends WidgetComponent<
+  RootBlockModel,
+  PageRootBlockComponent
+> {
+  static override styles = linkedDocWidgetStyles;
 
-  options = AffineLinkedDocWidget.DEFAULT_OPTIONS;
+  private _disposeObserveInputRects: Disposable | null = null;
 
-  override connectedCallback() {
-    super.connectedCallback();
-    this.handleEvent('keyDown', this._onKeyDown);
-  }
-
-  public showLinkedDoc = (
-    inlineEditor: AffineInlineEditor,
-    triggerKey: string
+  private readonly _getInlineEditor = (
+    evt?: KeyboardEvent | CompositionEvent
   ) => {
-    const curRange = getCurrentNativeRange();
-    showLinkedDocPopover({
-      editorHost: this.host,
-      inlineEditor,
-      range: curRange,
-      options: this.options,
-      triggerKey,
-    });
-  };
-
-  private getInlineEditor = (evt: KeyboardEvent) => {
-    if (evt.target instanceof HTMLElement) {
+    if (evt && evt.target instanceof HTMLElement) {
       const editor = (
-        evt.target.closest('.inline-editor') as {
+        evt.target.closest('.can-link-doc > .inline-editor') as {
           inlineEditor?: AffineInlineEditor;
         }
       )?.inlineEditor;
@@ -130,28 +52,97 @@ export class AffineLinkedDocWidget extends WidgetElement {
         return editor;
       }
     }
+
     const text = this.host.selection.value.find(selection =>
       selection.is('text')
     );
-    if (!text) {
-      return;
-    }
+    if (!text) return null;
+
     const model = this.host.doc.getBlockById(text.blockId);
-    if (!model) {
-      return;
+    if (!model) return null;
+
+    if (matchFlavours(model, this.config.ignoreBlockTypes)) {
+      return null;
     }
-    if (matchFlavours(model, this.options.ignoreBlockTypes)) return;
+
     return getInlineEditorByModel(this.host, model);
   };
 
-  private _onKeyDown = (ctx: UIEventStateContext) => {
+  private _inlineEditor: AffineInlineEditor | null = null;
+
+  private _observeInputRects = () => {
+    if (!this._inlineEditor) return;
+
+    const updateInputRects = () => {
+      const blockId =
+        this.std.command.exec('getSelectedModels').selectedModels?.[0]?.id;
+      if (!blockId) return;
+
+      if (!this._startRange) return;
+      const index = this._startRange.index - this._triggerKey.length;
+      if (index < 0) return;
+
+      const currentRange = this._inlineEditor?.getInlineRange();
+      if (!currentRange) return;
+      const length = currentRange.index + currentRange.length - index;
+
+      const textSelection = this.std.selection.create('text', {
+        from: { blockId, index, length },
+        to: null,
+      });
+
+      const { selectionRects } = this.std.command.exec('getSelectionRects', {
+        textSelection,
+      });
+
+      if (!selectionRects) return;
+
+      this._inputRects = selectionRects;
+    };
+
+    updateInputRects();
+    this._disposeObserveInputRects =
+      this._inlineEditor.slots.renderComplete.on(updateInputRects);
+  };
+
+  private readonly _onCompositionEnd = (ctx: UIEventStateContext) => {
+    const event = ctx.get('defaultState').event as CompositionEvent;
+
+    const key = event.data;
+
+    if (
+      !key ||
+      !this.config.triggerKeys.some(triggerKey => triggerKey.includes(key))
+    )
+      return;
+
+    this._inlineEditor = this._getInlineEditor(event);
+    if (!this._inlineEditor) return;
+
+    this._handleInput(true);
+  };
+
+  private readonly _onKeyDown = (ctx: UIEventStateContext) => {
     const eventState = ctx.get('keyboardState');
     const event = eventState.raw;
-    if (isControlledKeyboardEvent(event) || event.key.length !== 1) return;
-    const inlineEditor = this.getInlineEditor(event);
-    if (!inlineEditor) return;
-    const inlineRange = inlineEditor.getInlineRange();
+
+    const key = event.key;
+    if (
+      key === undefined || // in mac os, the key may be undefined
+      key === 'Process' ||
+      event.isComposing
+    )
+      return;
+
+    if (!this.config.triggerKeys.some(triggerKey => triggerKey.includes(key)))
+      return;
+
+    this._inlineEditor = this._getInlineEditor(event);
+    if (!this._inlineEditor) return;
+
+    const inlineRange = this._inlineEditor.getInlineRange();
     if (!inlineRange) return;
+
     if (inlineRange.length > 0) {
       // When select text and press `[[` should not trigger transform,
       // since it will break the bracket complete.
@@ -159,25 +150,118 @@ export class AffineLinkedDocWidget extends WidgetElement {
       return;
     }
 
-    const [leafStart, offsetStart] = inlineEditor.getTextPoint(
-      inlineRange.index
-    );
-    const prefixText = leafStart.textContent
-      ? leafStart.textContent.slice(0, offsetStart)
-      : '';
+    this._handleInput(false);
+  };
 
-    const matchedKey = this.options.triggerKeys.find(triggerKey =>
-      (prefixText + event.key).endsWith(triggerKey)
-    );
-    if (!matchedKey) return;
+  private readonly _renderLinkedDocMenu = () => {
+    if (!this.block.rootComponent) return nothing;
 
-    const primaryTriggerKey = this.options.triggerKeys[0];
-    inlineEditor.slots.inlineRangeApply.once(() => {
-      if (this.options.convertTriggerKey && primaryTriggerKey !== matchedKey) {
+    return html`<affine-mobile-linked-doc-menu
+      .context=${this._context}
+      .rootComponent=${this.block.rootComponent}
+    ></affine-mobile-linked-doc-menu>`;
+  };
+
+  private readonly _renderLinkedDocPopover = () => {
+    return html`<affine-linked-doc-popover
+      .context=${this._context}
+    ></affine-linked-doc-popover>`;
+  };
+
+  private readonly _show$ = signal<'desktop' | 'mobile' | 'none'>('none');
+
+  private _startRange: InlineRange | null = null;
+
+  close = () => {
+    this._disposeObserveInputRects?.dispose();
+    this._disposeObserveInputRects = null;
+    this._inlineEditor = null;
+    this._triggerKey = '';
+    this._show$.value = 'none';
+    this._startRange = null;
+  };
+
+  show = (mode: 'desktop' | 'mobile' = 'desktop') => {
+    if (this._inlineEditor === null) {
+      this._inlineEditor = this._getInlineEditor();
+    }
+    if (this._triggerKey === '') {
+      this._triggerKey = this.config.triggerKeys[0];
+    }
+
+    this._startRange = this._inlineEditor?.getInlineRange() ?? null;
+
+    const enableMobile = this.doc.awarenessStore.getFlag(
+      'enable_mobile_linked_doc_menu'
+    );
+
+    this._observeInputRects();
+
+    this._show$.value = enableMobile ? mode : 'desktop';
+  };
+
+  private get _context(): LinkedDocContext {
+    return {
+      std: this.std,
+      inlineEditor: this._inlineEditor!,
+      startRange: this._startRange!,
+      triggerKey: this._triggerKey,
+      config: this.config,
+      close: this.close,
+    };
+  }
+
+  get config(): LinkedWidgetConfig {
+    return {
+      triggerKeys: ['@', '[[', '【【'],
+      ignoreBlockTypes: ['affine:code'],
+      convertTriggerKey: true,
+      getMenus,
+      mobile: {
+        useScreenHeight: false,
+        scrollContainer: getViewportElement(this.std.host) ?? window,
+        scrollTopOffset: 46,
+      },
+      ...this.std.getConfig('affine:page')?.linkedWidget,
+    };
+  }
+
+  private _handleInput(isCompositionEnd: boolean) {
+    const primaryTriggerKey = this.config.triggerKeys[0];
+
+    const inlineEditor = this._inlineEditor;
+    if (!inlineEditor) return;
+
+    const inlineRangeApplyCallback = (callback: () => void) => {
+      // the inline ranged updated in compositionEnd event before this event callback
+      if (isCompositionEnd) callback();
+      else inlineEditor.slots.inlineRangeSync.once(callback);
+    };
+
+    inlineRangeApplyCallback(() => {
+      const inlineRange = inlineEditor.getInlineRange();
+      if (!inlineRange) return;
+      const textPoint = inlineEditor.getTextPoint(inlineRange.index);
+      if (!textPoint) return;
+      const [leafStart, offsetStart] = textPoint;
+
+      const text = leafStart.textContent
+        ? leafStart.textContent.slice(0, offsetStart)
+        : '';
+
+      const matchedKey = this.config.triggerKeys.find(triggerKey =>
+        text.endsWith(triggerKey)
+      );
+      if (!matchedKey) return;
+
+      if (this.config.convertTriggerKey && primaryTriggerKey !== matchedKey) {
+        const inlineRange = inlineEditor.getInlineRange();
+        if (!inlineRange) return;
+
         // Convert to the primary trigger key
         // e.g. [[ -> @
-        const startIdxBeforeMatchKey =
-          inlineRange.index - (matchedKey.length - 1);
+        this._triggerKey = primaryTriggerKey;
+        const startIdxBeforeMatchKey = inlineRange.index - matchedKey.length;
         inlineEditor.deleteText({
           index: startIdxBeforeMatchKey,
           length: matchedKey.length,
@@ -190,14 +274,64 @@ export class AffineLinkedDocWidget extends WidgetElement {
           index: startIdxBeforeMatchKey + primaryTriggerKey.length,
           length: 0,
         });
-        inlineEditor.slots.inlineRangeApply.once(() => {
-          this.showLinkedDoc(inlineEditor, primaryTriggerKey);
+        inlineEditor.slots.inlineRangeSync.once(() => {
+          this.show(IS_MOBILE ? 'mobile' : 'desktop');
         });
         return;
+      } else {
+        this._triggerKey = matchedKey;
+        this.show(IS_MOBILE ? 'mobile' : 'desktop');
       }
-      this.showLinkedDoc(inlineEditor, matchedKey);
     });
-  };
+  }
+
+  private _renderInputMask() {
+    return html`${repeat(
+      this._inputRects,
+      ({ top, left, width, height }, index) => {
+        const last = index === this._inputRects.length - 1;
+        const padding = 2;
+        return html`<div
+          class="input-mask"
+          style=${styleMap({
+            top: `${top - padding}px`,
+            left: `${left}px`,
+            width: `${width + (last ? 10 : 0)}px`,
+            height: `${height + 2 * padding}px`,
+          })}
+        ></div>`;
+      }
+    )}`;
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.handleEvent('keyDown', this._onKeyDown);
+    this.handleEvent('compositionEnd', this._onCompositionEnd);
+  }
+
+  override render() {
+    if (this._show$.value === 'none') return nothing;
+
+    return html`${this._renderInputMask()}
+      <blocksuite-portal
+        .shadowDom=${false}
+        .template=${choose(
+          this._show$.value,
+          [
+            ['desktop', this._renderLinkedDocPopover],
+            ['mobile', this._renderLinkedDocMenu],
+          ],
+          () => html`${nothing}`
+        )}
+      ></blocksuite-portal>`;
+  }
+
+  @state()
+  private accessor _inputRects: SelectionRect[] = [];
+
+  @state()
+  private accessor _triggerKey = '';
 }
 
 declare global {

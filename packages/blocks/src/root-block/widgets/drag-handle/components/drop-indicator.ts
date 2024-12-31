@@ -1,10 +1,9 @@
+import type { Rect } from '@blocksuite/global/utils';
+
 import { css, html, LitElement } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-import { type Rect } from '../../../../_common/utils/index.js';
-
-@customElement('affine-drop-indicator')
 export class DropIndicator extends LitElement {
   static override styles = css`
     .affine-drop-indicator {
@@ -22,9 +21,6 @@ export class DropIndicator extends LitElement {
     }
   `;
 
-  @property({ attribute: false })
-  rect: Rect | null = null;
-
   override render() {
     if (!this.rect) {
       return null;
@@ -38,6 +34,9 @@ export class DropIndicator extends LitElement {
     });
     return html`<div class="affine-drop-indicator" style=${style}></div>`;
   }
+
+  @property({ attribute: false })
+  accessor rect: Rect | null = null;
 }
 
 declare global {

@@ -1,28 +1,28 @@
-import '../../buttons/toolbar-button.js';
-import './connector-menu.js';
-
-import { css, html } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
-import { styleMap } from 'lit/directives/style-map.js';
-
 import {
   ArrowUpIcon,
-  ConnectorIcon,
-} from '../../../../../_common/icons/index.js';
-import { LineWidth } from '../../../../../_common/utils/index.js';
-import { ConnectorMode } from '../../../../../surface-block/index.js';
-import { DEFAULT_CONNECTOR_COLOR } from '../../panel/color-panel.js';
-import { getTooltipWithShortcut } from '../../utils.js';
-import { createPopper } from '../common/create-popper.js';
-import { EdgelessToolButton } from '../edgeless-toolbar-button.js';
-import type { EdgelessConnectorMenu } from './connector-menu.js';
+  ConnectorCWithArrowIcon,
+  ConnectorLWithArrowIcon,
+  ConnectorXWithArrowIcon,
+} from '@blocksuite/affine-components/icons';
+import { ConnectorMode, getConnectorModeName } from '@blocksuite/affine-model';
+import { EditPropsStore } from '@blocksuite/affine-shared/services';
+import { SignalWatcher } from '@blocksuite/global/utils';
+import { computed } from '@preact/signals-core';
+import { css, html, LitElement } from 'lit';
+import { styleMap } from 'lit/directives/style-map.js';
 
-@customElement('edgeless-connector-tool-button')
-export class EdgelessConnectorToolButton extends EdgelessToolButton<
-  EdgelessConnectorMenu,
-  'connector',
-  readonly ['mode', 'stroke', 'strokeWidth']
-> {
+import { getTooltipWithShortcut } from '../../utils.js';
+import { QuickToolMixin } from '../mixins/quick-tool.mixin.js';
+
+const IcomMap = {
+  [ConnectorMode.Straight]: ConnectorLWithArrowIcon,
+  [ConnectorMode.Orthogonal]: ConnectorXWithArrowIcon,
+  [ConnectorMode.Curve]: ConnectorCWithArrowIcon,
+};
+
+export class EdgelessConnectorToolButton extends QuickToolMixin(
+  SignalWatcher(LitElement)
+) {
   static override styles = css`
     :host {
       display: flex;
@@ -39,71 +39,48 @@ export class EdgelessConnectorToolButton extends EdgelessToolButton<
     }
   `;
 
-  @state()
-  mode: ConnectorMode = ConnectorMode.Curve;
+  private _mode$ = computed(() => {
+    return this.edgeless.std.get(EditPropsStore).lastProps$.value.connector
+      .mode;
+  });
 
-  @state()
-  stroke = DEFAULT_CONNECTOR_COLOR;
-
-  @state()
-  strokeWidth = LineWidth.Two;
-
-  protected override _type = 'connector' as const;
-  protected override readonly _states = [
-    'mode',
-    'stroke',
-    'strokeWidth',
-  ] as const;
+  override type = 'connector' as const;
 
   private _toggleMenu() {
-    if (this._menu) {
-      this._disposeMenu();
-      this.requestUpdate();
-    } else {
-      this._menu = createPopper('edgeless-connector-menu', this, {
-        x: 50,
-        y: -40,
+    if (this.tryDisposePopper()) return;
+
+    const menu = this.createPopper('edgeless-connector-menu', this);
+    menu.element.edgeless = this.edgeless;
+    menu.element.onChange = (props: Record<string, unknown>) => {
+      this.edgeless.std.get(EditPropsStore).recordLastProps('connector', props);
+      this.setEdgelessTool(this.type, {
+        mode: this._mode$.value,
       });
-
-      this._menu.element.edgeless = this.edgeless;
-      this.updateMenu();
-      this._menu.element.onChange = (props: Record<string, unknown>) => {
-        this.edgeless.service.editSession.record(this._type, props);
-      };
-    }
-  }
-
-  override updated(changedProperties: Map<string, unknown>) {
-    if (this._states.some(key => changedProperties.has(key))) {
-      if (this._menu) {
-        this.updateMenu();
-        this.edgeless.tools.setEdgelessTool({
-          type: this._type,
-          mode: this.mode,
-        });
-      }
-    }
+    };
   }
 
   override render() {
     const { active } = this;
-    const arrowColor = active ? 'currentColor' : '#77757D';
+    const mode = this._mode$.value;
+    const arrowColor = active ? 'currentColor' : 'var(--affine-icon-secondary)';
     return html`
       <edgeless-tool-icon-button
-        .tooltip=${this._menu ? '' : getTooltipWithShortcut('Straight ', 'C')}
+        .tooltip=${this.popper
+          ? ''
+          : getTooltipWithShortcut(getConnectorModeName(mode), 'C')}
         .tooltipOffset=${17}
         .active=${active}
-        .iconContainerPadding=${8}
+        .iconContainerPadding=${6}
         class="edgeless-connector-button"
         @click=${() => {
-          this.edgeless.tools.setEdgelessTool({
-            type: 'connector',
-            mode: this.mode,
-          });
+          // don't update tool before toggling menu
           this._toggleMenu();
+          this.edgeless.gfx.tool.setTool('connector', {
+            mode,
+          });
         }}
       >
-        ${ConnectorIcon}
+        ${IcomMap[mode]}
         <span class="arrow-up-icon" style=${styleMap({ color: arrowColor })}>
           ${ArrowUpIcon}
         </span>

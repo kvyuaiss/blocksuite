@@ -1,19 +1,21 @@
+import type { Doc } from '@blocksuite/store';
+
 import {
+  BlockStdScope,
   EditorHost,
   ShadowlessElement,
-  WithDisposable,
 } from '@blocksuite/block-std';
-import { PageEditorBlockSpecs } from '@blocksuite/blocks';
-import { noop } from '@blocksuite/global/utils';
-import type { Doc } from '@blocksuite/store';
+import { PageEditorBlockSpecs, ThemeProvider } from '@blocksuite/blocks';
+import { noop, SignalWatcher, WithDisposable } from '@blocksuite/global/utils';
 import { css, html, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
-import { createRef, type Ref, ref } from 'lit/directives/ref.js';
+import { property, state } from 'lit/decorators.js';
+import { guard } from 'lit/directives/guard.js';
 
 noop(EditorHost);
 
-@customElement('page-editor')
-export class PageEditor extends WithDisposable(ShadowlessElement) {
+export class PageEditor extends SignalWatcher(
+  WithDisposable(ShadowlessElement)
+) {
   static override styles = css`
     page-editor {
       font-family: var(--affine-font-family);
@@ -45,19 +47,12 @@ export class PageEditor extends WithDisposable(ShadowlessElement) {
     }
   `;
 
-  @property({ attribute: false })
-  doc!: Doc;
-
-  @property({ attribute: false })
-  specs = PageEditorBlockSpecs;
-
-  @property({ type: Boolean })
-  hasViewport = true;
-
-  private _host: Ref<EditorHost> = createRef<EditorHost>();
-
   get host() {
-    return this._host.value as EditorHost;
+    try {
+      return this.std.host;
+    } catch {
+      return null;
+    }
   }
 
   override connectedCallback() {
@@ -65,31 +60,58 @@ export class PageEditor extends WithDisposable(ShadowlessElement) {
     this._disposables.add(
       this.doc.slots.rootAdded.on(() => this.requestUpdate())
     );
+    this.std = new BlockStdScope({
+      doc: this.doc,
+      extensions: this.specs,
+    });
   }
 
   override async getUpdateComplete(): Promise<boolean> {
     const result = await super.getUpdateComplete();
-    await this.host.updateComplete;
+    await this.host?.updateComplete;
     return result;
   }
 
   override render() {
     if (!this.doc.root) return nothing;
 
+    const std = this.std;
+    const theme = std.get(ThemeProvider).app$.value;
     return html`
       <div
+        data-theme=${theme}
         class=${this.hasViewport
           ? 'affine-page-viewport'
           : 'page-editor-container'}
       >
-        <editor-host
-          ${ref(this._host)}
-          .doc=${this.doc}
-          .specs=${this.specs}
-        ></editor-host>
+        ${guard([std], () => std.render())}
       </div>
     `;
   }
+
+  override willUpdate(
+    changedProperties: Map<string | number | symbol, unknown>
+  ) {
+    super.willUpdate(changedProperties);
+    if (changedProperties.has('doc')) {
+      this.std = new BlockStdScope({
+        doc: this.doc,
+        extensions: this.specs,
+      });
+    }
+  }
+
+  @property({ attribute: false })
+  accessor doc!: Doc;
+
+  @property({ type: Boolean })
+  accessor hasViewport = true;
+
+  @property({ attribute: false })
+  accessor specs = PageEditorBlockSpecs;
+
+  @state()
+  accessor std!: BlockStdScope;
 }
 
 declare global {

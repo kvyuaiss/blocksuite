@@ -1,32 +1,24 @@
-import { PathFinder } from '../utils/index.js';
+import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
 
 type SelectionConstructor<T = unknown> = {
-  new (...args: unknown[]): T;
   type: string;
   group: string;
+  new (...args: unknown[]): T;
 };
 
 export type BaseSelectionOptions = {
-  path: string[];
+  blockId: string;
 };
 
 export abstract class BaseSelection {
-  static readonly type: string;
   static readonly group: string;
-  readonly path: string[];
 
-  constructor({ path }: BaseSelectionOptions) {
-    this.path = path;
-  }
+  static readonly type: string;
 
-  get blockId(): string {
-    return PathFinder.id(this.path);
-  }
+  readonly blockId: string;
 
-  is<T extends BlockSuite.SelectionType>(
-    type: T
-  ): this is BlockSuite.SelectionInstance[T] {
-    return this.type === type;
+  get group(): string {
+    return (this.constructor as SelectionConstructor).group;
   }
 
   get type(): BlockSuite.SelectionType {
@@ -34,15 +26,24 @@ export abstract class BaseSelection {
       .type as BlockSuite.SelectionType;
   }
 
-  get group(): string {
-    return (this.constructor as SelectionConstructor).group;
+  constructor({ blockId }: BaseSelectionOptions) {
+    this.blockId = blockId;
+  }
+
+  static fromJSON(_: Record<string, unknown>): BaseSelection {
+    throw new BlockSuiteError(
+      ErrorCode.SelectionError,
+      'You must override this method'
+    );
   }
 
   abstract equals(other: BaseSelection): boolean;
 
-  abstract toJSON(): Record<string, unknown>;
-
-  static fromJSON(_: Record<string, unknown>): BaseSelection {
-    throw new Error('You must override this method');
+  is<T extends BlockSuite.SelectionType>(
+    type: T
+  ): this is BlockSuite.SelectionInstance[T] {
+    return this.type === type;
   }
+
+  abstract toJSON(): Record<string, unknown>;
 }

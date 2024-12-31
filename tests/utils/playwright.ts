@@ -1,9 +1,8 @@
+import { test as baseTest, expect, type Page } from '@playwright/test';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-
-import { expect, type Page, test as baseTest } from '@playwright/test';
 
 import {
   enterPlaygroundRoom,
@@ -23,7 +22,7 @@ const enableCoverage = !!process.env.CI || !!process.env.COVERAGE;
 export const scoped = (stringsArray: TemplateStringsArray) => {
   return `${scope ?? ''}${stringsArray.join()}`;
 };
-export const test = baseTest.extend({
+export const test = baseTest.extend<{}>({
   context: async ({ context }, use) => {
     if (enableCoverage) {
       await context.addInitScript(() =>

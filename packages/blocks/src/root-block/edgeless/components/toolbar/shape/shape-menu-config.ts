@@ -11,14 +11,13 @@ import {
   ScribbledTriangleIcon,
   SquareIcon,
   TriangleIcon,
-} from '../../../../../_common/icons/index.js';
-import type { ShapeTool } from '../../../../../_common/utils/index.js';
-import { ShapeType } from '../../../../../surface-block/index.js';
+} from '@blocksuite/affine-components/icons';
+import { ShapeType } from '@blocksuite/affine-model';
 
-const { Rect, Ellipse, Triangle, Diamond } = ShapeType;
+import type { ShapeToolOption } from '../../../gfx-tool/shape-tool.js';
 
 type Config = {
-  name: ShapeTool['shapeType'];
+  name: ShapeToolOption['shapeName'];
   generalIcon: TemplateResult<1>;
   scribbledIcon: TemplateResult<1>;
   tooltip: string;
@@ -27,28 +26,28 @@ type Config = {
 
 export const ShapeComponentConfig: Config[] = [
   {
-    name: Rect,
+    name: ShapeType.Rect,
     generalIcon: SquareIcon,
     scribbledIcon: ScribbledSquareIcon,
     tooltip: 'Square',
     disabled: false,
   },
   {
-    name: Ellipse,
+    name: ShapeType.Ellipse,
     generalIcon: EllipseIcon,
     scribbledIcon: ScribbledEllipseIcon,
     tooltip: 'Ellipse',
     disabled: false,
   },
   {
-    name: Diamond,
+    name: ShapeType.Diamond,
     generalIcon: DiamondIcon,
     scribbledIcon: ScribbledDiamondIcon,
     tooltip: 'Diamond',
     disabled: false,
   },
   {
-    name: Triangle,
+    name: ShapeType.Triangle,
     generalIcon: TriangleIcon,
     scribbledIcon: ScribbledTriangleIcon,
     tooltip: 'Triangle',
@@ -61,7 +60,7 @@ export const ShapeComponentConfig: Config[] = [
     tooltip: 'Rounded rectangle',
     disabled: false,
   },
-] as const;
+];
 
 export const ShapeComponentConfigMap = ShapeComponentConfig.reduce(
   (acc, config) => {
@@ -71,6 +70,5 @@ export const ShapeComponentConfigMap = ShapeComponentConfig.reduce(
   {} as Record<Config['name'], Config>
 );
 
-export const SHAPE_SUBMENU_WIDTH = 464;
 export const SHAPE_COLOR_PREFIX = '--affine-palette-shape-';
 export const LINE_COLOR_PREFIX = '--affine-palette-line-';

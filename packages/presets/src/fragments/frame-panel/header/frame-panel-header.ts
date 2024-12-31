@@ -1,11 +1,13 @@
-import './frames-setting-menu.js';
-
 import type { EditorHost } from '@blocksuite/block-std';
-import { WithDisposable } from '@blocksuite/block-std';
-import type { EdgelessRootBlockComponent } from '@blocksuite/blocks';
-import { type NavigatorMode } from '@blocksuite/blocks';
-import { createButtonPopper } from '@blocksuite/blocks';
-import { DisposableGroup } from '@blocksuite/global/utils';
+
+import {
+  createButtonPopper,
+  DocModeProvider,
+  EdgelessRootService,
+  EditPropsStore,
+  type NavigatorMode,
+} from '@blocksuite/blocks';
+import { DisposableGroup, WithDisposable } from '@blocksuite/global/utils';
 import { css, html, LitElement, type PropertyValues } from 'lit';
 import { property, query, state } from 'lit/decorators.js';
 
@@ -99,79 +101,73 @@ const styles = css`
   }
 `;
 
+export const AFFINE_FRAME_PANEL_HEADER = 'affine-frame-panel-header';
+
 export class FramePanelHeader extends WithDisposable(LitElement) {
   static override styles = styles;
-
-  @property({ attribute: false })
-  editorHost!: EditorHost;
-
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent | null;
-
-  @state()
-  private _settingPopperShow = false;
-
-  @query('.all-frames-setting-button')
-  private _frameSettingButton!: HTMLDivElement;
-
-  @query('.frames-setting-container')
-  private _frameSettingMenu!: HTMLDivElement;
-
-  private _framesSettingMenuPopper: ReturnType<
-    typeof createButtonPopper
-  > | null = null;
-
-  private _navigatorMode: NavigatorMode = 'fit';
-  private _edgelessDisposables: DisposableGroup | null = null;
-
-  get rootService() {
-    return this.editorHost.spec.getService('affine:page');
-  }
-
-  private _enterPresentationMode = () => {
-    if (!this.edgeless)
-      this.rootService.slots.editorModeSwitch.emit('edgeless');
-
-    setTimeout(() => {
-      this.edgeless?.updateComplete
-        .then(() => {
-          this.edgeless?.tools.setEdgelessTool({
-            type: 'frameNavigator',
-            mode: this._navigatorMode,
-          });
-        })
-        .catch(console.error);
-    }, 100);
-  };
-
-  private _tryLoadNavigatorStateLocalRecord() {
-    this._navigatorMode = this.editorHost.spec
-      .getService('affine:page')
-      .editSession.getItem('presentFillScreen')
-      ? 'fill'
-      : 'fit';
-  }
 
   private _clearEdgelessDisposables = () => {
     this._edgelessDisposables?.dispose();
     this._edgelessDisposables = null;
   };
 
+  private _edgelessDisposables: DisposableGroup | null = null;
+
+  private _enterPresentationMode = () => {
+    if (!this._edgelessRootService) {
+      this.editorHost.std.get(DocModeProvider).setEditorMode('edgeless');
+    }
+
+    setTimeout(() => {
+      this._edgelessRootService?.gfx.tool.setTool({
+        type: 'frameNavigator',
+        mode: this._navigatorMode,
+      });
+    }, 100);
+  };
+
+  private _framesSettingMenuPopper: ReturnType<
+    typeof createButtonPopper
+  > | null = null;
+
+  private _navigatorMode: NavigatorMode = 'fit';
+
   private _setEdgelessDisposables = () => {
-    if (!this.edgeless) return;
+    if (!this._edgelessRootService) return;
 
     this._clearEdgelessDisposables();
     this._edgelessDisposables = new DisposableGroup();
     this._edgelessDisposables.add(
-      this.edgeless.slots.navigatorSettingUpdated.on(({ fillScreen }) => {
-        this._navigatorMode = fillScreen ? 'fill' : 'fit';
-      })
+      this._edgelessRootService.slots.navigatorSettingUpdated.on(
+        ({ fillScreen }) => {
+          this._navigatorMode = fillScreen ? 'fill' : 'fit';
+        }
+      )
     );
   };
+
+  private get _edgelessRootService() {
+    return this.editorHost.std.getOptional(EdgelessRootService);
+  }
+
+  private _tryLoadNavigatorStateLocalRecord() {
+    this._navigatorMode = this.editorHost.std
+      .get(EditPropsStore)
+      .getStorage('presentFillScreen')
+      ? 'fill'
+      : 'fit';
+  }
 
   override connectedCallback() {
     super.connectedCallback();
     this._tryLoadNavigatorStateLocalRecord();
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._edgelessDisposables) {
+      this._clearEdgelessDisposables();
+    }
   }
 
   override firstUpdated() {
@@ -183,27 +179,12 @@ export class FramePanelHeader extends WithDisposable(LitElement) {
       ({ display }) => {
         this._settingPopperShow = display === 'show';
       },
-      14,
-      -100
+      {
+        mainAxis: 14,
+        crossAxis: -100,
+      }
     );
     disposables.add(this._framesSettingMenuPopper);
-  }
-
-  override updated(_changedProperties: PropertyValues) {
-    if (_changedProperties.has('edgeless')) {
-      if (this.edgeless) {
-        this._setEdgelessDisposables();
-      } else {
-        this._clearEdgelessDisposables();
-      }
-    }
-  }
-
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    if (this._edgelessDisposables) {
-      this._clearEdgelessDisposables();
-    }
   }
 
   override render() {
@@ -216,7 +197,6 @@ export class FramePanelHeader extends WithDisposable(LitElement) {
             : ''}"
           .tooltip=${this._settingPopperShow ? '' : 'All Frames Settings'}
           .tipPosition=${'top'}
-          .iconContainerPadding=${2}
           .active=${this._settingPopperShow}
           .activeMode=${'background'}
           @click=${() => this._framesSettingMenuPopper?.toggle()}
@@ -225,10 +205,9 @@ export class FramePanelHeader extends WithDisposable(LitElement) {
         </edgeless-tool-icon-button>
       </div>
       <div class="frames-setting-container">
-        <frames-setting-menu
-          .edgeless=${this.edgeless}
+        <affine-frames-setting-menu
           .editorHost=${this.editorHost}
-        ></frames-setting-menu>
+        ></affine-frames-setting-menu>
       </div>
       <div class="presentation-button" @click=${this._enterPresentationMode}>
         ${SmallFrameNavigatorIcon}<span class="presentation-button-label"
@@ -237,10 +216,32 @@ export class FramePanelHeader extends WithDisposable(LitElement) {
       </div>
     </div>`;
   }
+
+  override updated(_changedProperties: PropertyValues) {
+    if (_changedProperties.has('editorHost')) {
+      if (this._edgelessRootService) {
+        this._setEdgelessDisposables();
+      } else {
+        this._clearEdgelessDisposables();
+      }
+    }
+  }
+
+  @query('.all-frames-setting-button')
+  private accessor _frameSettingButton!: HTMLDivElement;
+
+  @query('.frames-setting-container')
+  private accessor _frameSettingMenu!: HTMLDivElement;
+
+  @state()
+  private accessor _settingPopperShow = false;
+
+  @property({ attribute: false })
+  accessor editorHost!: EditorHost;
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    'frame-panel-header': FramePanelHeader;
+    [AFFINE_FRAME_PANEL_HEADER]: FramePanelHeader;
   }
 }

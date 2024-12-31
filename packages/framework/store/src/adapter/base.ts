@@ -1,11 +1,14 @@
-import { assertEquals } from '@blocksuite/global/utils';
+import { BlockSuiteError } from '@blocksuite/global/exceptions';
 
+import type { Doc } from '../store/index.js';
 import type { AssetsManager } from '../transformer/assets.js';
+import type { DraftModel, Job, Slice } from '../transformer/index.js';
 import type {
   BlockSnapshot,
   DocSnapshot,
   SliceSnapshot,
 } from '../transformer/type.js';
+
 import { ASTWalkerContext } from './context.js';
 
 export type FromDocSnapshotPayload = {
@@ -45,37 +48,152 @@ export type ToSliceSnapshotPayload<Target> = {
   assets?: AssetsManager;
 };
 
+export function wrapFakeNote(snapshot: SliceSnapshot) {
+  if (snapshot.content[0]?.flavour !== 'affine:note') {
+    snapshot.content = [
+      {
+        type: 'block',
+        id: '',
+        flavour: 'affine:note',
+        props: {},
+        children: snapshot.content,
+      },
+    ];
+  }
+}
+
 export abstract class BaseAdapter<AdapterTarget = unknown> {
-  protected configs: Map<string, unknown> = new Map();
+  job: Job;
+
+  get configs() {
+    return this.job.adapterConfigs;
+  }
+
+  constructor(job: Job) {
+    this.job = job;
+  }
+
+  async fromBlock(model: DraftModel) {
+    try {
+      const blockSnapshot = this.job.blockToSnapshot(model);
+      if (!blockSnapshot) return;
+      return await this.fromBlockSnapshot({
+        snapshot: blockSnapshot,
+        assets: this.job.assetsManager,
+      });
+    } catch (error) {
+      console.error('Cannot convert block to snapshot');
+      console.error(error);
+      return;
+    }
+  }
+
+  abstract fromBlockSnapshot(
+    payload: FromBlockSnapshotPayload
+  ):
+    | Promise<FromBlockSnapshotResult<AdapterTarget>>
+    | FromBlockSnapshotResult<AdapterTarget>;
+
+  async fromDoc(doc: Doc) {
+    try {
+      const docSnapshot = this.job.docToSnapshot(doc);
+      if (!docSnapshot) return;
+      return await this.fromDocSnapshot({
+        snapshot: docSnapshot,
+        assets: this.job.assetsManager,
+      });
+    } catch (error) {
+      console.error('Cannot convert doc to snapshot');
+      console.error(error);
+      return;
+    }
+  }
 
   abstract fromDocSnapshot(
     payload: FromDocSnapshotPayload
   ):
     | Promise<FromDocSnapshotResult<AdapterTarget>>
     | FromDocSnapshotResult<AdapterTarget>;
-  abstract fromBlockSnapshot(
-    payload: FromBlockSnapshotPayload
-  ):
-    | Promise<FromBlockSnapshotResult<AdapterTarget>>
-    | FromBlockSnapshotResult<AdapterTarget>;
+
+  async fromSlice(slice: Slice) {
+    try {
+      const sliceSnapshot = this.job.sliceToSnapshot(slice);
+      if (!sliceSnapshot) return;
+      wrapFakeNote(sliceSnapshot);
+      return await this.fromSliceSnapshot({
+        snapshot: sliceSnapshot,
+        assets: this.job.assetsManager,
+      });
+    } catch (error) {
+      console.error('Cannot convert slice to snapshot');
+      console.error(error);
+      return;
+    }
+  }
+
   abstract fromSliceSnapshot(
     payload: FromSliceSnapshotPayload
   ):
     | Promise<FromSliceSnapshotResult<AdapterTarget>>
     | FromSliceSnapshotResult<AdapterTarget>;
-  abstract toDocSnapshot(
-    payload: ToDocSnapshotPayload<AdapterTarget>
-  ): Promise<DocSnapshot> | DocSnapshot;
+
+  async toBlock(
+    payload: ToBlockSnapshotPayload<AdapterTarget>,
+    doc: Doc,
+    parent?: string,
+    index?: number
+  ) {
+    try {
+      const snapshot = await this.toBlockSnapshot(payload);
+      if (!snapshot) return;
+      return await this.job.snapshotToBlock(snapshot, doc, parent, index);
+    } catch (error) {
+      console.error('Cannot convert block snapshot to block');
+      console.error(error);
+      return;
+    }
+  }
+
   abstract toBlockSnapshot(
     payload: ToBlockSnapshotPayload<AdapterTarget>
   ): Promise<BlockSnapshot> | BlockSnapshot;
+
+  async toDoc(payload: ToDocSnapshotPayload<AdapterTarget>) {
+    try {
+      const snapshot = await this.toDocSnapshot(payload);
+      if (!snapshot) return;
+      return await this.job.snapshotToDoc(snapshot);
+    } catch (error) {
+      console.error('Cannot convert doc snapshot to doc');
+      console.error(error);
+      return;
+    }
+  }
+
+  abstract toDocSnapshot(
+    payload: ToDocSnapshotPayload<AdapterTarget>
+  ): Promise<DocSnapshot> | DocSnapshot;
+
+  async toSlice(
+    payload: ToSliceSnapshotPayload<AdapterTarget>,
+    doc: Doc,
+    parent?: string,
+    index?: number
+  ) {
+    try {
+      const snapshot = await this.toSliceSnapshot(payload);
+      if (!snapshot) return;
+      return await this.job.snapshotToSlice(snapshot, doc, parent, index);
+    } catch (error) {
+      console.error('Cannot convert slice snapshot to slice');
+      console.error(error);
+      return;
+    }
+  }
+
   abstract toSliceSnapshot(
     payload: ToSliceSnapshotPayload<AdapterTarget>
   ): Promise<SliceSnapshot | null> | SliceSnapshot | null;
-
-  applyConfigs(configs: Map<string, unknown>) {
-    this.configs = new Map(configs);
-  }
 }
 
 type Keyof<T> = T extends unknown ? keyof T : never;
@@ -85,9 +203,10 @@ type WalkerFn<ONode extends object, TNode extends object> = (
   context: ASTWalkerContext<TNode>
 ) => Promise<void> | void;
 
-type NodeProps<Node extends object> = {
+export type NodeProps<Node extends object> = {
   node: Node;
-  parent: Node | null;
+  next?: Node | null;
+  parent: NodeProps<Node> | null;
   prop: Keyof<Node> | null;
   index: number | null;
 };
@@ -95,37 +214,10 @@ type NodeProps<Node extends object> = {
 // Ported from https://github.com/Rich-Harris/estree-walker MIT License
 export class ASTWalker<ONode extends object, TNode extends object | never> {
   private _enter: WalkerFn<ONode, TNode> | undefined;
-  private _leave: WalkerFn<ONode, TNode> | undefined;
+
   private _isONode!: (node: unknown) => node is ONode;
 
-  private context: ASTWalkerContext<TNode>;
-
-  constructor() {
-    this.context = new ASTWalkerContext<TNode>();
-  }
-
-  setEnter = (fn: WalkerFn<ONode, TNode>) => {
-    this._enter = fn;
-  };
-
-  setLeave = (fn: WalkerFn<ONode, TNode>) => {
-    this._leave = fn;
-  };
-
-  setONodeTypeGuard = (fn: (node: unknown) => node is ONode) => {
-    this._isONode = fn;
-  };
-
-  walk = async (oNode: ONode, tNode: TNode) => {
-    this.context.openNode(tNode);
-    await this._visit({ node: oNode, parent: null, prop: null, index: null });
-    assertEquals(this.context.stack.length, 1, 'There are unclosed nodes');
-    return this.context.currentNode();
-  };
-
-  walkONode = async (oNode: ONode) => {
-    await this._visit({ node: oNode, parent: null, prop: null, index: null });
-  };
+  private _leave: WalkerFn<ONode, TNode> | undefined;
 
   private _visit = async (o: NodeProps<ONode>) => {
     if (!o.node) return;
@@ -156,9 +248,11 @@ export class ASTWalker<ONode extends object, TNode extends object | never> {
               typeof item === 'object' &&
               this._isONode(item)
             ) {
+              const nextItem = value[i + 1] ?? null;
               await this._visit({
                 node: item,
-                parent: o.node,
+                next: nextItem,
+                parent: o,
                 prop: key as unknown as Keyof<ONode>,
                 index: i,
               });
@@ -170,7 +264,8 @@ export class ASTWalker<ONode extends object, TNode extends object | never> {
         ) {
           await this._visit({
             node: value,
-            parent: o.node,
+            next: null,
+            parent: o,
             prop: key as unknown as Keyof<ONode>,
             index: null,
           });
@@ -182,4 +277,35 @@ export class ASTWalker<ONode extends object, TNode extends object | never> {
       await this._leave(o, this.context);
     }
   };
+
+  private context: ASTWalkerContext<TNode>;
+
+  setEnter = (fn: WalkerFn<ONode, TNode>) => {
+    this._enter = fn;
+  };
+
+  setLeave = (fn: WalkerFn<ONode, TNode>) => {
+    this._leave = fn;
+  };
+
+  setONodeTypeGuard = (fn: (node: unknown) => node is ONode) => {
+    this._isONode = fn;
+  };
+
+  walk = async (oNode: ONode, tNode: TNode) => {
+    this.context.openNode(tNode);
+    await this._visit({ node: oNode, parent: null, prop: null, index: null });
+    if (this.context.stack.length !== 1) {
+      throw new BlockSuiteError(1, 'There are unclosed nodes');
+    }
+    return this.context.currentNode();
+  };
+
+  walkONode = async (oNode: ONode) => {
+    await this._visit({ node: oNode, parent: null, prop: null, index: null });
+  };
+
+  constructor() {
+    this.context = new ASTWalkerContext<TNode>();
+  }
 }

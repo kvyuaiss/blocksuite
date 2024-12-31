@@ -1,41 +1,59 @@
-import '../buttons/tool-icon-button.js';
+import type {
+  Connection,
+  ConnectorElementModel,
+  ShapeElementModel,
+} from '@blocksuite/affine-model';
+import type { XYWH } from '@blocksuite/global/utils';
 
-import { WithDisposable } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
+import {
+  CanvasElementType,
+  CommonUtils,
+} from '@blocksuite/affine-block-surface';
+import {
+  FontFamilyIcon,
+  FrameIcon,
+  SmallNoteIcon,
+} from '@blocksuite/affine-components/icons';
+import {
+  DEFAULT_NOTE_BACKGROUND_COLOR,
+  DEFAULT_NOTE_WIDTH,
+  DEFAULT_SHAPE_FILL_COLOR,
+  DEFAULT_SHAPE_STROKE_COLOR,
+  DEFAULT_TEXT_COLOR,
+  FontFamily,
+  FontStyle,
+  FontWeight,
+  getShapeName,
+  GroupElementModel,
+  NoteBlockModel,
+  ShapeStyle,
+  TextElementModel,
+} from '@blocksuite/affine-model';
+import {
+  EditPropsStore,
+  ThemeProvider,
+} from '@blocksuite/affine-shared/services';
+import { captureEventTarget } from '@blocksuite/affine-shared/utils';
+import { type BlockStdScope, stdContext } from '@blocksuite/block-std';
+import { GfxControllerIdentifier } from '@blocksuite/block-std/gfx';
+import {
+  assertInstanceOf,
+  Bound,
+  serializeXYWH,
+  Vec,
+  WithDisposable,
+} from '@blocksuite/global/utils';
 import { DocCollection } from '@blocksuite/store';
+import { consume } from '@lit/context';
 import { baseTheme } from '@toeverything/theme';
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-import {
-  FrameIcon,
-  SmallNoteIcon,
-} from '../../../../_common/icons/edgeless.js';
-import { FontFamilyIcon } from '../../../../_common/icons/text.js';
-import type { NoteBlockModel } from '../../../../note-block/note-model.js';
-import { type Connection } from '../../../../surface-block/element-model/connector.js';
-import {
-  type ConnectorElementModel,
-  type ShapeElementModel,
-  TextElementModel,
-} from '../../../../surface-block/element-model/index.js';
-import type { ShapeStyle } from '../../../../surface-block/element-model/shape.js';
-import {
-  Bound,
-  clamp,
-  GroupElementModel,
-  normalizeDegAngle,
-  serializeXYWH,
-  toDegree,
-  Vec,
-  type XYWH,
-} from '../../../../surface-block/index.js';
-import { captureEventTarget } from '../../../widgets/drag-handle/utils.js';
 import type { EdgelessRootBlockComponent } from '../../edgeless-root-block.js';
+
 import {
-  DEFAULT_NOTE_WIDTH,
   SHAPE_OVERLAY_HEIGHT,
   SHAPE_OVERLAY_WIDTH,
 } from '../../utils/consts.js';
@@ -52,8 +70,6 @@ import {
   AutoCompleteTextOverlay,
   capitalizeFirstLetter,
   createShapeElement,
-  createTextElement,
-  DEFAULT_NOTE_BACKGROUND_COLOR,
   DEFAULT_NOTE_OVERLAY_HEIGHT,
   DEFAULT_TEXT_HEIGHT,
   DEFAULT_TEXT_WIDTH,
@@ -64,7 +80,6 @@ import {
   type TARGET_SHAPE_TYPE,
 } from './utils.js';
 
-@customElement('edgeless-auto-complete-panel')
 export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
   static override styles = css`
     .auto-complete-panel-container {
@@ -100,24 +115,220 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
     }
   `;
 
-  @property({ attribute: false })
-  edgeless: EdgelessRootBlockComponent;
-
-  @property({ attribute: false })
-  position: [number, number];
-
-  @property({ attribute: false })
-  currentSource: ShapeElementModel | NoteBlockModel;
-
-  @property({ attribute: false })
-  connector: ConnectorElementModel;
-
   private _overlay:
     | AutoCompleteShapeOverlay
     | AutoCompleteNoteOverlay
     | AutoCompleteFrameOverlay
     | AutoCompleteTextOverlay
     | null = null;
+
+  get gfx() {
+    return this.std.get(GfxControllerIdentifier);
+  }
+
+  constructor(
+    position: [number, number],
+    edgeless: EdgelessRootBlockComponent,
+    currentSource: ShapeElementModel | NoteBlockModel,
+    connector: ConnectorElementModel
+  ) {
+    super();
+    this.position = position;
+    this.edgeless = edgeless;
+    this.currentSource = currentSource;
+    this.connector = connector;
+  }
+
+  private _addFrame() {
+    const bound = this._generateTarget(this.connector)?.nextBound;
+    if (!bound) return;
+
+    const { h } = bound;
+    const w = h / 0.75;
+    const target = this._getTargetXYWH(w, h);
+    if (!target) return;
+
+    const { xywh, position } = target;
+
+    const edgeless = this.edgeless;
+    const { service, surfaceBlockModel } = edgeless;
+    const frameMgr = service.frame;
+    const frameIndex = service.frames.length + 1;
+    const id = service.addBlock(
+      'affine:frame',
+      {
+        title: new DocCollection.Y.Text(`Frame ${frameIndex}`),
+        xywh: serializeXYWH(...xywh),
+        presentationIndex: frameMgr.generatePresentationIndex(),
+      },
+      surfaceBlockModel
+    );
+    edgeless.doc.captureSync();
+    const frame = service.getElementById(id);
+    if (!frame) return;
+
+    this.connector.target = {
+      id,
+      position,
+    };
+
+    edgeless.service.selection.set({
+      elements: [frame.id],
+      editing: false,
+    });
+  }
+
+  private _addNote() {
+    const { doc } = this.edgeless;
+    const service = this.edgeless.service;
+    const target = this._getTargetXYWH(
+      DEFAULT_NOTE_WIDTH,
+      DEFAULT_NOTE_OVERLAY_HEIGHT
+    );
+    if (!target) return;
+
+    const { xywh, position } = target;
+    const id = service.addBlock(
+      'affine:note',
+      {
+        xywh: serializeXYWH(...xywh),
+      },
+      doc.root?.id
+    );
+    const note = doc.getBlock(id)?.model;
+    assertInstanceOf(note, NoteBlockModel);
+    doc.addBlock('affine:paragraph', { type: 'text' }, id);
+    const group = this.currentSource.group;
+
+    if (group instanceof GroupElementModel) {
+      group.addChild(note);
+    }
+    this.connector.target = {
+      id,
+      position: position as [number, number],
+    };
+    service.updateElement(this.connector.id, {
+      target: { id, position },
+    });
+    this.edgeless.service.selection.set({
+      elements: [id],
+      editing: false,
+    });
+  }
+
+  private _addShape(targetType: TARGET_SHAPE_TYPE) {
+    const edgeless = this.edgeless;
+    const result = this._generateTarget(this.connector);
+    if (!result) return;
+
+    const currentSource = this.currentSource;
+    const { nextBound, position } = result;
+    const { service } = edgeless;
+    const id = createShapeElement(edgeless, currentSource, targetType);
+
+    service.updateElement(id, { xywh: nextBound.serialize() });
+    service.updateElement(this.connector.id, {
+      target: { id, position },
+    });
+
+    mountShapeTextEditor(
+      service.getElementById(id) as ShapeElementModel,
+      this.edgeless
+    );
+    edgeless.service.selection.set({
+      elements: [id],
+      editing: true,
+    });
+    edgeless.doc.captureSync();
+  }
+
+  private _addText() {
+    const target = this._getTargetXYWH(DEFAULT_TEXT_WIDTH, DEFAULT_TEXT_HEIGHT);
+    if (!target) return;
+    const { xywh, position } = target;
+    const bound = Bound.fromXYWH(xywh);
+    const edgelessService = this.edgeless.service;
+
+    const textFlag = this.edgeless.doc.awarenessStore.getFlag(
+      'enable_edgeless_text'
+    );
+    if (textFlag) {
+      const { textId } = this.edgeless.std.command.exec('insertEdgelessText', {
+        x: bound.x,
+        y: bound.y,
+      });
+      if (!textId) return;
+
+      const textElement = edgelessService.getElementById(textId);
+      if (!textElement) return;
+
+      edgelessService.updateElement(this.connector.id, {
+        target: { id: textId, position },
+      });
+      if (this.currentSource.group instanceof GroupElementModel) {
+        this.currentSource.group.addChild(textElement);
+      }
+
+      this.edgeless.service.selection.set({
+        elements: [textId],
+        editing: false,
+      });
+      this.edgeless.doc.captureSync();
+    } else {
+      const textId = edgelessService.addElement(CanvasElementType.TEXT, {
+        xywh: bound.serialize(),
+        text: new DocCollection.Y.Text(),
+        textAlign: 'left',
+        fontSize: 24,
+        fontFamily: FontFamily.Inter,
+        color: DEFAULT_TEXT_COLOR,
+        fontWeight: FontWeight.Regular,
+        fontStyle: FontStyle.Normal,
+      });
+      const textElement = edgelessService.getElementById(textId);
+      assertInstanceOf(textElement, TextElementModel);
+
+      edgelessService.updateElement(this.connector.id, {
+        target: { id: textId, position },
+      });
+      if (this.currentSource.group instanceof GroupElementModel) {
+        this.currentSource.group.addChild(textElement);
+      }
+
+      this.edgeless.service.selection.set({
+        elements: [textId],
+        editing: false,
+      });
+      this.edgeless.doc.captureSync();
+
+      mountTextElementEditor(textElement, this.edgeless);
+    }
+  }
+
+  private _autoComplete(targetType: AUTO_COMPLETE_TARGET_TYPE) {
+    this._removeOverlay();
+    if (!this._connectorExist()) return;
+
+    switch (targetType) {
+      case 'text':
+        this._addText();
+        break;
+      case 'note':
+        this._addNote();
+        break;
+      case 'frame':
+        this._addFrame();
+        break;
+      default:
+        this._addShape(targetType);
+    }
+
+    this.remove();
+  }
+
+  private _connectorExist() {
+    return !!this.edgeless.service.getElementById(this.connector.id);
+  }
 
   private _generateTarget(connector: ConnectorElementModel) {
     const { currentSource } = this;
@@ -129,11 +340,13 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
       h = bound.h;
     }
     const point = connector.target.position;
-    assertExists(point);
+    if (!point) return;
 
     const len = connector.path.length;
-    const angle = normalizeDegAngle(
-      toDegree(Vec.angle(connector.path[len - 2], connector.path[len - 1]))
+    const angle = CommonUtils.normalizeDegAngle(
+      CommonUtils.toDegree(
+        Vec.angle(connector.path[len - 2], connector.path[len - 1])
+      )
     );
     let nextBound: Bound;
     let position: Connection['position'];
@@ -159,6 +372,38 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
     }
 
     return { nextBound, position, direction };
+  }
+
+  private _getCurrentSourceInfo(): {
+    style: ShapeStyle;
+    type: AUTO_COMPLETE_TARGET_TYPE;
+  } {
+    const { currentSource } = this;
+    if (isShape(currentSource)) {
+      const { shapeType, shapeStyle, radius } = currentSource;
+      return {
+        style: shapeStyle,
+        type: getShapeName(shapeType, radius),
+      };
+    }
+    return {
+      style: ShapeStyle.General,
+      type: 'note',
+    };
+  }
+
+  private _getPanelPosition() {
+    const { viewport } = this.edgeless.service;
+    const { boundingClientRect: viewportRect, zoom } = viewport;
+    const result = this._getTargetXYWH(PANEL_WIDTH / zoom, PANEL_HEIGHT / zoom);
+    const pos = result ? result.xywh.slice(0, 2) : this.position;
+    const coord = viewport.toViewCoord(pos[0], pos[1]);
+    const { width, height } = viewportRect;
+
+    coord[0] = CommonUtils.clamp(coord[0], 20, width - 20 - PANEL_WIDTH);
+    coord[1] = CommonUtils.clamp(coord[1], 20, height - 20 - PANEL_HEIGHT);
+
+    return coord;
   }
 
   private _getTargetXYWH(width: number, height: number) {
@@ -194,43 +439,9 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
     return { xywh, position };
   }
 
-  private _connectorExist() {
-    return !!this.edgeless.service.getElementById(this.connector.id);
-  }
-
-  private _showTextOverlay() {
-    const xywh = this._getTargetXYWH(
-      DEFAULT_TEXT_WIDTH,
-      DEFAULT_TEXT_HEIGHT
-    )?.xywh;
-    if (!xywh) return;
-
-    this._overlay = new AutoCompleteTextOverlay(xywh);
-    this.edgeless.surface.renderer.addOverlay(this._overlay);
-  }
-
-  private _showNoteOverlay() {
-    const xywh = this._getTargetXYWH(
-      DEFAULT_NOTE_WIDTH,
-      DEFAULT_NOTE_OVERLAY_HEIGHT
-    )?.xywh;
-    if (!xywh) return;
-
-    let color = '';
-    if (isShape(this.currentSource)) {
-      let tag = this.currentSource.fillColor.split('-').pop();
-      if (!tag || tag === 'gray') tag = 'grey';
-      color = `--affine-tag-${tag}`;
-    } else {
-      color = this.currentSource.background;
-    }
-    const computedStyle = getComputedStyle(this.edgeless);
-    const background =
-      computedStyle.getPropertyValue(color) ||
-      computedStyle.getPropertyValue(DEFAULT_NOTE_BACKGROUND_COLOR);
-
-    this._overlay = new AutoCompleteNoteOverlay(xywh, background);
-    this.edgeless.surface.renderer.addOverlay(this._overlay);
+  private _removeOverlay() {
+    if (this._overlay)
+      this.edgeless.surface.renderer.removeOverlay(this._overlay);
   }
 
   private _showFrameOverlay() {
@@ -242,43 +453,29 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
     const xywh = this._getTargetXYWH(w, h)?.xywh;
     if (!xywh) return;
 
-    const computedStyle = getComputedStyle(this.edgeless);
-    const strokeColor = computedStyle.getPropertyValue('--affine-black-30');
-    this._overlay = new AutoCompleteFrameOverlay(xywh, strokeColor);
+    const strokeColor = this.std
+      .get(ThemeProvider)
+      .getCssVariableColor('--affine-black-30');
+    this._overlay = new AutoCompleteFrameOverlay(this.gfx, xywh, strokeColor);
     this.edgeless.surface.renderer.addOverlay(this._overlay);
   }
 
-  private _showShapeOverlay(targetType: TARGET_SHAPE_TYPE) {
-    const bound = this._generateTarget(this.connector)?.nextBound;
-    if (!bound) return;
+  private _showNoteOverlay() {
+    const xywh = this._getTargetXYWH(
+      DEFAULT_NOTE_WIDTH,
+      DEFAULT_NOTE_OVERLAY_HEIGHT
+    )?.xywh;
+    if (!xywh) return;
 
-    const { x, y, w, h } = bound;
-    const xywh = [x, y, w, h] as XYWH;
-    const { shapeStyle, strokeColor, fillColor, strokeWidth, roughness } =
-      isShape(this.currentSource)
-        ? this.currentSource
-        : this.edgeless.service.editSession.getLastProps('shape');
-
-    const computedStyle = getComputedStyle(this.edgeless);
-    const stroke = computedStyle.getPropertyValue(strokeColor);
-    const fill = computedStyle.getPropertyValue(fillColor);
-
-    const options = {
-      seed: 666,
-      roughness: roughness,
-      strokeLineDash: [0, 0],
-      stroke,
-      strokeWidth,
-      fill,
-    };
-
-    this._overlay = new AutoCompleteShapeOverlay(
-      xywh,
-      targetType,
-      options,
-      shapeStyle
-    );
-
+    const background = this.edgeless.std
+      .get(ThemeProvider)
+      .getColorValue(
+        this.edgeless.std.get(EditPropsStore).lastProps$.value['affine:note']
+          .background,
+        DEFAULT_NOTE_BACKGROUND_COLOR,
+        true
+      );
+    this._overlay = new AutoCompleteNoteOverlay(this.gfx, xywh, background);
     this.edgeless.surface.renderer.addOverlay(this._overlay);
   }
 
@@ -303,214 +500,53 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
     this.edgeless.surface.refresh();
   }
 
-  private _removeOverlay() {
-    if (this._overlay)
-      this.edgeless.surface.renderer.removeOverlay(this._overlay);
-  }
-
-  private _addShape(targetType: TARGET_SHAPE_TYPE) {
-    const edgeless = this.edgeless;
-    const result = this._generateTarget(this.connector);
-    if (!result) return;
-
-    const currentSource = this.currentSource;
-    const { nextBound, position } = result;
-    const { service } = edgeless;
-    const id = createShapeElement(edgeless, currentSource, targetType);
-
-    service.updateElement(id, { xywh: nextBound.serialize() });
-    service.updateElement(this.connector.id, {
-      target: { id, position },
-    });
-
-    mountShapeTextEditor(
-      service.getElementById(id) as ShapeElementModel,
-      this.edgeless
-    );
-    edgeless.service.selection.set({
-      elements: [id],
-      editing: true,
-    });
-    edgeless.doc.captureSync();
-  }
-
-  private _addNote() {
-    const { doc } = this.edgeless;
-    const service = this.edgeless.service!;
-    const target = this._getTargetXYWH(
-      DEFAULT_NOTE_WIDTH,
-      DEFAULT_NOTE_OVERLAY_HEIGHT
-    );
-    if (!target) return;
-
-    const { xywh, position } = target;
-
-    let color = '';
-    if (isShape(this.currentSource)) {
-      let tag = this.currentSource.fillColor.split('-').pop();
-      if (!tag || tag === 'gray') tag = 'grey';
-      color = `--affine-tag-${tag}`;
-    } else {
-      color = this.currentSource.background;
-    }
-
-    const computedStyle = getComputedStyle(this.edgeless);
-    const background = computedStyle.getPropertyValue(color)
-      ? color
-      : DEFAULT_NOTE_BACKGROUND_COLOR;
-
-    const id = service!.addBlock(
-      'affine:note',
-      {
-        xywh: serializeXYWH(...xywh),
-        background,
-      },
-      doc.root?.id
-    );
-    doc.addBlock('affine:paragraph', { type: 'text' }, id);
-    const group = this.currentSource.group;
-
-    if (group instanceof GroupElementModel) {
-      group.addChild(id);
-    }
-    this.connector.target = {
-      id,
-      position: position as [number, number],
-    };
-    service.updateElement(this.connector.id, {
-      target: { id, position },
-    });
-    this.edgeless.service.selection.set({
-      elements: [id],
-      editing: false,
-    });
-  }
-
-  private _addFrame() {
+  private _showShapeOverlay(targetType: TARGET_SHAPE_TYPE) {
     const bound = this._generateTarget(this.connector)?.nextBound;
     if (!bound) return;
 
-    const { h } = bound;
-    const w = h / 0.75;
-    const target = this._getTargetXYWH(w, h);
-    if (!target) return;
+    const { x, y, w, h } = bound;
+    const xywh = [x, y, w, h] as XYWH;
+    const { shapeStyle, strokeColor, fillColor, strokeWidth, roughness } =
+      this.edgeless.std.get(EditPropsStore).lastProps$.value[
+        `shape:${targetType}`
+      ];
 
-    const { xywh, position } = target;
+    const stroke = this.edgeless.std
+      .get(ThemeProvider)
+      .getColorValue(strokeColor, DEFAULT_SHAPE_STROKE_COLOR, true);
+    const fill = this.edgeless.std
+      .get(ThemeProvider)
+      .getColorValue(fillColor, DEFAULT_SHAPE_FILL_COLOR, true);
 
-    const edgeless = this.edgeless;
-    const { service, surfaceBlockModel } = edgeless;
-    const frameIndex = service.layer.frames.length + 1;
-    const id = service.addBlock(
-      'affine:frame',
-      {
-        title: new DocCollection.Y.Text(`Frame ${frameIndex}`),
-        xywh: serializeXYWH(...xywh),
-      },
-      surfaceBlockModel
+    const options = {
+      seed: 666,
+      roughness: roughness,
+      strokeLineDash: [0, 0],
+      stroke,
+      strokeWidth,
+      fill,
+    };
+
+    this._overlay = new AutoCompleteShapeOverlay(
+      this.gfx,
+      xywh,
+      targetType,
+      options,
+      shapeStyle
     );
-    edgeless.doc.captureSync();
-    const frame = service.getElementById(id);
-    assertExists(frame);
 
-    this.connector.target = {
-      id,
-      position,
-    };
-
-    edgeless.service.selection.set({
-      elements: [frame.id],
-      editing: false,
-    });
+    this.edgeless.surface.renderer.addOverlay(this._overlay);
   }
 
-  private _addText() {
-    const target = this._getTargetXYWH(DEFAULT_TEXT_WIDTH, DEFAULT_TEXT_HEIGHT);
-    if (!target) return;
+  private _showTextOverlay() {
+    const xywh = this._getTargetXYWH(
+      DEFAULT_TEXT_WIDTH,
+      DEFAULT_TEXT_HEIGHT
+    )?.xywh;
+    if (!xywh) return;
 
-    const { xywh, position } = target;
-    const id = createTextElement(this.edgeless, this.currentSource);
-    const { service } = this.edgeless;
-
-    service.updateElement(id, { xywh: serializeXYWH(...xywh) });
-    service.updateElement(this.connector.id, {
-      target: { id, position },
-    });
-    this.edgeless.service.selection.set({
-      elements: [id],
-      editing: false,
-    });
-    this.edgeless.doc.captureSync();
-    const textElement = this.edgeless.service.getElementById(id);
-    assertExists(textElement);
-    if (textElement instanceof TextElementModel) {
-      mountTextElementEditor(textElement, this.edgeless);
-    }
-  }
-
-  private _autoComplete(targetType: AUTO_COMPLETE_TARGET_TYPE) {
-    this._removeOverlay();
-    if (!this._connectorExist()) return;
-
-    switch (targetType) {
-      case 'text':
-        this._addText();
-        break;
-      case 'note':
-        this._addNote();
-        break;
-      case 'frame':
-        this._addFrame();
-        break;
-      default:
-        this._addShape(targetType);
-    }
-
-    this.remove();
-  }
-
-  private _getPanelPosition() {
-    const { viewport } = this.edgeless.service;
-    const { boundingClientRect: viewportRect, zoom } = viewport;
-    const result = this._getTargetXYWH(PANEL_WIDTH / zoom, PANEL_HEIGHT / zoom);
-    const pos = result ? result.xywh.slice(0, 2) : this.position;
-    const coord = viewport.toViewCoord(pos[0], pos[1]);
-    const { width, height } = viewportRect;
-
-    coord[0] = clamp(coord[0], 20, width - 20 - PANEL_WIDTH);
-    coord[1] = clamp(coord[1], 20, height - 20 - PANEL_HEIGHT);
-
-    return coord;
-  }
-
-  private _getCurrentSourceInfo(): {
-    style: ShapeStyle;
-    type: AUTO_COMPLETE_TARGET_TYPE;
-  } {
-    const { currentSource } = this;
-    if (isShape(currentSource)) {
-      const { shapeType, shapeStyle, radius } = currentSource;
-      return {
-        style: shapeStyle,
-        type: shapeType === 'rect' && radius ? 'roundedRect' : shapeType,
-      };
-    }
-    return {
-      style: 'General',
-      type: 'note',
-    };
-  }
-
-  constructor(
-    position: [number, number],
-    edgeless: EdgelessRootBlockComponent,
-    currentSource: ShapeElementModel | NoteBlockModel,
-    connector: ConnectorElementModel
-  ) {
-    super();
-    this.position = position;
-    this.edgeless = edgeless;
-    this.currentSource = currentSource;
-    this.connector = connector;
+    this._overlay = new AutoCompleteTextOverlay(this.gfx, xywh);
+    this.edgeless.surface.renderer.addOverlay(this._overlay);
   }
 
   override connectedCallback() {
@@ -552,7 +588,6 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
       ({ name, generalIcon, scribbledIcon, tooltip }) => html`
         <edgeless-tool-icon-button
           .tooltip=${tooltip}
-          .iconContainerPadding=${2}
           @pointerenter=${() => this._showOverlay(name)}
           @pointerleave=${() => this._removeOverlay()}
           @click=${() => this._autoComplete(name)}
@@ -567,7 +602,6 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
 
       <edgeless-tool-icon-button
         .tooltip=${'Text'}
-        .iconContainerPadding=${2}
         @pointerenter=${() => this._showOverlay('text')}
         @pointerleave=${() => this._removeOverlay()}
         @click=${() => this._autoComplete('text')}
@@ -576,7 +610,6 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
       </edgeless-tool-icon-button>
       <edgeless-tool-icon-button
         .tooltip=${'Note'}
-        .iconContainerPadding=${2}
         @pointerenter=${() => this._showOverlay('note')}
         @pointerleave=${() => this._removeOverlay()}
         @click=${() => this._autoComplete('note')}
@@ -585,7 +618,6 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
       </edgeless-tool-icon-button>
       <edgeless-tool-icon-button
         .tooltip=${'Frame'}
-        .iconContainerPadding=${2}
         @pointerenter=${() => this._showOverlay('frame')}
         @pointerleave=${() => this._removeOverlay()}
         @click=${() => this._autoComplete('frame')}
@@ -604,6 +636,23 @@ export class EdgelessAutoCompletePanel extends WithDisposable(LitElement) {
       </edgeless-tool-icon-button>
     </div>`;
   }
+
+  @property({ attribute: false })
+  accessor connector: ConnectorElementModel;
+
+  @property({ attribute: false })
+  accessor currentSource: ShapeElementModel | NoteBlockModel;
+
+  @property({ attribute: false })
+  accessor edgeless: EdgelessRootBlockComponent;
+
+  @property({ attribute: false })
+  accessor position: [number, number];
+
+  @consume({
+    context: stdContext,
+  })
+  accessor std!: BlockStdScope;
 }
 
 declare global {

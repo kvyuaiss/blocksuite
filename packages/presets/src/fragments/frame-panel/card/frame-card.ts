@@ -1,16 +1,7 @@
-import './frame-card-title.js';
-
-import type { EditorHost } from '@blocksuite/block-std';
-import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
-import {
-  type EdgelessRootBlockComponent,
-  type FrameBlockModel,
-  on,
-  once,
-} from '@blocksuite/blocks';
-import { DisposableGroup } from '@blocksuite/global/utils';
-import type { Doc } from '@blocksuite/store';
-import { css, html, nothing, type PropertyValues } from 'lit';
+import { ShadowlessElement } from '@blocksuite/block-std';
+import { type FrameBlockModel, on, once } from '@blocksuite/blocks';
+import { WithDisposable } from '@blocksuite/global/utils';
+import { css, html, nothing } from 'lit';
 import { property, query } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
@@ -110,72 +101,10 @@ const styles = css`
   }
 `;
 
+export const AFFINE_FRAME_CARD = 'affine-frame-card';
+
 export class FrameCard extends WithDisposable(ShadowlessElement) {
   static override styles = styles;
-
-  @property({ attribute: false })
-  edgeless: EdgelessRootBlockComponent | null = null;
-
-  @property({ attribute: false })
-  frame!: FrameBlockModel;
-
-  @property({ attribute: false })
-  doc!: Doc;
-
-  @property({ attribute: false })
-  host!: EditorHost;
-
-  @property({ attribute: false })
-  cardIndex!: number;
-
-  @property({ attribute: false })
-  frameIndex!: string;
-
-  @property({ attribute: false })
-  status: 'selected' | 'dragging' | 'placeholder' | 'none' = 'none';
-
-  @property({ attribute: false })
-  stackOrder!: number;
-
-  @property({ attribute: false })
-  pos!: { x: number; y: number };
-
-  @property({ attribute: false })
-  width?: number;
-
-  @property({ attribute: false })
-  draggingCardNumber?: number;
-
-  @query('.frame-card-container')
-  containerElement!: HTMLElement;
-
-  private _frameDisposables: DisposableGroup | null = null;
-
-  private _dispatchSelectEvent(e: MouseEvent) {
-    e.stopPropagation();
-    const event = new CustomEvent('select', {
-      detail: {
-        id: this.frame.id,
-        selected: this.status !== 'selected',
-        index: this.cardIndex,
-        multiselect: e.shiftKey,
-      },
-    }) as SelectEvent;
-
-    this.dispatchEvent(event);
-  }
-
-  private _dispatchFitViewEvent(e: MouseEvent) {
-    e.stopPropagation();
-
-    const event = new CustomEvent('fitview', {
-      detail: {
-        block: this.frame,
-      },
-    });
-
-    this.dispatchEvent(event);
-  }
 
   private _dispatchDragEvent(e: MouseEvent) {
     e.preventDefault();
@@ -211,42 +140,38 @@ export class FrameCard extends WithDisposable(ShadowlessElement) {
     });
   }
 
+  private _dispatchFitViewEvent(e: MouseEvent) {
+    e.stopPropagation();
+
+    const event = new CustomEvent('fitview', {
+      detail: {
+        block: this.frame,
+      },
+    });
+
+    this.dispatchEvent(event);
+  }
+
+  private _dispatchSelectEvent(e: MouseEvent) {
+    e.stopPropagation();
+    const event = new CustomEvent('select', {
+      detail: {
+        id: this.frame.id,
+        selected: this.status !== 'selected',
+        index: this.cardIndex,
+        multiselect: e.shiftKey,
+      },
+    }) as SelectEvent;
+
+    this.dispatchEvent(event);
+  }
+
   private _DraggingCardNumber() {
     if (this.draggingCardNumber === undefined) return nothing;
 
     return html`<div class="dragging-card-number">
       ${this.draggingCardNumber}
     </div>`;
-  }
-
-  private _updateElement = () => {
-    this.requestUpdate();
-  };
-
-  private _clearFrameDisposables = () => {
-    this._frameDisposables?.dispose();
-    this._frameDisposables = null;
-  };
-
-  private _setFrameDisposables(frame: FrameBlockModel) {
-    this._clearFrameDisposables();
-    this._frameDisposables = new DisposableGroup();
-    this._frameDisposables.add(frame.propsUpdated.on(this._updateElement));
-  }
-
-  override updated(_changedProperties: PropertyValues) {
-    if (_changedProperties.has('frame')) {
-      this._setFrameDisposables(this.frame);
-    }
-  }
-
-  override connectedCallback() {
-    super.connectedCallback();
-  }
-
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    this._clearFrameDisposables();
   }
 
   override render() {
@@ -269,10 +194,10 @@ export class FrameCard extends WithDisposable(ShadowlessElement) {
     >
       ${this.status === 'dragging'
         ? nothing
-        : html`<frame-card-title
+        : html`<affine-frame-card-title
             .cardIndex=${this.cardIndex}
             .frame=${this.frame}
-          ></frame-card-title>`}
+          ></affine-frame-card-title>`}
       <div
         class="frame-card-body"
         @click=${this._dispatchSelectEvent}
@@ -281,20 +206,42 @@ export class FrameCard extends WithDisposable(ShadowlessElement) {
       >
         ${this.status === 'dragging' && stackOrder !== 0
           ? nothing
-          : html`<frame-preview
-              .edgeless=${this.edgeless}
-              .doc=${this.doc}
-              .host=${this.host}
-              .frame=${this.frame}
-            ></frame-preview>`}
+          : html`<frame-preview .frame=${this.frame}></frame-preview>`}
         ${this._DraggingCardNumber()}
       </div>
     </div>`;
   }
+
+  @property({ attribute: false })
+  accessor cardIndex!: number;
+
+  @query('.frame-card-container')
+  accessor containerElement!: HTMLElement;
+
+  @property({ attribute: false })
+  accessor draggingCardNumber: number | undefined = undefined;
+
+  @property({ attribute: false })
+  accessor frame!: FrameBlockModel;
+
+  @property({ attribute: false })
+  accessor frameIndex!: string;
+
+  @property({ attribute: false })
+  accessor pos!: { x: number; y: number };
+
+  @property({ attribute: false })
+  accessor stackOrder!: number;
+
+  @property({ attribute: false })
+  accessor status: 'selected' | 'dragging' | 'placeholder' | 'none' = 'none';
+
+  @property({ attribute: false })
+  accessor width: number | undefined = undefined;
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    'frame-card': FrameCard;
+    [AFFINE_FRAME_CARD]: FrameCard;
   }
 }

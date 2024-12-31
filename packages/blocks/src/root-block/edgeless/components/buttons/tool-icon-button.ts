@@ -1,10 +1,11 @@
 import type { Placement } from '@floating-ui/dom';
 import type { TemplateResult } from 'lit';
+
 import { css, html, LitElement, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
+import { cache } from 'lit/directives/cache.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-@customElement('edgeless-tool-icon-button')
 export class EdgelessToolIconButton extends LitElement {
   static override styles = css`
     .icon-container {
@@ -16,6 +17,9 @@ export class EdgelessToolIconButton extends LitElement {
       border-radius: 4px;
       cursor: pointer;
       white-space: nowrap;
+      box-sizing: border-box;
+      width: var(--icon-container-width, unset);
+      justify-content: var(--justify, unset);
     }
 
     .icon-container.active-mode-color[active] {
@@ -24,10 +28,6 @@ export class EdgelessToolIconButton extends LitElement {
 
     .icon-container.active-mode-background[active] {
       background: var(--affine-hover-color);
-    }
-
-    .icon-container > svg {
-      flex-shrink: 0;
     }
 
     .icon-container[disabled] {
@@ -40,37 +40,41 @@ export class EdgelessToolIconButton extends LitElement {
       cursor: not-allowed;
       color: var(--affine-text-disable-color);
     }
+
+    ::slotted(svg) {
+      flex-shrink: 0;
+      height: var(--icon-size, unset);
+    }
+
+    ::slotted(.label) {
+      flex: 1;
+      padding: 0 4px;
+      overflow: hidden;
+      white-space: nowrap;
+      line-height: var(--label-height, inherit);
+    }
+    ::slotted(.label.padding0) {
+      padding: 0;
+    }
+    ::slotted(.label.ellipsis) {
+      text-overflow: ellipsis;
+    }
+    ::slotted(.label.medium) {
+      font-weight: 500;
+    }
+
+    .icon-container[with-hover]::before {
+      content: '';
+      display: block;
+      background: var(--affine-hover-color);
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      top: 0;
+      left: 0;
+      border-radius: 4px;
+    }
   `;
-
-  @property({ attribute: false })
-  disabled = false;
-
-  @property({ attribute: false })
-  coming = false;
-
-  @property({ attribute: false })
-  tooltip!: string | TemplateResult<1>;
-
-  @property({ attribute: false })
-  tipPosition: Placement = 'top';
-
-  @property({ attribute: false })
-  arrow = true;
-
-  @property({ attribute: false })
-  tooltipOffset = 8;
-
-  @property({ attribute: false })
-  active = false;
-
-  @property({ attribute: false })
-  activeMode: 'color' | 'background' = 'color';
-
-  @property({ attribute: false })
-  iconContainerPadding = 6;
-
-  @property({ attribute: false })
-  hover = true;
 
   constructor() {
     super();
@@ -87,38 +91,104 @@ export class EdgelessToolIconButton extends LitElement {
     );
   }
 
+  override connectedCallback() {
+    super.connectedCallback();
+    this.role = 'button';
+  }
+
   override render() {
     const tooltip = this.coming ? '(Coming soon)' : this.tooltip;
-    const classnames = `icon-container active-mode-${this.activeMode}`;
+    const classnames = `icon-container active-mode-${this.activeMode} ${this.hoverState ? 'hovered' : ''}`;
+    const padding = this.iconContainerPadding;
     const iconContainerStyles = styleMap({
-      '--icon-container-padding': `${this.iconContainerPadding}px`,
+      '--icon-container-width': this.iconContainerWidth,
+      '--icon-container-padding': Array.isArray(padding)
+        ? padding.map(v => `${v}px`).join(' ')
+        : `${padding}px`,
+      '--icon-size': this.iconSize,
+      '--justify': this.justify,
+      '--label-height': this.labelHeight,
     });
 
     return html`
       <style>
-        .icon-container:hover {
+        .icon-container:hover,
+        .icon-container.hovered {
           background: ${this.hover ? `var(--affine-hover-color)` : 'inherit'};
         }
       </style>
       <div
         class=${classnames}
         style=${iconContainerStyles}
-        role="button"
+        ?with-hover=${this.withHover}
         ?disabled=${this.disabled}
         ?active=${this.active}
       >
         <slot></slot>
-        ${tooltip
-          ? html`<affine-tooltip
-              tip-position=${this.tipPosition}
-              .arrow=${this.arrow}
-              .offset=${this.tooltipOffset}
-              >${tooltip}</affine-tooltip
-            >`
-          : nothing}
+        ${cache(
+          this.showTooltip && tooltip
+            ? html`<affine-tooltip
+                tip-position=${this.tipPosition}
+                .arrow=${this.arrow}
+                .offset=${this.tooltipOffset}
+                >${tooltip}</affine-tooltip
+              >`
+            : nothing
+        )}
       </div>
     `;
   }
+
+  @property({ attribute: false })
+  accessor active = false;
+
+  @property({ attribute: false })
+  accessor activeMode: 'color' | 'background' = 'color';
+
+  @property({ attribute: false })
+  accessor arrow = true;
+
+  @property({ attribute: false })
+  accessor coming = false;
+
+  @property({ attribute: false })
+  accessor disabled = false;
+
+  @property({ attribute: false })
+  accessor hover = true;
+
+  @property({ attribute: false })
+  accessor hoverState = false;
+
+  @property({ attribute: false })
+  accessor iconContainerPadding: number | number[] = 2;
+
+  @property({ attribute: false })
+  accessor iconContainerWidth: string | undefined = undefined;
+
+  @property({ attribute: false })
+  accessor iconSize: string | undefined = undefined;
+
+  @property({ attribute: false })
+  accessor justify: string | undefined = undefined;
+
+  @property({ attribute: false })
+  accessor labelHeight: string | undefined = undefined;
+
+  @property({ type: Boolean })
+  accessor showTooltip = true;
+
+  @property({ attribute: false })
+  accessor tipPosition: Placement = 'top';
+
+  @property({ attribute: false })
+  accessor tooltip!: string | TemplateResult<1>;
+
+  @property({ attribute: false })
+  accessor tooltipOffset = 8;
+
+  @property({ attribute: false })
+  accessor withHover: boolean | undefined = undefined;
 }
 
 declare global {

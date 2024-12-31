@@ -9,7 +9,7 @@ export const focusBlockEnd: Command<'focusBlock'> = (ctx, next) => {
   selection.setGroup('note', [
     selection.create('text', {
       from: {
-        path: focusBlock.path,
+        blockId: focusBlock.blockId,
         index: focusBlock.model.text.length,
         length: 0,
       },
@@ -19,11 +19,3 @@ export const focusBlockEnd: Command<'focusBlock'> = (ctx, next) => {
 
   return next();
 };
-
-declare global {
-  namespace BlockSuite {
-    interface Commands {
-      focusBlockEnd: typeof focusBlockEnd;
-    }
-  }
-}

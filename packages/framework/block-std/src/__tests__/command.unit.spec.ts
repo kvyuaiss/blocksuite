@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { Command } from '../command/index.js';
+
 import { CommandManager } from '../command/index.js';
 
 type Command1 = Command<
@@ -191,6 +192,35 @@ describe('CommandManager', () => {
 
     expect(inlineCommand).toHaveBeenCalled();
     expect(success).toBeTruthy();
+  });
+
+  test('can execute a single command with `exec`', () => {
+    const command1: Command1 = vi.fn((_ctx, next) =>
+      next({ commandData1: (_ctx.command1Option ?? '') + '123' })
+    );
+    const command2: Command2 = vi.fn((_ctx, next) =>
+      next({ commandData2: 'cmd2' })
+    );
+    const command3: Command3 = vi.fn((_ctx, next) => next());
+
+    commandManager.add('command1', command1);
+    commandManager.add('command2', command2);
+    commandManager.add('command3', command3);
+
+    const result1 = commandManager.exec('command1');
+    const result2 = commandManager.exec('command1', {
+      command1Option: 'test',
+    });
+    const result3 = commandManager.exec('command2');
+    const result4 = commandManager.exec('command3');
+
+    expect(command1).toHaveBeenCalled();
+    expect(command2).toHaveBeenCalled();
+    expect(command3).toHaveBeenCalled();
+    expect(result1).toEqual({ commandData1: '123', success: true });
+    expect(result2).toEqual({ commandData1: 'test123', success: true });
+    expect(result3).toEqual({ commandData2: 'cmd2', success: true });
+    expect(result4).toEqual({ success: true });
   });
 
   test('should not continue with the rest of the chain if all commands in `try` fail', () => {

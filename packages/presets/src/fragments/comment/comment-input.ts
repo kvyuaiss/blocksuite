@@ -1,13 +1,14 @@
 import type { TextSelection } from '@blocksuite/block-std';
-import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
 import type { RichText } from '@blocksuite/blocks';
+
+import { ShadowlessElement } from '@blocksuite/block-std';
+import { WithDisposable } from '@blocksuite/global/utils';
 import { DocCollection } from '@blocksuite/store';
 import { css, html, nothing } from 'lit';
-import { customElement, property, query } from 'lit/decorators.js';
+import { property, query } from 'lit/decorators.js';
 
 import type { Comment, CommentManager } from './comment-manager.js';
 
-@customElement('comment-input')
 export class CommentInput extends WithDisposable(ShadowlessElement) {
   static override styles = css`
     .comment-input-container {
@@ -41,18 +42,9 @@ export class CommentInput extends WithDisposable(ShadowlessElement) {
     }
   `;
 
-  @property({ attribute: false })
-  manager!: CommentManager;
-
-  @property({ attribute: false })
-  onSubmit?: (comment: Comment) => void;
-
-  @query('rich-text')
-  private _editor!: RichText;
-
-  get host() {
-    return this.manager.host;
-  }
+  private _cancel = () => {
+    this.remove();
+  };
 
   private _submit = (textSelection: TextSelection) => {
     const deltas = this._editor.inlineEditor?.yTextDeltas;
@@ -73,9 +65,9 @@ export class CommentInput extends WithDisposable(ShadowlessElement) {
     this.remove();
   };
 
-  private _cancel = () => {
-    this.remove();
-  };
+  get host() {
+    return this.manager.host;
+  }
 
   override render() {
     const textSelection = this.host.selection.find('text');
@@ -115,6 +107,15 @@ export class CommentInput extends WithDisposable(ShadowlessElement) {
       </div>
     </div>`;
   }
+
+  @query('rich-text')
+  private accessor _editor!: RichText;
+
+  @property({ attribute: false })
+  accessor manager!: CommentManager;
+
+  @property({ attribute: false })
+  accessor onSubmit: undefined | ((comment: Comment) => void) = undefined;
 }
 
 declare global {

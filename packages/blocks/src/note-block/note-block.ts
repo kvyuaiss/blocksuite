@@ -1,16 +1,13 @@
-/// <reference types="vite/client" />
-import { BlockElement } from '@blocksuite/block-std';
+import type { NoteBlockModel } from '@blocksuite/affine-model';
+
+import { BlockComponent } from '@blocksuite/block-std';
 import { css, html } from 'lit';
-import { customElement } from 'lit/decorators.js';
 
-import { KeymapController } from './keymap-controller.js';
-import { type NoteBlockModel } from './note-model.js';
-import type { NoteService } from './note-service.js';
+import type { NoteBlockService } from './note-service.js';
 
-@customElement('affine-note')
-export class NoteBlockComponent extends BlockElement<
+export class NoteBlockComponent extends BlockComponent<
   NoteBlockModel,
-  NoteService
+  NoteBlockService
 > {
   static override styles = css`
     .affine-note-block-container {
@@ -21,12 +18,8 @@ export class NoteBlockComponent extends BlockElement<
     }
   `;
 
-  keymapController = new KeymapController(this);
-
   override connectedCallback() {
     super.connectedCallback();
-
-    this.keymapController.bind();
   }
 
   override renderBlock() {

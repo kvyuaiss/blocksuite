@@ -1,5 +1,11 @@
 # BlockSuite
 
+> [!WARNING]
+> This repository will undergo major changes, so we will suspend accepting PRs.
+>
+> Read more:
+> https://github.com/toeverything/blocksuite/issues/9045
+
 <p align="center">
   <picture style="width: 500px">
     <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/toeverything/blocksuite/master/assets/logo-and-name-h.svg" />
@@ -18,6 +24,7 @@
 [![NPM Canary Release](https://img.shields.io/npm/v/@blocksuite/presets/canary?color=6880ff)](https://github.com/toeverything/blocksuite/actions/workflows/canary-release.yml?query=branch%3Amaster)
 [![Open in StackBlitz](https://img.shields.io/badge/open%20in-StackBlitz-black)](https://stackblitz.com/github/toeverything/blocksuite)
 [![Join Discord](https://img.shields.io/discord/959027316334407691)](https://discord.gg/9vwSWmYYcZ)
+[![Gurubase](https://img.shields.io/badge/Gurubase-Ask%20BlockSuite%20Guru-006BFF)](https://gurubase.io/g/blocksuite)
 
 ---
 

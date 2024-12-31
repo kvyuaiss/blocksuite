@@ -1,6 +1,9 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  esbuild: {
+    target: 'es2018',
+  },
   test: {
     globalSetup: '../../scripts/vitest-global.ts',
     include: ['src/__tests__/**/*.unit.spec.ts'],
@@ -16,7 +19,12 @@ export default defineConfig({
      * Return `false` to ignore the log.
      */
     onConsoleLog(log, type) {
-      if (log.includes('https://lit.dev/msg/dev-mode')) {
+      if (
+        log.includes('https://lit.dev/msg/dev-mode') ||
+        log.includes(
+          `KaTeX doesn't work in quirks mode. Make sure your website has a suitable doctype.`
+        )
+      ) {
         return false;
       }
       console.warn(`Unexpected ${type} log`, log);

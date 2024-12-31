@@ -1,67 +1,65 @@
-import { WithDisposable } from '@blocksuite/block-std';
+import type { GfxToolsFullOptionValue } from '@blocksuite/block-std/gfx';
+
+import {
+  EdgelessEraserDarkIcon,
+  EdgelessEraserLightIcon,
+} from '@blocksuite/affine-components/icons';
+import { ThemeProvider } from '@blocksuite/affine-shared/services';
 import { css, html, LitElement } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
 
-import { EdgelessEraserIcon } from '../../../../../_common/icons/index.js';
-import { type EdgelessTool } from '../../../../../_common/utils/index.js';
-import type { EdgelessRootBlockComponent } from '../../../edgeless-root-block.js';
 import { getTooltipWithShortcut } from '../../utils.js';
+import { EdgelessToolbarToolMixin } from '../mixins/tool.mixin.js';
 
-@customElement('edgeless-eraser-tool-button')
-export class EdgelessEraserToolButton extends WithDisposable(LitElement) {
+export class EdgelessEraserToolButton extends EdgelessToolbarToolMixin(
+  LitElement
+) {
   static override styles = css`
-    .eraser-button {
-      position: relative;
-      height: 66px;
-      width: 60px;
+    :host {
+      height: 100%;
       overflow-y: hidden;
     }
-    .eraser-button .active-mode {
-      position: absolute;
-      top: 8px;
-      left: 6px;
-      width: 48px;
-      height: 66px;
-      border-top-left-radius: 12px;
-      border-top-right-radius: 12px;
-      background: var(--affine-hover-color);
+    .eraser-button {
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      position: relative;
+      width: 49px;
+      height: 64px;
     }
     #edgeless-eraser-icon {
-      position: absolute;
-      top: 4px;
-      left: 50%;
-      transform: translateX(-50%);
-      transition: top 0.3s ease-in-out;
+      transition: transform 0.3s ease-in-out;
+      transform: translateY(8px);
     }
-    #edgeless-eraser-icon:hover {
-      top: 0px;
+    .eraser-button:hover #edgeless-eraser-icon,
+    .eraser-button.active #edgeless-eraser-icon {
+      transform: translateY(0);
     }
   `;
 
-  @property({ attribute: false })
-  edgelessTool!: EdgelessTool;
+  override enableActiveBackground = true;
 
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
-
-  @property({ attribute: false })
-  setEdgelessTool!: (edgelessTool: EdgelessTool) => void;
+  override type: GfxToolsFullOptionValue['type'] = 'eraser';
 
   override firstUpdated() {
-    this.edgeless.bindHotKey(
-      {
-        Escape: () => {
-          if (this.edgelessTool.type === 'eraser') {
-            this.setEdgelessTool({ type: 'default' });
-          }
+    this.disposables.add(
+      this.edgeless.bindHotKey(
+        {
+          Escape: () => {
+            if (this.edgelessTool.type === 'eraser') {
+              this.setEdgelessTool({ type: 'default' });
+            }
+          },
         },
-      },
-      { global: true }
+        { global: true }
+      )
     );
   }
 
   override render() {
     const type = this.edgelessTool?.type;
+    const appTheme = this.edgeless.std.get(ThemeProvider).app$.value;
+    const icon =
+      appTheme === 'dark' ? EdgelessEraserDarkIcon : EdgelessEraserLightIcon;
 
     return html`
       <edgeless-toolbar-button
@@ -71,10 +69,7 @@ export class EdgelessEraserToolButton extends WithDisposable(LitElement) {
         .active=${type === 'eraser'}
         @click=${() => this.setEdgelessTool({ type: 'eraser' })}
       >
-        <div class="eraser-button">
-          <div class=${type === 'eraser' ? 'active-mode' : ''}></div>
-          ${EdgelessEraserIcon}
-        </div>
+        <div class="eraser-button">${icon}</div>
       </edgeless-toolbar-button>
     `;
   }

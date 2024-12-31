@@ -1,161 +1,252 @@
 import type { UIEventStateContext } from '@blocksuite/block-std';
-import { WidgetElement } from '@blocksuite/block-std';
+
+import {
+  type AffineInlineEditor,
+  getInlineEditorByModel,
+} from '@blocksuite/affine-components/rich-text';
+import {
+  getCurrentNativeRange,
+  matchFlavours,
+} from '@blocksuite/affine-shared/utils';
+import { WidgetComponent } from '@blocksuite/block-std';
 import {
   assertExists,
+  assertType,
+  debounce,
   DisposableGroup,
   throttle,
 } from '@blocksuite/global/utils';
-import type { BlockModel } from '@blocksuite/store';
-import { customElement } from 'lit/decorators.js';
+import { InlineEditor } from '@blocksuite/inline';
 
+import type { RootBlockComponent } from '../../types.js';
+
+import { getPopperPosition } from '../../utils/position.js';
 import {
-  getCurrentNativeRange,
-  getInlineEditorByModel,
-  isControlledKeyboardEvent,
-  matchFlavours,
-} from '../../../_common/utils/index.js';
-import type { RootBlockComponent } from '../../../root-block/types.js';
-import { isRootElement } from '../../../root-block/utils/guard.js';
-import { getPopperPosition } from '../../../root-block/utils/position.js';
-import { menuGroups } from './config.js';
+  defaultSlashMenuConfig,
+  type SlashMenuActionItem,
+  type SlashMenuContext,
+  type SlashMenuGroupDivider,
+  type SlashMenuItem,
+  type SlashMenuItemGenerator,
+  type SlashMenuStaticConfig,
+  type SlashSubMenu,
+} from './config.js';
 import { SlashMenu } from './slash-menu-popover.js';
-import type { SlashMenuOptions } from './utils.js';
+import { filterEnabledSlashMenuItems } from './utils.js';
+
+export type AffineSlashMenuContext = SlashMenuContext;
+export type AffineSlashMenuItem = SlashMenuItem;
+export type AffineSlashMenuActionItem = SlashMenuActionItem;
+export type AffineSlashMenuItemGenerator = SlashMenuItemGenerator;
+export type AffineSlashSubMenu = SlashSubMenu;
+export type AffineSlashMenuGroupDivider = SlashMenuGroupDivider;
 
 let globalAbortController = new AbortController();
 
-function showSlashMenu({
-  rootElement,
-  model,
-  range,
-  container = document.body,
-  abortController = new AbortController(),
-  options,
-  triggerKey,
-}: {
-  rootElement: RootBlockComponent;
-  model: BlockModel;
-  range: Range;
-  container?: HTMLElement;
-  abortController?: AbortController;
-  options: SlashMenuOptions;
-  triggerKey: string;
-}) {
-  // Abort previous format quick bar
+function closeSlashMenu() {
   globalAbortController.abort();
-  globalAbortController = abortController;
-  const disposables = new DisposableGroup();
-  abortController.signal.addEventListener('abort', () => disposables.dispose());
-
-  const slashMenu = new SlashMenu();
-  disposables.add(() => slashMenu.remove());
-  slashMenu.model = model;
-  slashMenu.abortController = abortController;
-  slashMenu.options = options;
-  slashMenu.rootElement = rootElement;
-  slashMenu.triggerKey = triggerKey;
-
-  // Handle position
-  const updatePosition = throttle(() => {
-    const slashMenuElement = slashMenu.slashMenuElement;
-    assertExists(
-      slashMenuElement,
-      'You should render the slash menu node even if no position'
-    );
-    const position = getPopperPosition(slashMenuElement, range);
-    slashMenu.updatePosition(position);
-  }, 10);
-
-  disposables.addFromEvent(window, 'resize', updatePosition);
-
-  // FIXME(Flrande): It is not a best practice,
-  // but merely a temporary measure for reusing previous components.
-  // Mount
-  container.append(slashMenu);
-  // Wait for the Node to be mounted
-  setTimeout(updatePosition);
-  return slashMenu;
 }
+
+const showSlashMenu = debounce(
+  ({
+    context,
+    container = document.body,
+    abortController = new AbortController(),
+    config,
+    triggerKey,
+  }: {
+    context: SlashMenuContext;
+    container?: HTMLElement;
+    abortController?: AbortController;
+    config: SlashMenuStaticConfig;
+    triggerKey: string;
+  }) => {
+    const curRange = getCurrentNativeRange();
+    if (!curRange) return;
+
+    globalAbortController = abortController;
+    const disposables = new DisposableGroup();
+    abortController.signal.addEventListener('abort', () =>
+      disposables.dispose()
+    );
+
+    const inlineEditor = getInlineEditorByModel(
+      context.rootComponent.host,
+      context.model
+    );
+    if (!inlineEditor) return;
+    const slashMenu = new SlashMenu(inlineEditor, abortController);
+    disposables.add(() => slashMenu.remove());
+    slashMenu.context = context;
+    slashMenu.config = config;
+    slashMenu.triggerKey = triggerKey;
+
+    // Handle position
+    const updatePosition = throttle(() => {
+      const slashMenuElement = slashMenu.slashMenuElement;
+      assertExists(
+        slashMenuElement,
+        'You should render the slash menu node even if no position'
+      );
+      const position = getPopperPosition(slashMenuElement, curRange);
+      slashMenu.updatePosition(position);
+    }, 10);
+
+    disposables.addFromEvent(window, 'resize', updatePosition);
+
+    // FIXME(Flrande): It is not a best practice,
+    // but merely a temporary measure for reusing previous components.
+    // Mount
+    container.append(slashMenu);
+    // Wait for the Node to be mounted
+    setTimeout(updatePosition);
+    return slashMenu;
+  },
+  100
+);
 
 export const AFFINE_SLASH_MENU_WIDGET = 'affine-slash-menu-widget';
 
-@customElement(AFFINE_SLASH_MENU_WIDGET)
-export class AffineSlashMenuWidget extends WidgetElement {
-  static DEFAULT_OPTIONS: SlashMenuOptions = {
-    isTriggerKey: (event: KeyboardEvent): false | string => {
-      const triggerKeys = [
-        '/',
-        // Compatible with CJK IME
-        '、',
-      ];
+export class AffineSlashMenuWidget extends WidgetComponent {
+  static DEFAULT_CONFIG = defaultSlashMenuConfig;
 
-      if (
-        event.key === 'Process' &&
-        event.code === 'Slash' &&
-        // See https://github.com/toeverything/blocksuite/issues/5197
-        !event.shiftKey
-      ) {
-        // Ad-hoc for https://github.com/toeverything/blocksuite/issues/3485
-        // This key can be triggered by pressing the slash key while using CJK IME in Windows.
-        //
-        // Description: The `Process` key. Instructs the IME to process the conversion.
-        // See also https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#common_ime_keys
-        // https://stackoverflow.com/questions/71961563/keyboard-event-has-key-process-on-chromebook
-        return '/';
+  private _getInlineEditor = (evt: KeyboardEvent | CompositionEvent) => {
+    if (evt.target instanceof HTMLElement) {
+      const editor = (
+        evt.target.closest('.inline-editor') as {
+          inlineEditor?: AffineInlineEditor;
+        }
+      )?.inlineEditor;
+      if (editor instanceof InlineEditor) {
+        return editor;
       }
-      if (isControlledKeyboardEvent(event) || event.key.length !== 1)
-        return false;
-      const triggerKey = triggerKeys.find(key => key === event.key);
-      if (!triggerKey) return false;
-      return triggerKey;
-    },
-    menus: menuGroups,
+    }
+
+    const textSelection = this.host.selection.find('text');
+    if (!textSelection) return;
+
+    const model = this.host.doc.getBlock(textSelection.blockId)?.model;
+    if (!model) return;
+
+    return getInlineEditorByModel(this.host, model);
   };
 
-  options = AffineSlashMenuWidget.DEFAULT_OPTIONS;
+  private _handleInput = (
+    inlineEditor: InlineEditor,
+    isCompositionEnd: boolean
+  ) => {
+    const inlineRangeApplyCallback = (callback: () => void) => {
+      // the inline ranged updated in compositionEnd event before this event callback
+      if (isCompositionEnd) callback();
+      else inlineEditor.slots.inlineRangeSync.once(callback);
+    };
 
-  override connectedCallback() {
-    super.connectedCallback();
-    this.handleEvent('keyDown', this._onKeyDown);
-  }
+    const rootComponent = this.block;
+    if (rootComponent.model.flavour !== 'affine:page') {
+      console.error('SlashMenuWidget should be used in RootBlock');
+      return;
+    }
+    assertType<RootBlockComponent>(rootComponent);
+
+    inlineRangeApplyCallback(() => {
+      const textSelection = this.host.selection.find('text');
+      if (!textSelection) return;
+
+      const model = this.host.doc.getBlock(textSelection.blockId)?.model;
+      if (!model) return;
+
+      if (matchFlavours(model, this.config.ignoreBlockTypes)) return;
+
+      const inlineRange = inlineEditor.getInlineRange();
+      if (!inlineRange) return;
+
+      const textPoint = inlineEditor.getTextPoint(inlineRange.index);
+      if (!textPoint) return;
+
+      const [leafStart, offsetStart] = textPoint;
+
+      const text = leafStart.textContent
+        ? leafStart.textContent.slice(0, offsetStart)
+        : '';
+
+      const matchedKey = this.config.triggerKeys.find(triggerKey =>
+        text.endsWith(triggerKey)
+      );
+      if (!matchedKey) return;
+
+      const config: SlashMenuStaticConfig = {
+        ...this.config,
+        items: filterEnabledSlashMenuItems(this.config.items, {
+          model,
+          rootComponent,
+        }),
+      };
+
+      closeSlashMenu();
+      showSlashMenu({
+        context: {
+          model,
+          rootComponent,
+        },
+        triggerKey: matchedKey,
+        config,
+      });
+    });
+  };
+
+  private _onCompositionEnd = (ctx: UIEventStateContext) => {
+    const event = ctx.get('defaultState').event as CompositionEvent;
+
+    if (
+      !this.config.triggerKeys.some(triggerKey =>
+        triggerKey.includes(event.data)
+      )
+    )
+      return;
+
+    const inlineEditor = this._getInlineEditor(event);
+    if (!inlineEditor) return;
+
+    this._handleInput(inlineEditor, true);
+  };
 
   private _onKeyDown = (ctx: UIEventStateContext) => {
     const eventState = ctx.get('keyboardState');
     const event = eventState.raw;
-    const triggerKey = this.options.isTriggerKey(event);
-    if (triggerKey === false) return;
-    const text = this.host.selection.value.find(selection =>
-      selection.is('text')
-    );
-    if (!text) {
-      return;
-    }
-    const model = this.host.doc.getBlockById(text.blockId);
-    if (!model) {
-      return;
-    }
 
-    if (matchFlavours(model, ['affine:code'])) return;
-    const inlineEditor = getInlineEditorByModel(this.host, model);
+    const key = event.key;
+
+    // check event is not composing
+    if (
+      key === undefined || // in mac os, the key may be undefined
+      key === 'Process' ||
+      event.isComposing
+    )
+      return;
+
+    if (!this.config.triggerKeys.some(triggerKey => triggerKey.includes(key)))
+      return;
+
+    const inlineEditor = this._getInlineEditor(event);
     if (!inlineEditor) return;
-    inlineEditor.slots.inlineRangeApply.once(() => {
-      const rootElement = this.blockElement;
-      if (!isRootElement(rootElement)) {
-        throw new Error('SlashMenuWidget should be used in RootBlock');
-      }
 
-      // Wait for dom update, see this case https://github.com/toeverything/blocksuite/issues/2611
-      requestAnimationFrame(() => {
-        const curRange = getCurrentNativeRange();
-        showSlashMenu({
-          rootElement,
-          model,
-          range: curRange,
-          triggerKey,
-          options: this.options,
-        });
-      });
-    });
+    this._handleInput(inlineEditor, false);
   };
+
+  config = AffineSlashMenuWidget.DEFAULT_CONFIG;
+
+  override connectedCallback() {
+    super.connectedCallback();
+
+    if (this.config.triggerKeys.some(key => key.length === 0)) {
+      console.error('Trigger key of slash menu should not be empty string');
+      return;
+    }
+
+    // this.handleEvent('beforeInput', this._onBeforeInput);
+    this.handleEvent('keyDown', this._onKeyDown);
+    this.handleEvent('compositionEnd', this._onCompositionEnd);
+  }
 }
 
 declare global {

@@ -1,10 +1,10 @@
-import type { Chain, InitCommandCtx } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import { html, type TemplateResult } from 'lit';
+import type { MenuItemGroup } from '@blocksuite/affine-components/toolbar';
+import type {
+  Chain,
+  CommandKeyToData,
+  InitCommandCtx,
+} from '@blocksuite/block-std';
 
-import { toast } from '../../../_common/components/index.js';
-import { createSimplePortal } from '../../../_common/components/portal.js';
-import { DATABASE_CONVERT_WHITE_LIST } from '../../../_common/configs/quick-action/database-convert-view.js';
 import {
   BoldIcon,
   BulletedListIcon,
@@ -12,7 +12,8 @@ import {
   CodeIcon,
   CopyIcon,
   DatabaseTableViewIcon20,
-  FontLinkedDocIcon,
+  DeleteIcon,
+  DuplicateIcon,
   Heading1Icon,
   Heading2Icon,
   Heading3Icon,
@@ -20,15 +21,34 @@ import {
   Heading5Icon,
   Heading6Icon,
   ItalicIcon,
+  LinkedDocIcon,
   LinkIcon,
+  MoreVerticalIcon,
   NumberedListIcon,
   QuoteIcon,
   StrikethroughIcon,
   TextIcon,
   UnderlineIcon,
-} from '../../../_common/icons/index.js';
-import { createLinkedDocFromSelectedBlocks } from '../../../_common/utils/render-linked-doc.js';
+} from '@blocksuite/affine-components/icons';
+import { toast } from '@blocksuite/affine-components/toast';
+import { renderGroups } from '@blocksuite/affine-components/toolbar';
+import { TelemetryProvider } from '@blocksuite/affine-shared/services';
+import { tableViewMeta } from '@blocksuite/data-view/view-presets';
+import { assertExists } from '@blocksuite/global/utils';
+import { Slice } from '@blocksuite/store';
+import { html, type TemplateResult } from 'lit';
+
 import type { AffineFormatBarWidget } from './format-bar.js';
+
+import {
+  convertSelectedBlocksToLinkedDoc,
+  getTitleFromSelectedModels,
+  notifyDocCreated,
+  promptDocTitle,
+} from '../../../_common/utils/render-linked-doc.js';
+import { convertToDatabase } from '../../../database-block/data-source.js';
+import { DATABASE_CONVERT_WHITE_LIST } from '../../../database-block/utils/block-utils.js';
+import { FormatBarContext } from './context.js';
 
 export type DividerConfigItem = {
   type: 'divider';
@@ -121,82 +141,104 @@ export function toolbarDefaultConfig(toolbar: AffineFormatBarWidget) {
     .addHighlighterDropdown()
     .addDivider()
     .addInlineAction({
-      id: 'copy',
-      name: 'Copy',
-      icon: CopyIcon,
-      isActive: () => false,
-      action: chain => {
-        chain
-          .getSelectedModels()
-          .with({
-            onCopy: () => {
-              toast(toolbar.host, 'Copied to clipboard');
-            },
-          })
-          .copySelectedModels()
-          .run();
-      },
-      showWhen: () => true,
-    })
-    .addInlineAction({
       id: 'convert-to-database',
-      name: 'Group as Database',
+      name: 'Create Table',
       icon: DatabaseTableViewIcon20,
       isActive: () => false,
       action: () => {
-        createSimplePortal({
-          template: html`<database-convert-view
-            .host=${toolbar.host}
-          ></database-convert-view>`,
+        convertToDatabase(toolbar.host, tableViewMeta.type);
+      },
+      showWhen: chain => {
+        const middleware = (count = 0) => {
+          return (
+            ctx: CommandKeyToData<'selectedBlocks'>,
+            next: () => void
+          ) => {
+            const { selectedBlocks } = ctx;
+            if (!selectedBlocks || selectedBlocks.length === count) return;
+
+            const allowed = selectedBlocks.every(block =>
+              DATABASE_CONVERT_WHITE_LIST.includes(block.flavour)
+            );
+            if (!allowed) return;
+
+            next();
+          };
+        };
+        let [result] = chain
+          .getTextSelection()
+          .getSelectedBlocks({
+            types: ['text'],
+          })
+          .inline(middleware(1))
+          .run();
+
+        if (result) return true;
+
+        [result] = chain
+          .tryAll(chain => [
+            chain.getBlockSelections(),
+            chain.getImageSelections(),
+          ])
+          .getSelectedBlocks({
+            types: ['block', 'image'],
+          })
+          .inline(middleware(0))
+          .run();
+
+        return result;
+      },
+    })
+    .addDivider()
+    .addInlineAction({
+      id: 'convert-to-linked-doc',
+      name: 'Create Linked Doc',
+      icon: LinkedDocIcon,
+      isActive: () => false,
+      action: (chain, formatBar) => {
+        const [_, ctx] = chain
+          .getSelectedModels({
+            types: ['block', 'text'],
+            mode: 'highest',
+          })
+          .draftSelectedModels()
+          .run();
+        const { draftedModels, selectedModels } = ctx;
+        if (!selectedModels?.length || !draftedModels) return;
+
+        const host = formatBar.host;
+        host.selection.clear();
+
+        const doc = host.doc;
+        const autofill = getTitleFromSelectedModels(selectedModels);
+        void promptDocTitle(host, autofill).then(async title => {
+          if (title === null) return;
+          await convertSelectedBlocksToLinkedDoc(
+            host.std,
+            doc,
+            draftedModels,
+            title
+          );
+          notifyDocCreated(host, doc);
+          host.std.getOptional(TelemetryProvider)?.track('DocCreated', {
+            control: 'create linked doc',
+            page: 'doc editor',
+            module: 'format toolbar',
+            type: 'embed-linked-doc',
+          });
+          host.std.getOptional(TelemetryProvider)?.track('LinkedDocCreated', {
+            control: 'create linked doc',
+            page: 'doc editor',
+            module: 'format toolbar',
+            type: 'embed-linked-doc',
+          });
         });
       },
       showWhen: chain => {
         const [_, ctx] = chain
           .getSelectedModels({
             types: ['block', 'text'],
-          })
-          .run();
-        const { selectedModels } = ctx;
-        if (!selectedModels || selectedModels.length === 0) return false;
-
-        return selectedModels.every(block =>
-          DATABASE_CONVERT_WHITE_LIST.includes(block.flavour)
-        );
-      },
-    })
-    .addInlineAction({
-      id: 'convert-to-linked-doc',
-      name: 'Create Linked Doc',
-      icon: FontLinkedDocIcon,
-      isActive: () => false,
-      action: (chain, formatBar) => {
-        const [_, ctx] = chain
-          .getSelectedModels({
-            types: ['block'],
             mode: 'highest',
-          })
-          .run();
-        const { selectedModels } = ctx;
-        assertExists(selectedModels);
-        if (!selectedModels.length) return;
-
-        const host = formatBar.host;
-        host.selection.clear();
-
-        const doc = host.doc;
-        const linkedDoc = createLinkedDocFromSelectedBlocks(
-          doc,
-          selectedModels
-        );
-        const linkedDocService = host.spec.getService(
-          'affine:embed-linked-doc'
-        );
-        linkedDocService.slots.linkedDocCreated.emit({ docId: linkedDoc.id });
-      },
-      showWhen: chain => {
-        const [_, ctx] = chain
-          .getSelectedModels({
-            types: ['block'],
           })
           .run();
         const { selectedModels } = ctx;
@@ -274,4 +316,140 @@ export function toolbarDefaultConfig(toolbar: AffineFormatBarWidget) {
       name: 'Quote',
       icon: QuoteIcon,
     });
+}
+
+export const BUILT_IN_GROUPS: MenuItemGroup<FormatBarContext>[] = [
+  {
+    type: 'clipboard',
+    items: [
+      {
+        type: 'copy',
+        label: 'Copy',
+        icon: CopyIcon,
+        disabled: c => c.doc.readonly,
+        action: c => {
+          c.std.command
+            .chain()
+            .getSelectedModels()
+            .with({
+              onCopy: () => {
+                toast(c.host, 'Copied to clipboard');
+              },
+            })
+            .draftSelectedModels()
+            .copySelectedModels()
+            .run();
+        },
+      },
+      {
+        type: 'duplicate',
+        label: 'Duplicate',
+        icon: DuplicateIcon,
+        disabled: c => c.doc.readonly,
+        action: c => {
+          c.doc.captureSync();
+          c.std.command
+            .chain()
+            .try(cmd => [
+              cmd
+                .getTextSelection()
+                .inline<'currentSelectionPath'>((ctx, next) => {
+                  const textSelection = ctx.currentTextSelection;
+                  assertExists(textSelection);
+                  const end = textSelection.to ?? textSelection.from;
+                  next({ currentSelectionPath: end.blockId });
+                }),
+              cmd
+                .getBlockSelections()
+                .inline<'currentSelectionPath'>((ctx, next) => {
+                  const currentBlockSelections = ctx.currentBlockSelections;
+                  assertExists(currentBlockSelections);
+                  const blockSelection = currentBlockSelections.at(-1);
+                  if (!blockSelection) {
+                    return;
+                  }
+                  next({ currentSelectionPath: blockSelection.blockId });
+                }),
+            ])
+            .getBlockIndex()
+            .getSelectedModels()
+            .draftSelectedModels()
+            .inline((ctx, next) => {
+              if (!ctx.draftedModels) {
+                return next();
+              }
+
+              ctx.draftedModels
+                .then(models => {
+                  const slice = Slice.fromModels(ctx.std.doc, models);
+                  return ctx.std.clipboard.duplicateSlice(
+                    slice,
+                    ctx.std.doc,
+                    ctx.parentBlock?.model.id,
+                    ctx.blockIndex ? ctx.blockIndex + 1 : 1
+                  );
+                })
+                .catch(console.error);
+
+              return next();
+            })
+            .run();
+        },
+      },
+    ],
+  },
+  {
+    type: 'delete',
+    items: [
+      {
+        type: 'delete',
+        label: 'Delete',
+        icon: DeleteIcon,
+        disabled: c => c.doc.readonly,
+        action: c => {
+          // remove text
+          const [result] = c.std.command
+            .chain()
+            .getTextSelection()
+            .deleteText()
+            .run();
+
+          if (result) {
+            return;
+          }
+
+          // remove blocks
+          c.std.command
+            .chain()
+            .tryAll(chain => [
+              chain.getBlockSelections(),
+              chain.getImageSelections(),
+            ])
+            .getSelectedModels()
+            .deleteSelectedModels()
+            .run();
+
+          c.toolbar.reset();
+        },
+      },
+    ],
+  },
+];
+
+export function toolbarMoreButton(toolbar: AffineFormatBarWidget) {
+  const context = new FormatBarContext(toolbar);
+  const actions = renderGroups(toolbar.moreGroups, context);
+
+  return html`
+    <editor-menu-button
+      .contentPadding="${'8px'}"
+      .button="${html`
+        <editor-icon-button aria-label="More" .tooltip=${'More'}>
+          ${MoreVerticalIcon}
+        </editor-icon-button>
+      `}"
+    >
+      <div data-size="large" data-orientation="vertical">${actions}</div>
+    </editor-menu-button>
+  `;
 }

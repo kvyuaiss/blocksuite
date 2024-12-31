@@ -1,4 +1,4 @@
-import { WidgetElement } from '@blocksuite/block-std';
+import { WidgetComponent } from '@blocksuite/block-std';
 import {
   autoUpdate,
   computePosition,
@@ -7,17 +7,11 @@ import {
   size,
 } from '@floating-ui/dom';
 import { nothing } from 'lit';
-import { customElement } from 'lit/decorators.js';
 
 export const AFFINE_INNER_MODAL_WIDGET = 'affine-inner-modal-widget';
 
-@customElement(AFFINE_INNER_MODAL_WIDGET)
-export class AffineInnerModalWidget extends WidgetElement {
+export class AffineInnerModalWidget extends WidgetComponent {
   private _getTarget?: () => ReferenceElement;
-
-  setTarget(fn: () => ReferenceElement) {
-    this._getTarget = fn;
-  }
 
   get target(): ReferenceElement {
     if (this._getTarget) {
@@ -56,6 +50,10 @@ export class AffineInnerModalWidget extends WidgetElement {
 
   override render() {
     return nothing;
+  }
+
+  setTarget(fn: () => ReferenceElement) {
+    this._getTarget = fn;
   }
 }
 

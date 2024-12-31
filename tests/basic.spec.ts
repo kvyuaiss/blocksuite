@@ -1,4 +1,4 @@
-import './utils/declare-test-window.js';
+import type { DeltaInsert } from '@inline/types.js';
 
 import { expect } from '@playwright/test';
 
@@ -7,12 +7,12 @@ import {
   captureHistory,
   click,
   disconnectByClick,
-  dragBetweenIndices,
   enterPlaygroundRoom,
   focusRichText,
   focusTitle,
   getCurrentEditorTheme,
   getCurrentHTMLTheme,
+  getPageSnapshot,
   initEmptyEdgelessState,
   initEmptyParagraphState,
   pressArrowLeft,
@@ -25,9 +25,7 @@ import {
   redoByClick,
   redoByKeyboard,
   setSelection,
-  SHORT_KEY,
   switchEditorMode,
-  switchReadonly,
   toggleDarkMode,
   type,
   undoByClick,
@@ -40,14 +38,13 @@ import {
   assertEmpty,
   assertRichTextInlineDeltas,
   assertRichTexts,
-  assertStore,
-  assertStoreMatchJSX,
   assertText,
   assertTitle,
-  defaultStore,
 } from './utils/asserts.js';
 import { scoped, test } from './utils/playwright.js';
 import { getFormatBar } from './utils/query.js';
+
+const BASIC_DEFAULT_SNAPSHOT = 'basic test default';
 
 test(scoped`basic input`, async ({ page }) => {
   await enterPlaygroundRoom(page);
@@ -56,7 +53,9 @@ test(scoped`basic input`, async ({ page }) => {
   await type(page, 'hello');
 
   await test.expect(page).toHaveTitle(/BlockSuite/);
-  await assertStore(page, defaultStore);
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${BASIC_DEFAULT_SNAPSHOT}.json`
+  );
   await assertText(page, 'hello');
 });
 
@@ -80,7 +79,7 @@ test(scoped`basic init with external text`, async ({ page }) => {
     doc.addBlock(
       'affine:paragraph',
       {
-        text: doc.Text.fromDelta(delta),
+        text: new doc.Text(delta as DeltaInsert[]),
       },
       note
     );
@@ -103,7 +102,6 @@ test(scoped`basic multi user state`, async ({ context, page: pageA }) => {
   await enterPlaygroundRoom(pageB, {
     flags: {},
     room,
-    blobStorage: undefined,
     noInit: true,
   });
   await waitDefaultPageLoaded(pageB);
@@ -127,7 +125,6 @@ test(
     await enterPlaygroundRoom(pageB, {
       flags: {},
       room,
-      blobStorage: undefined,
       noInit: true,
     });
 
@@ -135,8 +132,12 @@ test(
     await assertText(pageB, 'hello');
     await Promise.all([
       assertText(pageA, 'hello'),
-      assertStore(pageA, defaultStore),
-      assertStore(pageB, defaultStore),
+      expect(await getPageSnapshot(pageA, true)).toMatchSnapshot(
+        `${BASIC_DEFAULT_SNAPSHOT}.json`
+      ),
+      expect(await getPageSnapshot(pageB, true)).toMatchSnapshot(
+        `${BASIC_DEFAULT_SNAPSHOT}.json`
+      ),
       assertBlockChildrenIds(pageA, '0', ['1']),
       assertBlockChildrenIds(pageB, '0', ['1']),
     ]);
@@ -151,11 +152,10 @@ test(scoped`A first open, B first edit`, async ({ context, page: pageA }) => {
 
   const pageB = await context.newPage();
   await enterPlaygroundRoom(pageB, {
-    flags: {},
     room,
-    blobStorage: undefined,
     noInit: true,
   });
+  await pageB.waitForTimeout(500);
   await focusRichText(pageB);
 
   await waitNextFrame(pageA);
@@ -167,8 +167,12 @@ test(scoped`A first open, B first edit`, async ({ context, page: pageA }) => {
   await assertText(pageA, 'hello');
   await assertText(pageB, 'hello');
   await Promise.all([
-    assertStore(pageA, defaultStore),
-    assertStore(pageB, defaultStore),
+    expect(await getPageSnapshot(pageA, true)).toMatchSnapshot(
+      `${BASIC_DEFAULT_SNAPSHOT}.json`
+    ),
+    expect(await getPageSnapshot(pageB, true)).toMatchSnapshot(
+      `${BASIC_DEFAULT_SNAPSHOT}.json`
+    ),
   ]);
 });
 
@@ -251,41 +255,6 @@ test(scoped`undo after adding block twice`, async ({ page }) => {
   await redoByKeyboard(page);
   await assertRichTexts(page, ['hello', 'world']);
 });
-
-test(
-  scoped`should readonly mode not be able to modify text`,
-  async ({ page }) => {
-    await enterPlaygroundRoom(page);
-    const { paragraphId } = await initEmptyParagraphState(page);
-
-    await focusRichText(page);
-    await type(page, 'hello');
-    await switchReadonly(page);
-
-    await dragBetweenIndices(page, [0, 1], [0, 3]);
-    await page.keyboard.press(`${SHORT_KEY}+b`);
-    await assertStoreMatchJSX(
-      page,
-      `
-<affine:paragraph
-  prop:text="hello"
-  prop:type="text"
-/>`,
-      paragraphId
-    );
-
-    await undoByKeyboard(page);
-    await assertStoreMatchJSX(
-      page,
-      `
-<affine:paragraph
-  prop:text="hello"
-  prop:type="text"
-/>`,
-      paragraphId
-    );
-  }
-);
 
 test(scoped`undo/redo twice after adding block twice`, async ({ page }) => {
   await enterPlaygroundRoom(page);
@@ -450,66 +419,29 @@ test('when no note block, click editing area auto add a new note block', async (
   await initEmptyEdgelessState(page);
 
   await switchEditorMode(page);
-  await page.locator('affine-note').click({ force: true });
+  await page.locator('affine-edgeless-note').click({ force: true });
   await pressBackspace(page);
   await switchEditorMode(page);
-  let note = await page.evaluate(() => {
-    return document.querySelector('affine-note');
+  const edgelessNote = await page.evaluate(() => {
+    return document.querySelector('affine-edgeless-note');
   });
-  expect(note).toBeNull();
+  expect(edgelessNote).toBeNull();
   await click(page, { x: 200, y: 280 });
 
-  note = await page.evaluate(() => {
+  const pageNote = await page.evaluate(() => {
     return document.querySelector('affine-note');
   });
-  expect(note).not.toBeNull();
+  expect(pageNote).not.toBeNull();
 });
 
-test(scoped`automatic identify url text`, async ({ page }) => {
+test(scoped`automatic identify url text`, async ({ page }, testInfo) => {
   await enterPlaygroundRoom(page);
   await initEmptyParagraphState(page);
   await focusRichText(page);
   await type(page, 'abc https://google.com ');
 
-  await assertStoreMatchJSX(
-    page,
-    /*xml*/ `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:paragraph
-      prop:text={
-        <>
-          <text
-            insert="abc "
-          />
-          <text
-            insert="https://google.com"
-            link="https://google.com"
-          />
-          <text
-            insert=" "
-          />
-        </>
-      }
-      prop:type="text"
-    />
-  </affine:note>
-</affine:page>`
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_final.json`
   );
 });
 

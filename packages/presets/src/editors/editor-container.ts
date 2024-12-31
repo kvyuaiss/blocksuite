@@ -1,48 +1,26 @@
-import './page-editor.js';
-import './edgeless-editor.js';
-import '../fragments/doc-title/doc-title.js';
-import '../fragments/doc-meta-tags/doc-meta-tags.js';
+import type { BlockModel, Doc } from '@blocksuite/store';
 
-import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
-import type {
-  AbstractEditor,
-  EdgelessRootBlockComponent,
-  PageRootBlockComponent,
-  PageRootService,
-} from '@blocksuite/blocks';
 import {
+  BlockStdScope,
+  type ExtensionType,
+  ShadowlessElement,
+} from '@blocksuite/block-std';
+import {
+  type AbstractEditor,
+  type DocMode,
   EdgelessEditorBlockSpecs,
   PageEditorBlockSpecs,
-  ThemeObserver,
+  ThemeProvider,
 } from '@blocksuite/blocks';
-import { assertExists, Slot } from '@blocksuite/global/utils';
-import type { BlockModel, Doc } from '@blocksuite/store';
-import { css, html, nothing } from 'lit';
-import { customElement, property, query, state } from 'lit/decorators.js';
+import { SignalWatcher, Slot, WithDisposable } from '@blocksuite/global/utils';
+import { computed, signal } from '@preact/signals-core';
+import { css, html } from 'lit';
+import { property } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
+import { when } from 'lit/directives/when.js';
 
-import type { EdgelessEditor } from './edgeless-editor.js';
-import type { PageEditor } from './page-editor.js';
-
-/**
- * @deprecated need to refactor
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function forwardSlot<T extends Record<string, Slot<any>>>(
-  from: T,
-  to: Partial<T>
-) {
-  Object.entries(from).forEach(([key, slot]) => {
-    const target = to[key];
-    if (target) {
-      slot.pipe(target);
-    }
-  });
-}
-
-@customElement('affine-editor-container')
 export class AffineEditorContainer
-  extends WithDisposable(ShadowlessElement)
+  extends SignalWatcher(WithDisposable(ShadowlessElement))
   implements AbstractEditor
 {
   static override styles = css`
@@ -50,12 +28,10 @@ export class AffineEditorContainer
       position: relative;
       display: flex;
       flex-direction: column;
-      height: 100%;
       overflow-x: hidden;
       overflow-y: auto;
       container-name: viewport;
       container-type: inline-size;
-      background: var(--affine-background-primary-color);
       font-family: var(--affine-font-family);
     }
     .affine-page-viewport * {
@@ -68,139 +44,130 @@ export class AffineEditorContainer
       }
     }
 
-    page-editor {
+    .playground-page-editor-container {
       flex-grow: 1;
+      font-family: var(--affine-font-family);
+      display: block;
+    }
+
+    .playground-page-editor-container * {
+      box-sizing: border-box;
+    }
+
+    @media print {
+      .playground-page-editor-container {
+        height: auto;
+      }
+    }
+
+    .edgeless-editor-container {
+      font-family: var(--affine-font-family);
+      background: var(--affine-background-primary-color);
+      display: block;
+      height: 100%;
+      position: relative;
+      overflow: clip;
+    }
+
+    .edgeless-editor-container * {
+      box-sizing: border-box;
+    }
+
+    @media print {
+      .edgeless-editor-container {
+        height: auto;
+      }
+    }
+
+    .affine-edgeless-viewport {
+      display: block;
+      height: 100%;
+      position: relative;
+      overflow: clip;
+      container-name: viewport;
+      container-type: inline-size;
     }
   `;
 
-  @property({ attribute: false })
-  doc!: Doc;
+  private _doc = signal<Doc>();
 
-  @property({ attribute: false })
-  mode: 'page' | 'edgeless' = 'page';
+  private _edgelessSpecs = signal<ExtensionType[]>(EdgelessEditorBlockSpecs);
 
-  @property({ attribute: false })
-  pageSpecs = PageEditorBlockSpecs;
+  private _mode = signal<DocMode>('page');
 
-  @state()
-  private get _pageSpecs() {
-    return [...this.pageSpecs].map(spec => {
-      if (spec.schema.model.flavour === 'affine:page') {
-        const setup = spec.setup;
-        spec = {
-          ...spec,
-          setup: (slots, disposable) => {
-            setup?.(slots, disposable);
-            slots.mounted.once(({ service }) => {
-              disposable.add(
-                (<PageRootService>service).slots.editorModeSwitch.on(
-                  this.switchEditor.bind(this)
-                )
-              );
-            });
-          },
-        };
-      }
-      return spec;
+  private _pageSpecs = signal<ExtensionType[]>(PageEditorBlockSpecs);
+
+  private _specs = computed(() =>
+    this._mode.value === 'page'
+      ? this._pageSpecs.value
+      : this._edgelessSpecs.value
+  );
+
+  private _std = computed(() => {
+    return new BlockStdScope({
+      doc: this.doc,
+      extensions: this._specs.value,
     });
+  });
+
+  private _editorTemplate = computed(() => {
+    return this._std.value.render();
+  });
+
+  /**
+   * @deprecated need to refactor
+   */
+  slots: AbstractEditor['slots'] = {
+    docUpdated: new Slot(),
+  };
+
+  get doc() {
+    return this._doc.value as Doc;
   }
 
-  @property({ attribute: false })
-  edgelessSpecs = EdgelessEditorBlockSpecs;
-
-  @state()
-  private get _edgelessSpecs() {
-    return [...this.edgelessSpecs].map(spec => {
-      if (spec.schema.model.flavour === 'affine:page') {
-        const setup = spec.setup;
-        spec = {
-          ...spec,
-          setup: (slots, disposable) => {
-            setup?.(slots, disposable);
-            slots.mounted.once(({ service }) => {
-              disposable.add(
-                (<PageRootService>service).slots.editorModeSwitch.on(
-                  this.switchEditor.bind(this)
-                )
-              );
-            });
-          },
-        };
-      }
-      return spec;
-    });
+  set doc(doc: Doc) {
+    this._doc.value = doc;
   }
 
-  @property({ attribute: false })
-  override autofocus = false;
-
-  @query('page-editor')
-  private _pageEditor?: PageEditor;
-  @query('edgeless-editor')
-  private _edgelessEditor?: EdgelessEditor;
-
-  get editor() {
-    const editor =
-      this.mode === 'page' ? this._pageEditor : this._edgelessEditor;
-    assertExists(editor);
-    return editor;
+  set edgelessSpecs(specs: ExtensionType[]) {
+    this._edgelessSpecs.value = specs;
   }
+
+  get edgelessSpecs() {
+    return this._edgelessSpecs.value;
+  }
+
   get host() {
-    assertExists(this.editor);
-    return this.editor.host;
+    try {
+      return this.std.host;
+    } catch {
+      return null;
+    }
+  }
+
+  get mode() {
+    return this._mode.value;
+  }
+
+  set mode(mode: DocMode) {
+    this._mode.value = mode;
+  }
+
+  set pageSpecs(specs: ExtensionType[]) {
+    this._pageSpecs.value = specs;
+  }
+
+  get pageSpecs() {
+    return this._pageSpecs.value;
   }
 
   get rootModel() {
     return this.doc.root as BlockModel;
   }
 
-  switchEditor(mode: typeof this.mode) {
-    this.mode = mode;
+  get std() {
+    return this._std.value;
   }
-
-  override async getUpdateComplete(): Promise<boolean> {
-    const result = await super.getUpdateComplete();
-    const editor = this.editor;
-    assertExists(editor);
-    await editor.updateComplete;
-    return result;
-  }
-
-  override firstUpdated() {
-    if (this.mode === 'page') {
-      setTimeout(() => {
-        if (this.autofocus) {
-          const richText = this.querySelector('rich-text');
-          assertExists(richText);
-          const inlineEditor = richText.inlineEditor;
-          assertExists(inlineEditor);
-          inlineEditor.focusEnd();
-        }
-      });
-    }
-  }
-
-  /** @deprecated unreliable since pageSpecs can be overridden */
-  @query('affine-page-root')
-  private _pageRoot?: PageRootBlockComponent;
-  /** @deprecated unreliable since edgelessSpecs can be overridden */
-  @query('affine-edgeless-root')
-  private _edgelessRoot?: EdgelessRootBlockComponent;
-
-  /**
-   * @deprecated need to refactor
-   */
-  readonly themeObserver = new ThemeObserver();
-
-  /**
-   * @deprecated need to refactor
-   */
-  slots: AbstractEditor['slots'] = {
-    docLinkClicked: new Slot(),
-    editorModeSwitched: new Slot(),
-    docUpdated: new Slot(),
-    tagClicked: new Slot<{ tagId: string }>(),
-  };
 
   /**
    * @deprecated need to refactor
@@ -208,21 +175,62 @@ export class AffineEditorContainer
   override connectedCallback() {
     super.connectedCallback();
 
-    this.themeObserver.observe(document.documentElement);
-    this._disposables.add(this.themeObserver);
     this._disposables.add(
       this.doc.slots.rootAdded.on(() => this.requestUpdate())
     );
+  }
+
+  override firstUpdated() {
+    if (this.mode === 'page') {
+      setTimeout(() => {
+        if (this.autofocus) {
+          const richText = this.querySelector('rich-text');
+          const inlineEditor = richText?.inlineEditor;
+          inlineEditor?.focusEnd();
+        }
+      });
+    }
+  }
+
+  override render() {
+    const mode = this._mode.value;
+    const themeService = this.std.get(ThemeProvider);
+    const appTheme = themeService.app$.value;
+    const edgelessTheme = themeService.edgeless$.value;
+
+    return html`${keyed(
+      this.rootModel.id + mode,
+      html`
+        <div
+          data-theme=${mode === 'page' ? appTheme : edgelessTheme}
+          class=${mode === 'page'
+            ? 'affine-page-viewport'
+            : 'affine-edgeless-viewport'}
+        >
+          ${when(
+            mode === 'page',
+            () => html` <doc-title .doc=${this.doc}></doc-title> `
+          )}
+          <div
+            class=${mode === 'page'
+              ? 'page-editor playground-page-editor-container'
+              : 'edgeless-editor-container'}
+          >
+            ${this._editorTemplate.value}
+          </div>
+        </div>
+      `
+    )}`;
+  }
+
+  switchEditor(mode: DocMode) {
+    this._mode.value = mode;
   }
 
   /**
    * @deprecated need to refactor
    */
   override updated(changedProperties: Map<string, unknown>) {
-    if (changedProperties.has('mode')) {
-      this.slots.editorModeSwitched.emit(this.mode);
-    }
-
     if (changedProperties.has('doc')) {
       this.slots.docUpdated.emit({ newDocId: this.doc.id });
     }
@@ -230,40 +238,10 @@ export class AffineEditorContainer
     if (!changedProperties.has('doc') && !changedProperties.has('mode')) {
       return;
     }
-
-    requestAnimationFrame(() => {
-      if (this._pageRoot) forwardSlot(this._pageRoot.slots, this.slots);
-      if (this._edgelessRoot) forwardSlot(this._edgelessRoot.slots, this.slots);
-    });
   }
 
-  override render() {
-    if (!this.rootModel) return nothing;
-
-    return html`${keyed(
-      this.rootModel.id,
-      this.mode === 'page'
-        ? html`
-            <div class="affine-page-viewport">
-              <doc-title .doc=${this.doc}></doc-title>
-
-              <doc-meta-tags .doc=${this.doc}></doc-meta-tags>
-
-              <page-editor
-                .doc=${this.doc}
-                .specs=${this._pageSpecs}
-                .hasViewport=${false}
-              ></page-editor>
-            </div>
-          `
-        : html`
-            <edgeless-editor
-              .doc=${this.doc}
-              .specs=${this._edgelessSpecs}
-            ></edgeless-editor>
-          `
-    )}`;
-  }
+  @property({ attribute: false })
+  override accessor autofocus = false;
 }
 
 declare global {

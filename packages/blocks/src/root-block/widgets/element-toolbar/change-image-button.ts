@@ -1,90 +1,75 @@
-import '../../edgeless/components/buttons/tool-icon-button.js';
-import './component-toolbar-menu-divider.js';
+import type { ImageBlockModel } from '@blocksuite/affine-model';
 
-import { WithDisposable } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import { css, html, LitElement, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { CaptionIcon, DownloadIcon } from '@blocksuite/affine-components/icons';
+import { WithDisposable } from '@blocksuite/global/utils';
+import { html, LitElement, nothing } from 'lit';
+import { property } from 'lit/decorators.js';
 
-import { CaptionIcon } from '../../../_common/icons/text.js';
 import type { ImageBlockComponent } from '../../../image-block/image-block.js';
-import type { ImageBlockModel } from '../../../image-block/image-model.js';
 import type { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
 
-@customElement('edgeless-change-image-button')
+import { downloadImageBlob } from '../../../image-block/utils.js';
+
 export class EdgelessChangeImageButton extends WithDisposable(LitElement) {
-  static override styles = css`
-    .change-image-container {
-      display: flex;
-      align-items: center;
-      gap: 12px;
+  private _download = () => {
+    if (!this._blockComponent) return;
+    downloadImageBlob(this._blockComponent).catch(console.error);
+  };
+
+  private _showCaption = () => {
+    this._blockComponent?.captionEditor?.show();
+  };
+
+  private get _blockComponent() {
+    const blockSelection =
+      this.edgeless.service.selection.surfaceSelections.filter(sel =>
+        sel.elements.includes(this.model.id)
+      );
+    if (blockSelection.length !== 1) {
+      return;
     }
 
-    .change-image-button {
-      width: 24px;
-      height: 24px;
-      border-radius: 4px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
+    const block = this.edgeless.std.view.getBlock(
+      blockSelection[0].blockId
+    ) as ImageBlockComponent | null;
 
-    component-toolbar-menu-divider {
-      height: 24px;
-    }
-  `;
-
-  @property({ attribute: false })
-  model!: ImageBlockModel;
-
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
+    return block;
+  }
 
   private get _doc() {
     return this.model.doc;
   }
 
-  private get _blockElement() {
-    const blockSelection = this.edgeless.service.selection.selections.filter(
-      sel => sel.elements.includes(this.model.id)
-    );
-    if (blockSelection.length !== 1) {
-      return;
-    }
-
-    const blockElement = this.edgeless.std.view.viewFromPath(
-      'block',
-      blockSelection[0].path
-    ) as ImageBlockComponent | null;
-    assertExists(blockElement);
-
-    return blockElement;
-  }
-
-  private _showCaption() {
-    this._blockElement?.captionElement.show();
-  }
-
   override render() {
     return html`
-      <div class="change-image-container">
-        <edgeless-tool-icon-button
-          .tooltip=${'Add Caption'}
-          class="change-image-button caption"
-          ?disabled=${this._doc.readonly}
-          @click=${() => this._showCaption()}
-        >
-          ${CaptionIcon}
-        </edgeless-tool-icon-button>
-      </div>
+      <editor-icon-button
+        aria-label="Download"
+        .tooltip=${'Download'}
+        ?disabled=${this._doc.readonly}
+        @click=${this._download}
+      >
+        ${DownloadIcon}
+      </editor-icon-button>
+
+      <editor-toolbar-separator></editor-toolbar-separator>
+
+      <editor-icon-button
+        aria-label="Add caption"
+        .tooltip=${'Add caption'}
+        class="change-image-button caption"
+        ?disabled=${this._doc.readonly}
+        @click=${this._showCaption}
+      >
+        ${CaptionIcon}
+      </editor-icon-button>
     `;
   }
-}
 
-declare global {
-  interface HTMLElementTagNameMap {
-    'edgeless-change-image-button': EdgelessChangeImageButton;
-  }
+  @property({ attribute: false })
+  accessor edgeless!: EdgelessRootBlockComponent;
+
+  @property({ attribute: false })
+  accessor model!: ImageBlockModel;
 }
 
 export function renderChangeImageButton(

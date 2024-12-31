@@ -1,82 +1,98 @@
 {
   "name": "@blocksuite/blocks",
-  "version": "0.13.0",
+  "version": "0.19.5",
   "description": "Default BlockSuite editable blocks.",
   "type": "module",
-  "repository": "toeverything/blocksuite",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/toeverything/blocksuite.git",
+    "directory": "packages/blocks"
+  },
   "scripts": {
     "build": "tsc",
-    "test:unit": "vitest --run",
-    "test:unit:coverage": "vitest run --coverage",
+    "test:unit": "nx vite:test --run",
+    "test:unit:coverage": "nx vite:test --run --coverage",
     "test:e2e": "playwright test",
-    "test": "pnpm test:unit && pnpm test:e2e"
+    "test": "yarn test:unit && yarn test:e2e"
   },
+  "sideEffects": false,
   "keywords": [],
   "author": "toeverything",
   "license": "MPL-2.0",
   "dependencies": {
+    "@blocksuite/affine-block-embed": "workspace:*",
+    "@blocksuite/affine-block-list": "workspace:*",
+    "@blocksuite/affine-block-paragraph": "workspace:*",
+    "@blocksuite/affine-block-surface": "workspace:*",
+    "@blocksuite/affine-components": "workspace:*",
+    "@blocksuite/affine-model": "workspace:*",
+    "@blocksuite/affine-shared": "workspace:*",
+    "@blocksuite/affine-widget-scroll-anchoring": "workspace:*",
     "@blocksuite/block-std": "workspace:*",
+    "@blocksuite/data-view": "workspace:*",
     "@blocksuite/global": "workspace:*",
+    "@blocksuite/icons": "^2.1.75",
     "@blocksuite/inline": "workspace:*",
     "@blocksuite/store": "workspace:*",
-    "@dotlottie/player-component": "^2.7.12",
-    "@fal-ai/serverless-client": "^0.9.3",
-    "@floating-ui/dom": "^1.6.3",
-    "@sgtpooki/file-type": "1.0.1",
-    "@toeverything/theme": "^0.7.29",
+    "@floating-ui/dom": "^1.6.10",
+    "@lit/context": "^1.1.2",
+    "@preact/signals-core": "^1.8.0",
+    "@toeverything/theme": "^1.1.1",
     "@types/hast": "^3.0.4",
-    "@types/mdast": "^4.0.3",
-    "@types/sortablejs": "^1.15.8",
-    "@types/webfontloader": "^1.6.38",
-    "date-fns": "^3.6.0",
-    "dompurify": "^3.1.0",
+    "@types/mdast": "^4.0.4",
+    "collapse-white-space": "^2.1.0",
+    "date-fns": "^4.0.0",
+    "dompurify": "^3.1.6",
+    "fflate": "^0.8.2",
+    "file-type": "^19.5.0",
     "fractional-indexing": "^3.2.0",
     "html2canvas": "^1.4.1",
-    "jszip": "^3.10.1",
-    "lit": "^3.1.3",
-    "mdast-util-gfm-autolink-literal": "^2.0.0",
+    "katex": "^0.16.11",
+    "lit": "^3.2.0",
+    "lz-string": "^1.5.0",
+    "mdast-util-gfm-autolink-literal": "^2.0.1",
     "mdast-util-gfm-strikethrough": "^2.0.0",
     "mdast-util-gfm-table": "^2.0.0",
     "mdast-util-gfm-task-list-item": "^2.0.0",
-    "merge": "^2.1.1",
-    "micromark-extension-gfm-autolink-literal": "^2.0.0",
-    "micromark-extension-gfm-strikethrough": "^2.0.0",
-    "micromark-extension-gfm-table": "^2.0.0",
-    "micromark-extension-gfm-task-list-item": "^2.0.1",
+    "micromark-extension-gfm-autolink-literal": "^2.1.0",
+    "micromark-extension-gfm-strikethrough": "^2.1.0",
+    "micromark-extension-gfm-table": "^2.1.0",
+    "micromark-extension-gfm-task-list-item": "^2.1.0",
     "micromark-util-combine-extensions": "^2.0.0",
-    "minimatch": "^9.0.4",
+    "minimatch": "^10.0.1",
     "nanoid": "^5.0.7",
-    "openai": "^4.37.1",
     "pdf-lib": "^1.17.1",
     "rehype-parse": "^9.0.0",
     "rehype-stringify": "^10.0.0",
+    "remark-math": "^6.0.0",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
-    "shiki": "^1.3.0",
-    "sortablejs": "^1.15.2",
-    "unified": "^11.0.4",
-    "webfontloader": "^1.6.28",
-    "zod": "^3.22.4"
+    "shiki": "^1.14.1",
+    "simple-xml-to-json": "^1.2.2",
+    "unified": "^11.0.5",
+    "zod": "^3.23.8"
   },
   "exports": {
-    "./dist/*": "./dist/*",
     ".": "./src/index.ts",
-    "./schemas": "./src/schemas.ts"
+    "./schemas": "./src/schemas.ts",
+    "./effects": "./src/effects.ts"
   },
   "publishConfig": {
     "access": "public",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
     "exports": {
-      "./dist/*": "./dist/*",
-      "./src/*": "./dist/*.js",
       ".": {
-        "module": "./dist/index.js",
+        "types": "./dist/index.d.ts",
         "import": "./dist/index.js"
       },
       "./schemas": {
         "types": "./dist/schemas.d.ts",
-        "default": "./dist/schemas.js"
+        "import": "./dist/schemas.js"
+      },
+      "./effects": {
+        "types": "./dist/effects.d.ts",
+        "import": "./dist/effects.js"
       }
     }
   },
@@ -89,6 +105,7 @@
     "schemas.js"
   ],
   "devDependencies": {
-    "@types/dompurify": "^3.0.5"
+    "@types/dompurify": "^3.0.5",
+    "@types/katex": "^0.16.7"
   }
 }

@@ -1,31 +1,42 @@
-import type { EditorHost } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import { type BlockModel, Slot } from '@blocksuite/store';
-
-import type { EdgelessTool, TopLevelBlockModel } from '../../_common/types.js';
-import { last } from '../../_common/utils/iterable.js';
-import { clamp } from '../../_common/utils/math.js';
-import type { FrameBlockModel } from '../../frame-block/index.js';
-import type { IBound } from '../../surface-block/consts.js';
-import type { EdgelessElementType } from '../../surface-block/edgeless-types.js';
-import { GroupLikeModel } from '../../surface-block/element-model/base.js';
-import {
-  type CanvasElement,
-  type CanvasElementType,
-  type ConnectorElementModel,
-} from '../../surface-block/element-model/index.js';
+import type { BlockStdScope } from '@blocksuite/block-std';
 import type {
-  GroupElementModel,
-  SurfaceBlockModel,
-} from '../../surface-block/index.js';
-import { getCommonBound } from '../../surface-block/index.js';
-import type { ReorderingDirection } from '../../surface-block/managers/layer-manager.js';
-import { LayerManager } from '../../surface-block/managers/layer-manager.js';
-import { compare } from '../../surface-block/managers/layer-utils.js';
-import { Bound } from '../../surface-block/utils/bound.js';
+  GfxController,
+  GfxModel,
+  LayerManager,
+  PointTestOptions,
+  ReorderingDirection,
+} from '@blocksuite/block-std/gfx';
+
+import {
+  type ElementRenderer,
+  elementRenderers,
+  type SurfaceBlockModel,
+  type SurfaceContext,
+} from '@blocksuite/affine-block-surface';
+import {
+  type ConnectorElementModel,
+  type FrameBlockModel,
+  type GroupElementModel,
+  MindmapElementModel,
+  RootBlockSchema,
+} from '@blocksuite/affine-model';
+import { EditPropsStore } from '@blocksuite/affine-shared/services';
+import { clamp } from '@blocksuite/affine-shared/utils';
+import {
+  GfxControllerIdentifier,
+  GfxExtensionIdentifier,
+  isGfxGroupCompatibleModel,
+} from '@blocksuite/block-std/gfx';
+import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
+import { Bound, getCommonBound } from '@blocksuite/global/utils';
+import { type BlockModel, Slot } from '@blocksuite/store';
+import { effect } from '@preact/signals-core';
+
+import type { EdgelessFrameManager } from './frame-manager.js';
+
+import { getSurfaceBlock } from '../../surface-ref-block/utils.js';
 import { RootService } from '../root-service.js';
-import { EdgelessFrameManager } from './frame-manager.js';
-import { EdgelessSelectionManager } from './services/selection-manager.js';
+import { GfxBlockModel } from './block-model.js';
 import { TemplateJob } from './services/template.js';
 import {
   createInsertPlaceMiddleware,
@@ -33,35 +44,29 @@ import {
   createStickerMiddleware,
   replaceIdMiddleware,
 } from './services/template-middlewares.js';
-import type { EdgelessToolConstructor } from './services/tools-manager.js';
-import { EdgelessToolsManager } from './services/tools-manager.js';
-import {
-  EdgelessBlockModel,
-  type EdgelessModel,
-  type HitTestOptions,
-} from './type.js';
 import { FIT_TO_SCREEN_PADDING } from './utils/consts.js';
+import { getLastPropsKey } from './utils/get-last-props-key.js';
 import { getCursorMode } from './utils/query.js';
-import { EdgelessSnapManager } from './utils/snap-manager.js';
 import {
-  Viewport,
   ZOOM_INITIAL,
   ZOOM_MAX,
   ZOOM_MIN,
   ZOOM_STEP,
   type ZoomAction,
-} from './utils/viewport.js';
+} from './utils/zoom.js';
 
-export class EdgelessRootService extends RootService {
-  TemplateJob = TemplateJob;
+export class EdgelessRootService extends RootService implements SurfaceContext {
+  static override readonly flavour = RootBlockSchema.model.flavour;
+
+  private _surface: SurfaceBlockModel;
+
+  elementRenderers: Record<string, ElementRenderer> = elementRenderers;
 
   slots = {
-    edgelessToolUpdated: new Slot<EdgelessTool>(),
     pressShiftKeyUpdated: new Slot<boolean>(),
-    cursorUpdated: new Slot<string>(),
     copyAsPng: new Slot<{
-      blocks: TopLevelBlockModel[];
-      shapes: CanvasElement[];
+      blocks: BlockSuite.EdgelessBlockModelType[];
+      shapes: BlockSuite.SurfaceModel[];
     }>(),
     readonlyUpdated: new Slot<boolean>(),
     draggingAreaUpdated: new Slot(),
@@ -77,110 +82,79 @@ export class EdgelessRootService extends RootService {
     elementResizeEnd: new Slot(),
     toggleNoteSlicer: new Slot(),
 
-    docLinkClicked: new Slot<{
-      docId: string;
-      blockId?: string;
-    }>(),
-    tagClicked: new Slot<{ tagId: string }>(),
-    editorModeSwitch: new Slot<'edgeless' | 'page'>(),
+    toolbarLocked: new Slot<boolean>(),
   };
 
-  private _surface!: SurfaceBlockModel;
-  private _layer!: LayerManager;
-  private _frame!: EdgelessFrameManager;
-  private _snap!: EdgelessSnapManager;
-  private _selection!: EdgelessSelectionManager;
-  private _viewport!: Viewport;
-  private _tool!: EdgelessToolsManager;
+  TemplateJob = TemplateJob;
 
-  override mounted() {
-    super.mounted();
-
-    this._surface = this.doc.getBlockByFlavour(
-      'affine:surface'
-    )[0] as SurfaceBlockModel;
-
-    if (!this._surface) {
-      throw new Error('surface block not found');
+  updateElement = (id: string, props: Record<string, unknown>) => {
+    const element = this._surface.getElementById(id);
+    if (element) {
+      const key = getLastPropsKey(
+        element.type as BlockSuite.EdgelessModelKeys,
+        { ...element.yMap.toJSON(), ...props }
+      );
+      key && this.std.get(EditPropsStore).recordLastProps(key, props);
+      this._surface.updateElement(id, props);
+      return;
     }
 
-    this._layer = LayerManager.create(this.doc, this._surface);
-    this._frame = new EdgelessFrameManager(this);
-    this._snap = new EdgelessSnapManager(this);
-    this._viewport = new Viewport();
-    this._selection = new EdgelessSelectionManager(this);
-    this._tool = EdgelessToolsManager.create(this, []);
+    const block = this.doc.getBlockById(id);
+    if (block) {
+      const key = getLastPropsKey(
+        block.flavour as BlockSuite.EdgelessModelKeys,
+        { ...block.yBlock.toJSON(), ...props }
+      );
+      key && this.std.get(EditPropsStore).recordLastProps(key, props);
+      this.doc.updateBlock(block, props);
+    }
+  };
 
-    this._initSlotEffects();
-    this._initReadonlyListener();
+  get blocks(): GfxBlockModel[] {
+    return this.layer.blocks;
   }
 
-  override unmounted() {
-    super.unmounted();
-    this._layer.dispose();
-    this._selection.dispose();
-    this.selectionManager.set([]);
-    this.viewport.dispose();
-    this.tool.dispose();
-    this.disposables.dispose();
-  }
-
-  get tool() {
-    return this._tool;
-  }
-
-  get surface() {
-    return this._surface;
-  }
-
-  get layer() {
-    return this._layer;
-  }
-
-  get selection() {
-    return this._selection;
-  }
-
-  get viewport() {
-    return this._viewport;
-  }
-
-  get frame() {
-    return this._frame;
-  }
-
-  get snap() {
-    return this._snap;
+  /**
+   * sorted edgeless elements
+   */
+  get edgelessElements(): GfxModel[] {
+    return [...this.layer.canvasElements, ...this.layer.blocks].sort(
+      this.layer.compare
+    );
   }
 
   /**
    * sorted canvas elements
    */
   get elements() {
-    return this._layer.canvasElements;
+    return this.layer.canvasElements;
+  }
+
+  get frame() {
+    return this.std.get(
+      GfxExtensionIdentifier('frame-manager')
+    ) as EdgelessFrameManager;
   }
 
   /**
-   * sorted edgeless elements
+   * Get all sorted frames by presentation orderer,
+   * the legacy frame that uses `index` as presentation order
+   * will be put at the beginning of the array.
    */
-  get edgelessElements() {
-    return [
-      ...this._layer.canvasElements,
-      ...this._layer.blocks,
-      ...this._layer.frames,
-    ].sort(compare);
-  }
-
   get frames() {
-    return this._layer.frames;
+    return this.frame.frames;
   }
 
-  get blocks() {
-    return (this.frames as EdgelessBlockModel[]).concat(this._layer.blocks);
+  get gfx(): GfxController {
+    return this.std.get(GfxControllerIdentifier);
   }
 
-  get zoom() {
-    return this.viewport.zoom;
+  override get host() {
+    return this.std.host;
+  }
+
+  get layer(): LayerManager {
+    return this.gfx.layer;
   }
 
   get locked() {
@@ -191,24 +165,32 @@ export class EdgelessRootService extends RootService {
     this.viewport.locked = locked;
   }
 
-  override get host() {
-    return this.std.host as EditorHost;
+  get selection() {
+    return this.gfx.selection;
   }
 
-  private _initSlotEffects() {
-    const { disposables, slots } = this;
+  get surface() {
+    return this._surface;
+  }
 
-    disposables.add(
-      slots.edgelessToolUpdated.on(edgelessTool => {
-        slots.cursorUpdated.emit(getCursorMode(edgelessTool));
-      })
-    );
+  get viewport() {
+    return this.std.get(GfxControllerIdentifier).viewport;
+  }
 
-    disposables.add(
-      slots.pressShiftKeyUpdated.on(pressed => {
-        this.tool.shiftKey = pressed;
-      })
-    );
+  get zoom() {
+    return this.viewport.zoom;
+  }
+
+  constructor(std: BlockStdScope, flavourProvider: { flavour: string }) {
+    super(std, flavourProvider);
+    const surface = getSurfaceBlock(this.doc);
+    if (!surface) {
+      throw new BlockSuiteError(
+        ErrorCode.NoSurfaceModelError,
+        'This doc is missing surface block in edgeless.'
+      );
+    }
+    this._surface = surface;
   }
 
   private _initReadonlyListener() {
@@ -225,23 +207,15 @@ export class EdgelessRootService extends RootService {
     );
   }
 
-  generateIndex(type: string) {
-    // @ts-ignore
-    return this._layer.generateIndex(type);
-  }
+  private _initSlotEffects() {
+    const { disposables } = this;
 
-  addElement<T = Record<string, unknown>>(type: string, props: T) {
-    // @ts-ignore
-    props['index'] = this.generateIndex(type);
-    // @ts-ignore
-    props['type'] = type;
-
-    this.editSession.apply(
-      type as CanvasElementType,
-      props as Record<string, unknown>
+    disposables.add(
+      effect(() => {
+        const value = this.gfx.tool.currentToolOption$.value;
+        this.gfx.cursor$.value = getCursorMode(value);
+      })
     );
-
-    return this._surface.addElement(props as T & { type: string });
   }
 
   addBlock(
@@ -250,237 +224,45 @@ export class EdgelessRootService extends RootService {
     parent?: string | BlockModel,
     parentIndex?: number
   ) {
-    props['index'] = this.generateIndex(flavour);
-
-    this.editSession.apply(flavour as EdgelessElementType, props);
-
-    return this.doc.addBlock(flavour as never, props, parent, parentIndex);
-  }
-
-  getElementsByType<
-    K extends Parameters<SurfaceBlockModel['getElementsByType']>[0],
-  >(type: K) {
-    return this.surface.getElementsByType(type);
-  }
-
-  updateElement(id: string, props: Record<string, unknown>) {
-    const element = this._surface.getElementById(id);
-    if (element) {
-      this.editSession.record(element.type as EdgelessElementType, props);
-      this._surface.updateElement(id, props);
-      return;
+    const key = getLastPropsKey(flavour as BlockSuite.EdgelessModelKeys, props);
+    if (key) {
+      props = this.std.get(EditPropsStore).applyLastProps(key, props);
     }
 
-    const block = this.doc.getBlockById(id);
-    if (block) {
-      this.editSession.record(block.flavour as EdgelessElementType, props);
-      this.doc.updateBlock(block, props);
-    }
-  }
-
-  removeElement(id: string | EdgelessModel) {
-    id = typeof id === 'string' ? id : id.id;
-
-    if (this._surface.hasElementById(id)) {
-      this._surface.removeElement(id);
-      return;
-    }
-
-    if (this.doc.hasBlockById(id)) {
-      const block = this.doc.getBlockById(id)!;
-      this.doc.deleteBlock(block);
-    }
-  }
-
-  getElementById(id: string) {
-    return (
-      this._surface.getElementById(id) ??
-      (this.doc.getBlockById(id) as EdgelessBlockModel)
-    );
-  }
-
-  pickElement(x: number, y: number, options: { all: true }): EdgelessModel[];
-  pickElement(
-    x: number,
-    y: number,
-    options?: { all: false }
-  ): EdgelessModel | null;
-  pickElement(
-    x: number,
-    y: number,
-    options: HitTestOptions = { all: false, expand: 10 }
-  ): EdgelessModel[] | EdgelessModel | null {
-    options.expand ??= 10;
-    options.zoom = this._viewport.zoom;
-
-    const hitTestBound = {
-      x: x - options.expand / 2,
-      y: y - options.expand / 2,
-      w: options.expand,
-      h: options.expand,
+    const nProps = {
+      ...props,
+      index: this.generateIndex(),
     };
-    const pickCanvasElement = () => {
-      const candidates = this._layer.canvasGrid.search(hitTestBound);
-      const picked = candidates.filter(
-        element =>
-          element.hitTest(x, y, options, this.host) ||
-          element.externalBound?.isPointInBound([x, y])
-      );
-      return picked as EdgelessModel[];
-    };
-    const pickBlock = () => {
-      const candidates = this._layer.blocksGrid.search(hitTestBound);
-      const picked = candidates.filter(
-        element =>
-          element.hitTest(x, y, options, this.host) ||
-          element.externalBound?.isPointInBound([x, y])
-      );
-      return picked as EdgelessModel[];
-    };
-    const pickFrames = () => {
-      return this._layer.frames.filter(
-        frame =>
-          frame.hitTest(x, y, options, this.host) ||
-          frame.externalBound?.isPointInBound([x, y])
-      ) as EdgelessModel[];
-    };
-
-    let results = pickCanvasElement().concat(pickBlock());
-
-    // FIXME: optimazation on ordered element
-    results.sort(this._layer.compare);
-
-    if (options.all || results.length === 0) {
-      const frames = pickFrames();
-
-      results = frames.concat(results);
-    }
-
-    return options.all ? results : last(results) ?? null;
+    return this.doc.addBlock(flavour as never, nProps, parent, parentIndex);
   }
 
-  /**
-   * Pick the elements in the given area
-   * @param bound
-   * @param type By default, it will pick all elements, but you can specify the type to pick only you need.
-   */
-  pickElementsByBound(bound: IBound | Bound, type?: 'all'): EdgelessModel[];
-  pickElementsByBound(
-    bound: IBound | Bound,
-    type: 'blocks'
-  ): EdgelessBlockModel[];
-  pickElementsByBound(
-    bound: IBound | Bound,
-    type: 'frame' | 'blocks' | 'canvas' | 'all' = 'all'
-  ): EdgelessModel[] {
-    bound = new Bound(bound.x, bound.y, bound.w, bound.h);
-
-    const pickCanvasElement = () => {
-      const candidates = this._layer.canvasGrid.search(bound);
-      const picked = candidates.filter(element =>
-        element.boxSelect(bound as Bound)
-      );
-      return picked as EdgelessModel[];
-    };
-    const pickBlock = () => {
-      const candidates = this._layer.blocksGrid.search(bound);
-      const picked = candidates.filter(element =>
-        element.boxSelect(bound as Bound)
-      );
-      return picked as EdgelessModel[];
-    };
-    const pickFrames = () => {
-      const candidates = this._layer.framesGrid.search(bound);
-      return candidates.filter(frame =>
-        frame.boxSelect(bound as Bound)
-      ) as EdgelessModel[];
-    };
-
-    switch (type) {
-      case 'canvas':
-        return pickCanvasElement();
-      case 'blocks':
-        return pickFrames().concat(pickBlock());
-      case 'frame':
-        return pickFrames();
-      case 'all': {
-        const results = pickCanvasElement().concat(pickBlock());
-        results.sort(this._layer.compare);
-        return pickFrames().concat(results);
-      }
-    }
-  }
-
-  /**
-   * This method is used to pick element in group, if the picked element is in a
-   * group, we will pick the group instead. If that picked group is currently selected, then
-   * we will pick the element itself.
-   */
-  pickElementInGroup(
-    x: number,
-    y: number,
-    options?: HitTestOptions
-  ): EdgelessModel | null {
-    const selectionManager = this._selection;
-    const results = this.pickElement(x, y, {
-      ...options,
-      all: true,
-    }) as EdgelessModel[];
-
-    let picked = last(results) ?? null;
-    const { activeGroup } = selectionManager;
-    const first = picked;
-
-    if (activeGroup && picked && activeGroup.hasDescendant(picked.id)) {
-      let index = results.length - 1;
-
-      while (
-        picked === activeGroup ||
-        (picked instanceof GroupLikeModel && picked.hasDescendant(activeGroup))
-      ) {
-        picked = results[--index];
-      }
-    } else if (picked) {
-      let index = results.length - 1;
-
-      while (picked.group !== null) {
-        if (--index < 0) {
-          picked = null;
-          break;
-        }
-        picked = results[index];
-      }
+  addElement<T extends Record<string, unknown>>(type: string, props: T) {
+    const key = getLastPropsKey(type as BlockSuite.EdgelessModelKeys, props);
+    if (key) {
+      props = this.std.get(EditPropsStore).applyLastProps(key, props) as T;
     }
 
-    return (picked ?? first) as EdgelessModel | null;
+    const nProps = {
+      ...props,
+      type,
+      index: props.index ?? this.generateIndex(),
+    };
+    const id = this._surface.addElement(nProps);
+    return id;
   }
 
-  reorderElement(element: EdgelessModel, direction: ReorderingDirection) {
-    const index = this._layer.getReorderedIndex(element, direction);
-
-    // block should be updated in transaction
-    if (element instanceof EdgelessBlockModel) {
-      this.doc.transact(() => {
-        element.index = index;
-      });
-    } else {
-      element.index = index;
-    }
-  }
-
-  createGroup(elements: EdgelessModel[] | string[]) {
+  createGroup(elements: BlockSuite.EdgelessModel[] | string[]) {
     const groups = this.elements.filter(
       el => el.type === 'group'
     ) as GroupElementModel[];
-    const groupId = this._surface.addElement({
-      type: 'group',
+    const groupId = this.addElement('group', {
       children: elements.reduce(
         (pre, el) => {
           const id = typeof el === 'string' ? el : el.id;
           pre[id] = true;
           return pre;
         },
-        {} as { [id: string]: true }
+        {} as Record<string, true>
       ),
       title: `Group ${groups.length + 1}`,
     });
@@ -488,13 +270,19 @@ export class EdgelessRootService extends RootService {
     return groupId;
   }
 
+  /**
+   * Create a group from selected elements, if the selected elements are in the same group
+   * @returns the id of the created group
+   */
   createGroupFromSelected() {
     const { selection } = this;
 
     if (
-      selection.elements.length <= 0 ||
-      !selection.elements.every(
-        element => element.group === selection.firstElement.group
+      selection.selectedElements.length === 0 ||
+      !selection.selectedElements.every(
+        element =>
+          element.group === selection.firstElement.group &&
+          !(element.group instanceof MindmapElementModel)
       )
     ) {
       return;
@@ -503,15 +291,17 @@ export class EdgelessRootService extends RootService {
     const parent = selection.firstElement.group as GroupElementModel;
 
     if (parent !== null) {
-      selection.elements.forEach(element => {
-        parent.removeDescendant(element.id);
+      selection.selectedElements.forEach(element => {
+        // eslint-disable-next-line unicorn/prefer-dom-node-remove
+        parent.removeChild(element);
       });
     }
 
-    const groupId = this.createGroup(selection.elements);
+    const groupId = this.createGroup(selection.selectedElements);
+    const group = this.surface.getElementById(groupId);
 
-    if (parent !== null) {
-      parent.addChild(groupId);
+    if (parent !== null && group) {
+      parent.addChild(group);
     }
 
     selection.set({
@@ -522,57 +312,17 @@ export class EdgelessRootService extends RootService {
     return groupId;
   }
 
-  ungroup(group: GroupElementModel) {
-    const { selection } = this;
-    const elements = group.childElements;
-    const parent = group.group as GroupElementModel;
-
-    if (parent !== null) {
-      parent.removeDescendant(group.id);
-    }
-
-    elements.forEach(element => {
-      group.removeDescendant(element.id);
-    });
-
-    elements.forEach(element => {
-      // @ts-ignore
-      const elementType = element.type || element.flavour;
-
-      element.index = this.generateIndex(elementType);
-    });
-
-    if (parent !== null) {
-      elements.forEach(element => {
-        parent.addChild(element.id);
-      });
-    }
-
-    selection.set({
-      editing: false,
-      elements: elements.map(ele => ele.id),
-    });
-  }
-
-  registerTool(Tool: EdgelessToolConstructor) {
-    return this.tool.register(Tool);
-  }
-
-  getConnectors(element: EdgelessModel | string) {
-    const id = typeof element === 'string' ? element : element.id;
-
-    return this.surface.getConnectors(id) as ConnectorElementModel[];
-  }
-
-  createTemplateJob(type: 'template' | 'sticker') {
+  createTemplateJob(
+    type: 'template' | 'sticker',
+    center?: { x: number; y: number }
+  ) {
     const middlewares: ((job: TemplateJob) => void)[] = [];
 
     if (type === 'template') {
-      const currentContentBound = getCommonBound(
-        (
-          this.blocks.map(block => Bound.deserialize(block.xywh)) as IBound[]
-        ).concat(this.elements)
+      const bounds = [...this.blocks, ...this.elements].map(i =>
+        Bound.deserialize(i.xywh)
       );
+      const currentContentBound = getCommonBound(bounds);
 
       if (currentContentBound) {
         currentContentBound.x +=
@@ -580,17 +330,15 @@ export class EdgelessRootService extends RootService {
         middlewares.push(createInsertPlaceMiddleware(currentContentBound));
       }
 
-      const idxGenerator = this.layer.createIndexGenerator(true);
+      const idxGenerator = this.layer.createIndexGenerator();
 
-      middlewares.push(
-        createRegenerateIndexMiddleware((type: string) => idxGenerator(type))
-      );
+      middlewares.push(createRegenerateIndexMiddleware(() => idxGenerator()));
     }
 
     if (type === 'sticker') {
       middlewares.push(
-        createStickerMiddleware(this.viewport.center, () =>
-          this.layer.generateIndex('affine:image')
+        createStickerMiddleware(center || this.viewport.center, () =>
+          this.layer.generateIndex()
         )
       );
     }
@@ -604,48 +352,111 @@ export class EdgelessRootService extends RootService {
     });
   }
 
-  setZoomByStep(step: number) {
-    this.viewport.smoothZoom(clamp(this.zoom + step, ZOOM_MIN, ZOOM_MAX));
+  generateIndex() {
+    return this.layer.generateIndex();
   }
 
-  zoomToFit() {
-    const { centerX, centerY, zoom } = this.getFitToScreenData();
-    this.viewport.setViewport(zoom, [centerX, centerY], true);
+  getConnectors(element: BlockSuite.EdgelessModel | string) {
+    const id = typeof element === 'string' ? element : element.id;
+
+    return this.surface.getConnectors(id) as ConnectorElementModel[];
   }
 
-  getFitToScreenData(padding: [number, number, number, number] = [0, 0, 0, 0]) {
-    const bounds = [];
+  getElementById(id: string): BlockSuite.EdgelessModel | null {
+    const el =
+      this._surface.getElementById(id) ??
+      (this.doc.getBlockById(id) as BlockSuite.EdgelessBlockModelType | null);
+    return el;
+  }
 
-    this.blocks.forEach(block => {
-      bounds.push(Bound.deserialize(block.xywh));
-    });
+  getElementsByType<K extends keyof BlockSuite.SurfaceElementModelMap>(
+    type: K
+  ): BlockSuite.SurfaceElementModelMap[K][] {
+    return this.surface.getElementsByType(type);
+  }
 
-    const surfaceElementsBound = getCommonBound(this.elements);
-    if (surfaceElementsBound) {
-      bounds.push(surfaceElementsBound);
-    }
-
-    const [pt, pr, pb, pl] = padding;
-    const { viewport } = this;
-    let { centerX, centerY, zoom } = viewport;
-
-    if (bounds.length) {
-      const { width, height } = viewport;
-      const bound = getCommonBound(bounds);
-      assertExists(bound);
-
-      zoom = Math.min(
-        (width - FIT_TO_SCREEN_PADDING - (pr + pl)) / bound.w,
-        (height - FIT_TO_SCREEN_PADDING - (pt + pb)) / bound.h
-      );
-      zoom = clamp(zoom, ZOOM_MIN, ZOOM_INITIAL);
-
-      centerX = bound.x + (bound.w + pr / zoom) / 2 - pl / zoom / 2;
-      centerY = bound.y + (bound.h + pb / zoom) / 2 - pt / zoom / 2;
+  getFitToScreenData(
+    padding: [number, number, number, number] = [0, 0, 0, 0],
+    inputBounds?: Bound[]
+  ) {
+    let bounds = [];
+    if (inputBounds && inputBounds.length) {
+      bounds = inputBounds;
     } else {
-      zoom = ZOOM_INITIAL;
+      this.blocks.forEach(block => {
+        bounds.push(Bound.deserialize(block.xywh));
+      });
+
+      const surfaceElementsBound = getCommonBound(this.elements);
+      if (surfaceElementsBound) {
+        bounds.push(surfaceElementsBound);
+      }
     }
-    return { zoom, centerX, centerY };
+
+    const bound = getCommonBound(bounds);
+
+    return this.viewport.getFitToScreenData(
+      bound,
+      padding,
+      ZOOM_INITIAL,
+      FIT_TO_SCREEN_PADDING
+    );
+  }
+
+  override mounted() {
+    super.mounted();
+    this._initSlotEffects();
+    this._initReadonlyListener();
+  }
+
+  /**
+   * This method is used to pick element in group, if the picked element is in a
+   * group, we will pick the group instead. If that picked group is currently selected, then
+   * we will pick the element itself.
+   */
+  pickElementInGroup(
+    x: number,
+    y: number,
+    options?: PointTestOptions
+  ): BlockSuite.EdgelessModel | null {
+    return this.gfx.getElementInGroup(x, y, options);
+  }
+
+  removeElement(id: string | BlockSuite.EdgelessModel) {
+    id = typeof id === 'string' ? id : id.id;
+
+    const el = this.getElementById(id);
+    if (isGfxGroupCompatibleModel(el)) {
+      el.childIds.forEach(childId => {
+        this.removeElement(childId);
+      });
+    }
+
+    if (el instanceof GfxBlockModel) {
+      this.doc.deleteBlock(el);
+      return;
+    }
+
+    if (this._surface.hasElementById(id)) {
+      this._surface.deleteElement(id);
+      return;
+    }
+  }
+
+  reorderElement(
+    element: BlockSuite.EdgelessModel,
+    direction: ReorderingDirection
+  ) {
+    const index = this.layer.getReorderedIndex(element, direction);
+
+    // block should be updated in transaction
+    if (element instanceof GfxBlockModel) {
+      this.doc.transact(() => {
+        element.index = index;
+      });
+    } else {
+      element.index = index;
+    }
   }
 
   setZoomByAction(action: ZoomAction) {
@@ -662,5 +473,62 @@ export class EdgelessRootService extends RootService {
       case 'out':
         this.setZoomByStep(ZOOM_STEP * (action === 'in' ? 1 : -1));
     }
+  }
+
+  setZoomByStep(step: number) {
+    this.viewport.smoothZoom(clamp(this.zoom + step, ZOOM_MIN, ZOOM_MAX));
+  }
+
+  ungroup(group: GroupElementModel) {
+    const { selection } = this;
+    const elements = group.childElements;
+    const parent = group.group as GroupElementModel;
+
+    if (group instanceof MindmapElementModel) {
+      return;
+    }
+
+    if (parent !== null) {
+      // eslint-disable-next-line unicorn/prefer-dom-node-remove
+      parent.removeChild(group);
+    }
+
+    elements.forEach(element => {
+      // eslint-disable-next-line unicorn/prefer-dom-node-remove
+      group.removeChild(element);
+    });
+
+    // keep relative index order of group children after ungroup
+    elements
+      .sort((a, b) => this.layer.compare(a, b))
+      .forEach(element => {
+        this.doc.transact(() => {
+          element.index = this.layer.generateIndex();
+        });
+      });
+
+    if (parent !== null) {
+      elements.forEach(element => {
+        parent.addChild(element);
+      });
+    }
+
+    selection.set({
+      editing: false,
+      elements: elements.map(ele => ele.id),
+    });
+  }
+
+  override unmounted() {
+    super.unmounted();
+
+    this.viewport?.dispose();
+    this.selectionManager.set([]);
+    this.disposables.dispose();
+  }
+
+  zoomToFit() {
+    const { centerX, centerY, zoom } = this.getFitToScreenData();
+    this.viewport.setViewport(zoom, [centerX, centerY], true);
   }
 }

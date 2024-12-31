@@ -1,17 +1,16 @@
-import { assertExists } from '@blocksuite/global/utils';
+import type { BlockComponent } from '@blocksuite/block-std';
 import type { BlockModel } from '@blocksuite/store';
 
-import { type EditingState } from '../types.js';
-import { matchFlavours } from './model.js';
 import {
-  type BlockComponent,
-  DropFlags,
-  getClosestBlockElementByElement,
-  getDropRectByPoint,
-  getModelByBlockComponent,
-  getRectByBlockElement,
-} from './query.js';
-import { type Point, Rect } from './rect.js';
+  getClosestBlockComponentByElement,
+  getRectByBlockComponent,
+  matchFlavours,
+} from '@blocksuite/affine-shared/utils';
+import { type Point, Rect } from '@blocksuite/global/utils';
+
+import type { EditingState } from '../types.js';
+
+import { DropFlags, getDropRectByPoint } from './query.js';
 
 /**
  * A dropping type.
@@ -36,15 +35,14 @@ export function calcDropTarget(
   flavour: string | null = null // for block-hub
 ): DropResult | null {
   const schema = model.doc.getSchemaByFlavour('affine:database');
-  assertExists(schema);
-  const children = schema.model.children ?? [];
+  const children = schema?.model.children ?? [];
 
   let shouldAppendToDatabase = true;
 
   if (children.length) {
     if (draggingElements.length) {
       shouldAppendToDatabase = draggingElements
-        .map(getModelByBlockComponent)
+        .map(el => el.model)
         .every(m => children.includes(m.flavour));
     } else if (flavour) {
       shouldAppendToDatabase = children.includes(flavour);
@@ -52,10 +50,10 @@ export function calcDropTarget(
   }
 
   if (!shouldAppendToDatabase && !matchFlavours(model, ['affine:database'])) {
-    const databaseBlockElement = element.closest('affine-database');
-    if (databaseBlockElement) {
-      element = databaseBlockElement;
-      model = getModelByBlockComponent(element);
+    const databaseBlockComponent = element.closest('affine-database');
+    if (databaseBlockComponent) {
+      element = databaseBlockComponent;
+      model = databaseBlockComponent.model;
     }
   }
 
@@ -122,7 +120,7 @@ export function calcDropTarget(
       ) {
         type = 'none';
       } else {
-        prevRect = getRectByBlockElement(prev);
+        prevRect = getRectByBlockComponent(prev);
       }
     } else {
       prev = element.parentElement?.previousElementSibling;
@@ -146,13 +144,13 @@ export function calcDropTarget(
         next = null;
       }
     } else {
-      next = getClosestBlockElementByElement(
+      next = getClosestBlockComponentByElement(
         element.parentElement
       )?.nextElementSibling;
     }
 
     if (next) {
-      nextRect = getRectByBlockElement(next);
+      nextRect = getRectByBlockComponent(next);
       offsetY = (nextRect.top - domRect.bottom) / 2;
     }
   }

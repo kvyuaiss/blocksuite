@@ -1,6 +1,8 @@
-import type { BlockElement } from '@blocksuite/block-std';
+import type { BlockComponent } from '@blocksuite/block-std';
+
+import { SignalWatcher } from '@blocksuite/global/utils';
 import { css, LitElement, type PropertyValues } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 
 /**
  * Renders a the block selection.
@@ -12,20 +14,18 @@ import { customElement, property } from 'lit/decorators.js';
  *     :host {
  *       position: relative;
  *     }
- *   `
+ *
  *   render() {
- *     return html`${this.selected?.is('block')
- *       ? html`<affine-block-selection></affine-block-selection>`
- *       : null}`;
+ *      return html`<affine-block-selection></affine-block-selection>
  *   };
  * }
  * ```
  */
-@customElement('affine-block-selection')
-export class BlockSelection extends LitElement {
+export class BlockSelection extends SignalWatcher(LitElement) {
   static override styles = css`
     :host {
       position: absolute;
+      z-index: 1;
       left: 0;
       top: 0;
       width: 100%;
@@ -37,20 +37,6 @@ export class BlockSelection extends LitElement {
     }
   `;
 
-  @property({ attribute: false })
-  block!: BlockElement;
-
-  @property({ attribute: false })
-  borderRadius?: number = 5;
-
-  @property({ attribute: false })
-  borderWidth?: number = 0;
-
-  protected override updated(_changedProperties: PropertyValues): void {
-    super.updated(_changedProperties);
-    this.style.display = this.block.selected?.is('block') ? 'block' : 'none';
-  }
-
   override connectedCallback(): void {
     super.connectedCallback();
 
@@ -60,9 +46,26 @@ export class BlockSelection extends LitElement {
       this.style.transform = `translate(-${this.borderWidth}px, -${this.borderWidth}px)`;
     }
     this.style.borderWidth = `${this.borderWidth}px`;
-
-    this.block.host.selection.slots.changed.on(() => this.requestUpdate());
   }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.block = null as unknown as BlockComponent; // force gc
+  }
+
+  protected override updated(_changedProperties: PropertyValues): void {
+    super.updated(_changedProperties);
+    this.style.display = this.block.selected?.is('block') ? 'block' : 'none';
+  }
+
+  @property({ attribute: false })
+  accessor block!: BlockComponent;
+
+  @property({ attribute: false })
+  accessor borderRadius: number = 5;
+
+  @property({ attribute: false })
+  accessor borderWidth: number = 0;
 }
 
 declare global {

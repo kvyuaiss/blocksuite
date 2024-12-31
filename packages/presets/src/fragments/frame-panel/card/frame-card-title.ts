@@ -1,7 +1,8 @@
-import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
-import { type FrameBlockModel } from '@blocksuite/blocks';
-import { DisposableGroup } from '@blocksuite/global/utils';
+import type { FrameBlockModel } from '@blocksuite/blocks';
 import type { Y } from '@blocksuite/store';
+
+import { ShadowlessElement } from '@blocksuite/block-std';
+import { DisposableGroup, WithDisposable } from '@blocksuite/global/utils';
 import { css, html, type PropertyValues } from 'lit';
 import { property, query } from 'lit/decorators.js';
 
@@ -54,28 +55,14 @@ const styles = css`
   }
 `;
 
+export const AFFINE_FRAME_CARD_TITLE = 'affine-frame-card-title';
+
 export class FrameCardTitle extends WithDisposable(ShadowlessElement) {
   static override styles = styles;
 
-  @property({ attribute: false })
-  frame!: FrameBlockModel;
-
-  @property({ attribute: false })
-  cardIndex!: number;
-
-  @query('.frame-card-title-container')
-  titleContainer!: HTMLElement;
-
-  @query('.frame-card-title-container .card-index')
-  titleIndexElement!: HTMLElement;
-
-  @query('.frame-card-title-container .card-title')
-  titleContentElement!: HTMLElement;
-
-  private _titleDisposables: DisposableGroup | null = null;
-
-  private _updateElement = () => {
-    this.requestUpdate();
+  private _clearTitleDisposables = () => {
+    this._titleDisposables?.dispose();
+    this._titleDisposables = null;
   };
 
   private _mountTitleEditor = (e: MouseEvent) => {
@@ -90,9 +77,10 @@ export class FrameCardTitle extends WithDisposable(ShadowlessElement) {
     this.titleContainer.append(titleEditor);
   };
 
-  private _clearTitleDisposables = () => {
-    this._titleDisposables?.dispose();
-    this._titleDisposables = null;
+  private _titleDisposables: DisposableGroup | null = null;
+
+  private _updateElement = () => {
+    this.requestUpdate();
   };
 
   private _setFrameDisposables(title: Y.Text) {
@@ -104,12 +92,6 @@ export class FrameCardTitle extends WithDisposable(ShadowlessElement) {
         title.unobserve(this._updateElement);
       },
     });
-  }
-
-  override updated(_changedProperties: PropertyValues) {
-    if (_changedProperties.has('frame')) {
-      this._setFrameDisposables(this.frame.title.yText);
-    }
   }
 
   override connectedCallback() {
@@ -139,10 +121,31 @@ export class FrameCardTitle extends WithDisposable(ShadowlessElement) {
       </div>
     </div>`;
   }
+
+  override updated(_changedProperties: PropertyValues) {
+    if (_changedProperties.has('frame')) {
+      this._setFrameDisposables(this.frame.title.yText);
+    }
+  }
+
+  @property({ attribute: false })
+  accessor cardIndex!: number;
+
+  @property({ attribute: false })
+  accessor frame!: FrameBlockModel;
+
+  @query('.frame-card-title-container')
+  accessor titleContainer!: HTMLElement;
+
+  @query('.frame-card-title-container .card-title')
+  accessor titleContentElement!: HTMLElement;
+
+  @query('.frame-card-title-container .card-index')
+  accessor titleIndexElement!: HTMLElement;
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    'frame-card-title': FrameCardTitle;
+    [AFFINE_FRAME_CARD_TITLE]: FrameCardTitle;
   }
 }

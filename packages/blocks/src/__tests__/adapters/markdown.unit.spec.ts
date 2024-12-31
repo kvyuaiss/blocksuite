@@ -1,11 +1,21 @@
-import type { BlockSnapshot } from '@blocksuite/store';
-import { MemoryBlobManager } from '@blocksuite/store';
-import { AssetsManager } from '@blocksuite/store';
+import type {
+  BlockSnapshot,
+  DocSnapshot,
+  JobMiddleware,
+  SliceSnapshot,
+} from '@blocksuite/store';
+
+import {
+  DEFAULT_NOTE_BACKGROUND_COLOR,
+  NoteDisplayMode,
+} from '@blocksuite/affine-model';
+import { AssetsManager, MemoryBlobCRUD } from '@blocksuite/store';
 import { describe, expect, test } from 'vitest';
 
-import { MarkdownAdapter } from '../../_common/adapters/markdown.js';
+import { MarkdownAdapter } from '../../_common/adapters/markdown/index.js';
 import { nanoidReplacement } from '../../_common/test-utils/test-utils.js';
-import { NoteDisplayMode } from '../../_common/types.js';
+import { embedSyncedDocMiddleware } from '../../_common/transformers/middlewares.js';
+import { createJob } from '../utils/create-job.js';
 
 describe('snapshot to markdown', () => {
   test('code', async () => {
@@ -35,7 +45,7 @@ describe('snapshot to markdown', () => {
           flavour: 'affine:note',
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -65,7 +75,7 @@ describe('snapshot to markdown', () => {
 
     const markdown = '```python\nimport this\n```\n';
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
@@ -99,7 +109,7 @@ describe('snapshot to markdown', () => {
           flavour: 'affine:note',
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -264,7 +274,7 @@ describe('snapshot to markdown', () => {
 hhh
 `;
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
@@ -298,7 +308,7 @@ hhh
           flavour: 'affine:note',
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -412,14 +422,13 @@ hhh
 * eee
 `;
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
     expect(target.file).toBe(markdown);
   });
 
-  // TODO(@fourdim): fix this test
   test('todo list', async () => {
     const blockSnapshot: BlockSnapshot = {
       type: 'block',
@@ -447,7 +456,7 @@ hhh
           flavour: 'affine:note',
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -554,15 +563,15 @@ hhh
         },
       ],
     };
-    const markdown = `* [ ] aaa
+    const markdown = `\
+* [ ] aaa
   * [x] bbb
     * [ ] ccc
-  - [x] ddd
-
-- [ ] eee
+  * [x] ddd
+* [ ] eee
 `;
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
@@ -599,7 +608,7 @@ hhh
           version: 1,
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: 'both',
@@ -705,7 +714,171 @@ hhh
 2. ddd
 `;
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const target = await mdAdapter.fromBlockSnapshot({
+      snapshot: blockSnapshot,
+    });
+    expect(target.file).toEqual(markdown);
+  });
+
+  test('different list', async () => {
+    const blockSnapshot: BlockSnapshot = {
+      type: 'block',
+      id: 'block:m5hvdXHXS2',
+      flavour: 'affine:page',
+      version: 2,
+      props: {
+        title: {
+          '$blocksuite:internal:text$': true,
+          delta: [],
+        },
+      },
+      children: [
+        {
+          type: 'block',
+          id: 'block:Y4J-oO9h9d',
+          flavour: 'affine:surface',
+          version: 5,
+          props: {
+            elements: {},
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'block:1Ll22zT992',
+          flavour: 'affine:note',
+          version: 1,
+          props: {
+            xywh: '[0,0,800,95]',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
+            index: 'a0',
+            hidden: false,
+            displayMode: 'both',
+            edgeless: {
+              style: {
+                borderRadius: 8,
+                borderSize: 4,
+                borderStyle: 'solid',
+                shadowType: '--affine-note-shadow-box',
+              },
+            },
+          },
+          children: [
+            {
+              type: 'block',
+              id: 'block:Fd0ZCYB7a4',
+              flavour: 'affine:list',
+              version: 1,
+              props: {
+                type: 'numbered',
+                text: {
+                  '$blocksuite:internal:text$': true,
+                  delta: [
+                    {
+                      insert: 'aaa',
+                    },
+                  ],
+                },
+                checked: false,
+                collapsed: false,
+              },
+              children: [
+                {
+                  type: 'block',
+                  id: 'block:8-GeKDc06x',
+                  flavour: 'affine:list',
+                  version: 1,
+                  props: {
+                    type: 'numbered',
+                    text: {
+                      '$blocksuite:internal:text$': true,
+                      delta: [
+                        {
+                          insert: 'bbb',
+                        },
+                      ],
+                    },
+                    checked: false,
+                    collapsed: false,
+                  },
+                  children: [],
+                },
+                {
+                  type: 'block',
+                  id: 'block:f0c-9xKaEL',
+                  flavour: 'affine:list',
+                  version: 1,
+                  props: {
+                    type: 'bulleted',
+                    text: {
+                      '$blocksuite:internal:text$': true,
+                      delta: [
+                        {
+                          insert: 'ccc',
+                        },
+                      ],
+                    },
+                    checked: false,
+                    collapsed: false,
+                  },
+                  children: [],
+                },
+                {
+                  type: 'block',
+                  id: 'block:f0c-9xKaEL',
+                  flavour: 'affine:list',
+                  version: 1,
+                  props: {
+                    type: 'numbered',
+                    text: {
+                      '$blocksuite:internal:text$': true,
+                      delta: [
+                        {
+                          insert: 'ddd',
+                        },
+                      ],
+                    },
+                    checked: false,
+                    collapsed: false,
+                  },
+                  children: [],
+                },
+              ],
+            },
+            {
+              type: 'block',
+              id: 'block:Fd0ZCYB7a5',
+              flavour: 'affine:list',
+              version: 1,
+              props: {
+                type: 'numbered',
+                text: {
+                  '$blocksuite:internal:text$': true,
+                  delta: [
+                    {
+                      insert: 'eee',
+                    },
+                  ],
+                },
+                checked: false,
+                collapsed: false,
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const markdown = `1. aaa
+   1. bbb
+   * ccc
+   1. ddd
+2. eee
+`;
+
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
@@ -739,7 +912,7 @@ hhh
           flavour: 'affine:note',
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -777,7 +950,135 @@ hhh
     };
     const markdown = 'aaa `bbb` ccc\n';
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const target = await mdAdapter.fromBlockSnapshot({
+      snapshot: blockSnapshot,
+    });
+    expect(target.file).toBe(markdown);
+  });
+
+  test('inline latex', async () => {
+    const blockSnapshot: BlockSnapshot = {
+      type: 'block',
+      id: 'block:vu6SK6WJpW',
+      flavour: 'affine:page',
+      props: {
+        title: {
+          '$blocksuite:internal:text$': true,
+          delta: [],
+        },
+      },
+      children: [
+        {
+          type: 'block',
+          id: 'block:Tk4gSPocAt',
+          flavour: 'affine:surface',
+          props: {
+            elements: {},
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'block:WfnS5ZDCJT',
+          flavour: 'affine:note',
+          props: {
+            xywh: '[0,0,800,95]',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
+            index: 'a0',
+            hidden: false,
+            displayMode: NoteDisplayMode.DocAndEdgeless,
+          },
+          children: [
+            {
+              type: 'block',
+              id: 'block:qhpbuss-KN',
+              flavour: 'affine:paragraph',
+              props: {
+                type: 'text',
+                text: {
+                  '$blocksuite:internal:text$': true,
+                  delta: [
+                    {
+                      insert: 'inline ',
+                    },
+                    {
+                      insert: ' ',
+                      attributes: {
+                        latex: 'E=mc^2',
+                      },
+                    },
+                    {
+                      insert: ' latex',
+                    },
+                  ],
+                },
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+    };
+    const markdown = 'inline $E=mc^2$ latex\n';
+
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const target = await mdAdapter.fromBlockSnapshot({
+      snapshot: blockSnapshot,
+    });
+    expect(target.file).toBe(markdown);
+  });
+
+  test('latex block', async () => {
+    const blockSnapshot: BlockSnapshot = {
+      type: 'block',
+      id: 'block:vu6SK6WJpW',
+      flavour: 'affine:page',
+      props: {
+        title: {
+          '$blocksuite:internal:text$': true,
+          delta: [],
+        },
+      },
+      children: [
+        {
+          type: 'block',
+          id: 'block:Tk4gSPocAt',
+          flavour: 'affine:surface',
+          props: {
+            elements: {},
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'block:WfnS5ZDCJT',
+          flavour: 'affine:note',
+          props: {
+            xywh: '[0,0,800,95]',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
+            index: 'a0',
+            hidden: false,
+            displayMode: NoteDisplayMode.DocAndEdgeless,
+          },
+          children: [
+            {
+              type: 'block',
+              id: 'block:8hOLxad5Fv',
+              flavour: 'affine:latex',
+              props: {
+                latex: 'E=mc^2',
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const markdown = '$$\nE=mc^2\n$$\n';
+
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
@@ -811,7 +1112,7 @@ hhh
           flavour: 'affine:note',
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -849,7 +1150,7 @@ hhh
     };
     const markdown = 'aaa [bbb](https://affine.pro/) ccc\n';
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
@@ -883,7 +1184,7 @@ hhh
           flavour: 'affine:note',
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -918,7 +1219,7 @@ hhh
     };
     const markdown = 'aaa https://affine.pro/  \n';
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
@@ -952,7 +1253,7 @@ hhh
           flavour: 'affine:note',
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -991,7 +1292,7 @@ hhh
 
     const markdown = 'aaa**bbb**ccc\n';
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
@@ -1025,7 +1326,7 @@ hhh
           flavour: 'affine:note',
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -1064,7 +1365,7 @@ hhh
 
     const markdown = 'aaa*bbb*ccc\n';
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
@@ -1098,7 +1399,7 @@ hhh
           flavour: 'affine:note',
           props: {
             xywh: '[0,0,800,95]',
-            background: '--affine-background-secondary-color',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
             index: 'a0',
             hidden: false,
             displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -1110,7 +1411,7 @@ hhh
               flavour: 'affine:image',
               props: {
                 sourceId: 'YXXTjRmLlNyiOUnHb8nAIvUP6V7PAXhwW9F5_tc2LGs=',
-                caption: '',
+                caption: 'aaa',
                 width: 0,
                 height: 0,
                 index: 'a0',
@@ -1138,15 +1439,15 @@ hhh
     };
 
     const markdown =
-      '![](assets/YXXTjRmLlNyiOUnHb8nAIvUP6V7PAXhwW9F5_tc2LGs=.blob)\n\n';
+      '![](assets/YXXTjRmLlNyiOUnHb8nAIvUP6V7PAXhwW9F5_tc2LGs=.blob "aaa")\n\n';
 
-    const mdAdapter = new MarkdownAdapter();
-    const blobManager = new MemoryBlobManager();
-    await blobManager.set(
-      new Blob(),
-      'YXXTjRmLlNyiOUnHb8nAIvUP6V7PAXhwW9F5_tc2LGs='
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const blobCRUD = new MemoryBlobCRUD();
+    await blobCRUD.set(
+      'YXXTjRmLlNyiOUnHb8nAIvUP6V7PAXhwW9F5_tc2LGs=',
+      new Blob()
     );
-    const assets = new AssetsManager({ blob: blobManager });
+    const assets = new AssetsManager({ blob: blobCRUD });
 
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
@@ -1190,6 +1491,9 @@ hhh
                 delta: [
                   {
                     insert: 'test2',
+                    attributes: {
+                      link: 'https://google.com',
+                    },
                   },
                 ],
               },
@@ -1364,12 +1668,674 @@ hhh
       ],
     };
 
-    const md = `| Title  | Status      | Date       | Number | Progress | MultiSelect | RichText | Link               | Checkbox |\n| ------ | ----------- | ---------- | ------ | -------- | ----------- | -------- | ------------------ | -------- |\n| Task 1 | TODO        | 2023-12-15 | 1      | 65       | test1,test2 | test2    | https://google.com | true     |\n| Task 2 | In Progress | 2023-12-20 |        |          |             | test1    |                    |          |\n`;
-    const mdAdapter = new MarkdownAdapter();
+    const md = `\
+| Title  | Status      | Date       | Number | Progress | MultiSelect | RichText                    | Link               | Checkbox |
+| ------ | ----------- | ---------- | ------ | -------- | ----------- | --------------------------- | ------------------ | -------- |
+| Task 1 | TODO        | 2023-12-15 | 1      | 65       | test1,test2 | [test2](https://google.com) | https://google.com | true     |
+| Task 2 | In Progress | 2023-12-20 |        |          |             | test1                       |                    |          |
+`;
+    const mdAdapter = new MarkdownAdapter(createJob());
     const target = await mdAdapter.fromBlockSnapshot({
       snapshot: blockSnapshot,
     });
     expect(target.file).toBe(md);
+  });
+
+  test('reference', async () => {
+    const blockSnapshot: BlockSnapshot = {
+      type: 'block',
+      id: 'block:vu6SK6WJpW',
+      flavour: 'affine:page',
+      props: {
+        title: {
+          '$blocksuite:internal:text$': true,
+          delta: [],
+        },
+      },
+      children: [
+        {
+          type: 'block',
+          id: 'block:Tk4gSPocAt',
+          flavour: 'affine:surface',
+          props: {
+            elements: {},
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'block:WfnS5ZDCJT',
+          flavour: 'affine:note',
+          props: {
+            xywh: '[0,0,800,95]',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
+            index: 'a0',
+            hidden: false,
+            displayMode: NoteDisplayMode.DocAndEdgeless,
+          },
+          children: [
+            {
+              type: 'block',
+              id: 'block:Bdn8Yvqcny',
+              flavour: 'affine:paragraph',
+              props: {
+                type: 'text',
+                text: {
+                  '$blocksuite:internal:text$': true,
+                  delta: [
+                    {
+                      insert: 'aaa',
+                    },
+                  ],
+                },
+              },
+              children: [
+                {
+                  type: 'block',
+                  id: 'block:72SMa5mdLy',
+                  flavour: 'affine:paragraph',
+                  props: {
+                    type: 'text',
+                    text: {
+                      '$blocksuite:internal:text$': true,
+                      delta: [
+                        {
+                          insert: 'bbb',
+                        },
+                      ],
+                    },
+                  },
+                  children: [],
+                },
+                {
+                  type: 'block',
+                  id: 'C0sH2Ee6cz-MysVNLNrBt',
+                  flavour: 'affine:embed-linked-doc',
+                  props: {
+                    index: 'a0',
+                    xywh: '[0,0,0,0]',
+                    rotate: 0,
+                    pageId: '4T5ObMgEIMII-4Bexyta1',
+                    style: 'horizontal',
+                    caption: null,
+                    params: {
+                      mode: 'page',
+                      blockIds: ['abc', '123'],
+                      elementIds: ['def', '456'],
+                      databaseId: 'deadbeef',
+                      databaseRowId: '123',
+                    },
+                  },
+                  children: [],
+                },
+                {
+                  type: 'block',
+                  id: 'block:f-Z6nRrGK_',
+                  flavour: 'affine:paragraph',
+                  props: {
+                    type: 'text',
+                    text: {
+                      '$blocksuite:internal:text$': true,
+                      delta: [
+                        {
+                          insert: 'ccc',
+                        },
+                      ],
+                    },
+                  },
+                  children: [
+                    {
+                      type: 'block',
+                      id: 'block:sP3bU52el7',
+                      flavour: 'affine:paragraph',
+                      props: {
+                        type: 'text',
+                        text: {
+                          '$blocksuite:internal:text$': true,
+                          delta: [
+                            {
+                              insert: 'ddd',
+                            },
+                          ],
+                        },
+                      },
+                      children: [],
+                    },
+                    {
+                      type: 'block',
+                      id: 'block:X_HMxP4wxC',
+                      flavour: 'affine:paragraph',
+                      props: {
+                        type: 'text',
+                        text: {
+                          '$blocksuite:internal:text$': true,
+                          delta: [
+                            {
+                              insert: 'eee',
+                            },
+                            {
+                              insert: '',
+                              attributes: {
+                                reference: {
+                                  type: 'LinkedPage',
+                                  pageId: 'deadbeef',
+                                  params: {
+                                    mode: 'page',
+                                    blockIds: ['abc', '123'],
+                                    elementIds: ['def', '456'],
+                                    databaseId: 'deadbeef',
+                                    databaseRowId: '123',
+                                  },
+                                },
+                              },
+                            },
+                            {
+                              insert: ' ',
+                              attributes: {
+                                reference: {
+                                  type: 'LinkedPage',
+                                  pageId: 'foobar',
+                                },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                      children: [],
+                    },
+                    {
+                      type: 'block',
+                      id: 'block:iA34Rb-RvV',
+                      flavour: 'affine:paragraph',
+                      props: {
+                        text: {
+                          '$blocksuite:internal:text$': true,
+                          delta: [
+                            {
+                              insert: 'fff',
+                            },
+                          ],
+                        },
+                        type: 'text',
+                      },
+                      children: [],
+                    },
+                  ],
+                },
+                {
+                  type: 'block',
+                  id: 'block:I0Fmz5Nv02',
+                  flavour: 'affine:paragraph',
+                  props: {
+                    type: 'text',
+                    text: {
+                      '$blocksuite:internal:text$': true,
+                      delta: [
+                        {
+                          insert: 'ggg',
+                        },
+                      ],
+                    },
+                  },
+                  children: [],
+                },
+              ],
+            },
+            {
+              type: 'block',
+              id: 'block:12lDwMD7ec',
+              flavour: 'affine:paragraph',
+              props: {
+                type: 'text',
+                text: {
+                  '$blocksuite:internal:text$': true,
+                  delta: [
+                    {
+                      insert: 'hhh',
+                    },
+                  ],
+                },
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+    };
+    const markdown = `aaa
+
+&#x20;   bbb
+
+[untitled](https://example.com/4T5ObMgEIMII-4Bexyta1?mode=page\\&blockIds=abc%2C123\\&elementIds=def%2C456\\&databaseId=deadbeef\\&databaseRowId=123)
+
+&#x20;   ccc
+
+&#x20;       ddd
+
+&#x20;       eee[test](https://example.com/deadbeef?mode=page\\&blockIds=abc%2C123\\&elementIds=def%2C456\\&databaseId=deadbeef\\&databaseRowId=123)[](https://example.com/foobar)
+
+&#x20;       fff
+
+&#x20;   ggg
+
+hhh
+`;
+    const middleware: JobMiddleware = ({ adapterConfigs }) => {
+      adapterConfigs.set('title:deadbeef', 'test');
+      adapterConfigs.set('docLinkBaseUrl', 'https://example.com');
+    };
+    const mdAdapter = new MarkdownAdapter(createJob([middleware]));
+    const target = await mdAdapter.fromBlockSnapshot({
+      snapshot: blockSnapshot,
+    });
+    expect(target.file).toBe(markdown);
+  });
+
+  test('synced-doc', async () => {
+    // doc -> synced doc block -> deepest synced doc block
+    // The deepest synced doc block only export it's title
+
+    const deepestSyncedDocSnapshot: DocSnapshot = {
+      type: 'page',
+      meta: {
+        id: 'deepestSyncedDoc',
+        title: 'Deepest Doc',
+        createDate: 1715762171116,
+        tags: [],
+      },
+      blocks: {
+        type: 'block',
+        id: '8WdJmN5FTT',
+        flavour: 'affine:page',
+        version: 2,
+        props: {
+          title: {
+            '$blocksuite:internal:text$': true,
+            delta: [
+              {
+                insert: 'Deepest Doc',
+              },
+            ],
+          },
+        },
+        children: [
+          {
+            type: 'block',
+            id: 'zVN1EZFuZe',
+            flavour: 'affine:surface',
+            version: 5,
+            props: {
+              elements: {},
+            },
+            children: [],
+          },
+          {
+            type: 'block',
+            id: '2s9sJlphLH',
+            flavour: 'affine:note',
+            version: 1,
+            props: {
+              xywh: '[0,0,800,95]',
+              background: DEFAULT_NOTE_BACKGROUND_COLOR,
+              index: 'a0',
+              hidden: false,
+              displayMode: 'both',
+              edgeless: {
+                style: {
+                  borderRadius: 8,
+                  borderSize: 4,
+                  borderStyle: 'solid',
+                  shadowType: '--affine-note-shadow-box',
+                },
+              },
+            },
+            children: [
+              {
+                type: 'block',
+                id: 'vNp5XrR5yw',
+                flavour: 'affine:paragraph',
+                version: 1,
+                props: {
+                  type: 'text',
+                  text: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [],
+                  },
+                },
+                children: [],
+              },
+              {
+                type: 'block',
+                id: 'JTdfSl1ygZ',
+                flavour: 'affine:paragraph',
+                version: 1,
+                props: {
+                  type: 'text',
+                  text: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [
+                      {
+                        insert: 'Hello, This is deepest doc.',
+                      },
+                    ],
+                  },
+                },
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const syncedDocSnapshot: DocSnapshot = {
+      type: 'page',
+      meta: {
+        id: 'syncedDoc',
+        title: 'Synced Doc',
+        createDate: 1719212435051,
+        tags: [],
+      },
+      blocks: {
+        type: 'block',
+        id: 'AGOahFisBN',
+        flavour: 'affine:page',
+        version: 2,
+        props: {
+          title: {
+            '$blocksuite:internal:text$': true,
+            delta: [
+              {
+                insert: 'Synced Doc',
+              },
+            ],
+          },
+        },
+        children: [
+          {
+            type: 'block',
+            id: 'gfVzx5tGpB',
+            flavour: 'affine:surface',
+            version: 5,
+            props: {
+              elements: {},
+            },
+            children: [],
+          },
+          {
+            type: 'block',
+            id: 'CzEfaUret4',
+            flavour: 'affine:note',
+            version: 1,
+            props: {
+              xywh: '[0,0,800,95]',
+              background: '--affine-note-background-blue',
+              index: 'a0',
+              hidden: false,
+              displayMode: 'both',
+              edgeless: {
+                style: {
+                  borderRadius: 0,
+                  borderSize: 4,
+                  borderStyle: 'none',
+                  shadowType: '--affine-note-shadow-sticker',
+                },
+              },
+            },
+            children: [
+              {
+                type: 'block',
+                id: 'yFlNufsgke',
+                flavour: 'affine:paragraph',
+                version: 1,
+                props: {
+                  type: 'h1',
+                  text: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [
+                      {
+                        insert: 'Heading 1',
+                      },
+                    ],
+                  },
+                },
+                children: [],
+              },
+              {
+                type: 'block',
+                id: 'oMuLcD6XS3',
+                flavour: 'affine:paragraph',
+                version: 1,
+                props: {
+                  type: 'h2',
+                  text: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [
+                      {
+                        insert: 'heading 2',
+                      },
+                    ],
+                  },
+                },
+                children: [],
+              },
+              {
+                type: 'block',
+                id: 'PQ8FhGV6VM',
+                flavour: 'affine:paragraph',
+                version: 1,
+                props: {
+                  type: 'text',
+                  text: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [
+                      {
+                        insert: 'paragraph',
+                      },
+                    ],
+                  },
+                },
+                children: [],
+              },
+              {
+                type: 'block',
+                id: 'sA9paSrdEN',
+                flavour: 'affine:paragraph',
+                version: 1,
+                props: {
+                  type: 'text',
+                  text: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [
+                      {
+                        insert: 'strike',
+                        attributes: {
+                          strike: true,
+                        },
+                      },
+                    ],
+                  },
+                },
+                children: [],
+              },
+              {
+                type: 'block',
+                id: 'DF26giFpKX',
+                flavour: 'affine:code',
+                version: 1,
+                props: {
+                  text: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [
+                      {
+                        insert: 'Hello world!',
+                      },
+                    ],
+                  },
+                  language: 'cpp',
+                  wrap: false,
+                  caption: '',
+                },
+                children: [],
+              },
+              {
+                type: 'block',
+                id: '-3bbVQTvI2',
+                flavour: 'affine:embed-synced-doc',
+                version: 1,
+                props: {
+                  index: 'a0',
+                  xywh: '[0,0,0,0]',
+                  rotate: 0,
+                  pageId: 'deepestSyncedDoc',
+                  style: 'syncedDoc',
+                },
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const syncedDocMd =
+      '# Synced Doc\n\n# Heading 1\n\n## heading 2\n\nparagraph\n\n~~strike~~\n\n```cpp\nHello world!\n```';
+
+    const docSnapShot: DocSnapshot = {
+      type: 'page',
+      meta: {
+        id: 'y5nsrywQtr',
+        title: 'Test Doc',
+        createDate: 1719222172042,
+        tags: [],
+      },
+      blocks: {
+        type: 'block',
+        id: 'VChAZIX7DM',
+        flavour: 'affine:page',
+        version: 2,
+        props: {
+          title: {
+            '$blocksuite:internal:text$': true,
+            delta: [
+              {
+                insert: 'Test Doc',
+              },
+            ],
+          },
+        },
+        children: [
+          {
+            type: 'block',
+            id: 'uRj8gejH4d',
+            flavour: 'affine:surface',
+            version: 5,
+            props: {
+              elements: {},
+            },
+            children: [],
+          },
+          {
+            type: 'block',
+            id: 'AqFoVDUoW9',
+            flavour: 'affine:note',
+            version: 1,
+            props: {
+              xywh: '[0,0,800,95]',
+              background: '--affine-note-background-blue',
+              index: 'a0',
+              hidden: false,
+              displayMode: 'both',
+              edgeless: {
+                style: {
+                  borderRadius: 0,
+                  borderSize: 4,
+                  borderStyle: 'none',
+                  shadowType: '--affine-note-shadow-sticker',
+                },
+              },
+            },
+            children: [
+              {
+                type: 'block',
+                id: 'cWBI4UGTqh',
+                flavour: 'affine:paragraph',
+                version: 1,
+                props: {
+                  type: 'text',
+                  text: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [
+                      {
+                        insert: 'Hello',
+                      },
+                    ],
+                  },
+                },
+                children: [],
+              },
+              {
+                type: 'block',
+                id: 'AqFoVxas19',
+                flavour: 'affine:embed-synced-doc',
+                version: 1,
+                props: {
+                  index: 'a0',
+                  xywh: '[0,0,0,0]',
+                  rotate: 0,
+                  pageId: 'syncedDoc',
+                  style: 'syncedDoc',
+                },
+                children: [],
+              },
+              {
+                type: 'block',
+                id: 'Db976U9v18',
+                flavour: 'affine:paragraph',
+                version: 1,
+                props: {
+                  type: 'text',
+                  text: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [
+                      {
+                        insert: 'World!',
+                      },
+                    ],
+                  },
+                },
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const docMd = `\
+# Test Doc
+
+Hello
+
+${syncedDocMd}
+
+Deepest Doc
+
+World!
+`;
+
+    const job = createJob([embedSyncedDocMiddleware('content')]);
+
+    // workaround for adding docs to collection
+    await job.snapshotToDoc(deepestSyncedDocSnapshot);
+    await job.snapshotToDoc(syncedDocSnapshot);
+    await job.snapshotToDoc(docSnapShot);
+
+    const mdAdapter = new MarkdownAdapter(job);
+    const target = await mdAdapter.fromDocSnapshot({
+      snapshot: docSnapShot,
+    });
+    expect(target.file).toBe(docMd);
   });
 });
 
@@ -1383,7 +2349,7 @@ describe('markdown to snapshot', () => {
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -1409,11 +2375,164 @@ describe('markdown to snapshot', () => {
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });
     expect(nanoidReplacement(rawBlockSnapshot)).toEqual(blockSnapshot);
+  });
+
+  test('code with indentation 1 - slice', async () => {
+    const markdown = '```python\n    import this\n```';
+
+    const sliceSnapshot: SliceSnapshot = {
+      type: 'slice',
+      content: [
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[0]',
+          flavour: 'affine:note',
+          props: {
+            xywh: '[0,0,800,95]',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
+            index: 'a0',
+            hidden: false,
+            displayMode: 'both',
+          },
+          children: [
+            {
+              type: 'block',
+              id: 'matchesReplaceMap[1]',
+              flavour: 'affine:code',
+              props: {
+                language: 'python',
+                text: {
+                  '$blocksuite:internal:text$': true,
+                  delta: [
+                    {
+                      insert: '    import this',
+                    },
+                  ],
+                },
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+      workspaceId: '',
+      pageId: '',
+    };
+
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const rawSliceSnapshot = await mdAdapter.toSliceSnapshot({
+      file: markdown,
+      workspaceId: '',
+      pageId: '',
+    });
+    expect(nanoidReplacement(rawSliceSnapshot!)).toEqual(sliceSnapshot);
+  });
+
+  test('code with indentation 2 - slice', async () => {
+    const markdown = '````python\n```python\n    import this\n```\n````';
+
+    const sliceSnapshot: SliceSnapshot = {
+      type: 'slice',
+      content: [
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[0]',
+          flavour: 'affine:note',
+          props: {
+            xywh: '[0,0,800,95]',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
+            index: 'a0',
+            hidden: false,
+            displayMode: 'both',
+          },
+          children: [
+            {
+              type: 'block',
+              id: 'matchesReplaceMap[1]',
+              flavour: 'affine:code',
+              props: {
+                language: 'python',
+                text: {
+                  '$blocksuite:internal:text$': true,
+                  delta: [
+                    {
+                      insert: '```python\n    import this\n```',
+                    },
+                  ],
+                },
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+      workspaceId: '',
+      pageId: '',
+    };
+
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const rawSliceSnapshot = await mdAdapter.toSliceSnapshot({
+      file: markdown,
+      workspaceId: '',
+      pageId: '',
+    });
+    expect(nanoidReplacement(rawSliceSnapshot!)).toEqual(sliceSnapshot);
+  });
+
+  test('code with indentation 3 - slice', async () => {
+    const markdown = '~~~~python\n````python\n    import this\n````\n~~~~';
+
+    const sliceSnapshot: SliceSnapshot = {
+      type: 'slice',
+      content: [
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[0]',
+          flavour: 'affine:note',
+          props: {
+            xywh: '[0,0,800,95]',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
+            index: 'a0',
+            hidden: false,
+            displayMode: 'both',
+          },
+          children: [
+            {
+              type: 'block',
+              id: 'matchesReplaceMap[1]',
+              flavour: 'affine:code',
+              props: {
+                language: 'python',
+                text: {
+                  '$blocksuite:internal:text$': true,
+                  delta: [
+                    {
+                      insert: '````python\n    import this\n````',
+                    },
+                  ],
+                },
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+      workspaceId: '',
+      pageId: '',
+    };
+
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const rawSliceSnapshot = await mdAdapter.toSliceSnapshot({
+      file: markdown,
+      workspaceId: '',
+      pageId: '',
+    });
+    expect(nanoidReplacement(rawSliceSnapshot!)).toEqual(sliceSnapshot);
   });
 
   test('paragraph', async () => {
@@ -1440,7 +2559,7 @@ hhh
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -1585,7 +2704,7 @@ hhh
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });
@@ -1610,7 +2729,7 @@ hhh
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -1632,6 +2751,7 @@ hhh
             },
             checked: false,
             collapsed: false,
+            order: null,
           },
           children: [
             {
@@ -1650,6 +2770,7 @@ hhh
                 },
                 checked: false,
                 collapsed: false,
+                order: null,
               },
               children: [
                 {
@@ -1668,6 +2789,7 @@ hhh
                     },
                     checked: false,
                     collapsed: false,
+                    order: null,
                   },
                   children: [],
                 },
@@ -1689,6 +2811,7 @@ hhh
                 },
                 checked: false,
                 collapsed: false,
+                order: null,
               },
               children: [],
             },
@@ -1710,13 +2833,14 @@ hhh
             },
             checked: false,
             collapsed: false,
+            order: null,
           },
           children: [],
         },
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });
@@ -1741,7 +2865,7 @@ hhh
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -1763,6 +2887,7 @@ hhh
             },
             checked: false,
             collapsed: false,
+            order: null,
           },
           children: [
             {
@@ -1781,6 +2906,7 @@ hhh
                 },
                 checked: true,
                 collapsed: false,
+                order: null,
               },
               children: [
                 {
@@ -1799,6 +2925,7 @@ hhh
                     },
                     checked: false,
                     collapsed: false,
+                    order: null,
                   },
                   children: [],
                 },
@@ -1820,6 +2947,7 @@ hhh
                 },
                 checked: true,
                 collapsed: false,
+                order: null,
               },
               children: [],
             },
@@ -1841,13 +2969,123 @@ hhh
             },
             checked: false,
             collapsed: false,
+            order: null,
           },
           children: [],
         },
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
+      file: markdown,
+    });
+    expect(nanoidReplacement(rawBlockSnapshot)).toEqual(blockSnapshot);
+  });
+
+  test('non consecutive numbered list', async () => {
+    const markdown = `
+1. aaa
+
+bbb
+
+3. ccc
+4. ddd
+`;
+
+    const blockSnapshot: BlockSnapshot = {
+      type: 'block',
+      id: 'matchesReplaceMap[0]',
+      flavour: 'affine:note',
+      props: {
+        xywh: '[0,0,800,95]',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
+        index: 'a0',
+        hidden: false,
+        displayMode: NoteDisplayMode.DocAndEdgeless,
+      },
+      children: [
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[1]',
+          flavour: 'affine:list',
+          props: {
+            type: 'numbered',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [
+                {
+                  insert: 'aaa',
+                },
+              ],
+            },
+            checked: false,
+            collapsed: false,
+            order: 1,
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[2]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [
+                {
+                  insert: 'bbb',
+                },
+              ],
+            },
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[3]',
+          flavour: 'affine:list',
+          props: {
+            type: 'numbered',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [
+                {
+                  insert: 'ccc',
+                },
+              ],
+            },
+            checked: false,
+            collapsed: false,
+            order: 3,
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[4]',
+          flavour: 'affine:list',
+          props: {
+            type: 'numbered',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [
+                {
+                  insert: 'ddd',
+                },
+              ],
+            },
+            checked: false,
+            collapsed: false,
+            order: 4,
+          },
+          children: [],
+        },
+      ],
+    };
+
+    const mdAdapter = new MarkdownAdapter(createJob());
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });
@@ -1862,7 +3100,7 @@ hhh
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -1897,11 +3135,68 @@ hhh
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });
     expect(nanoidReplacement(rawBlockSnapshot)).toEqual(blockSnapshot);
+  });
+
+  test('code inline - slice', async () => {
+    const markdown = '``` ```\n    aaa';
+
+    const sliceSnapshot: SliceSnapshot = {
+      type: 'slice',
+      content: [
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[0]',
+          flavour: 'affine:note',
+          props: {
+            xywh: '[0,0,800,95]',
+            background: DEFAULT_NOTE_BACKGROUND_COLOR,
+            index: 'a0',
+            hidden: false,
+            displayMode: 'both',
+          },
+          children: [
+            {
+              type: 'block',
+              id: 'matchesReplaceMap[1]',
+              flavour: 'affine:paragraph',
+              props: {
+                type: 'text',
+                text: {
+                  '$blocksuite:internal:text$': true,
+                  delta: [
+                    {
+                      insert: ' ',
+                      attributes: {
+                        code: true,
+                      },
+                    },
+                    {
+                      insert: '\n    aaa',
+                    },
+                  ],
+                },
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+      workspaceId: '',
+      pageId: '',
+    };
+
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const rawSliceSnapshot = await mdAdapter.toSliceSnapshot({
+      file: markdown,
+      workspaceId: '',
+      pageId: '',
+    });
+    expect(nanoidReplacement(rawSliceSnapshot!)).toEqual(sliceSnapshot);
   });
 
   test('link', async () => {
@@ -1912,7 +3207,7 @@ hhh
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -1947,7 +3242,7 @@ hhh
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });
@@ -1962,7 +3257,7 @@ hhh
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -1997,7 +3292,7 @@ hhh
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });
@@ -2013,7 +3308,7 @@ hhh
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -2048,7 +3343,7 @@ hhh
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });
@@ -2064,7 +3359,7 @@ hhh
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -2099,7 +3394,7 @@ hhh
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });
@@ -2118,7 +3413,7 @@ hhh
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -2154,11 +3449,25 @@ hhh
               'matchesReplaceMap[12]': {
                 'matchesReplaceMap[10]': {
                   columnId: 'matchesReplaceMap[10]',
-                  value: 'eee',
+                  value: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [
+                      {
+                        insert: 'eee',
+                      },
+                    ],
+                  },
                 },
                 'matchesReplaceMap[11]': {
                   columnId: 'matchesReplaceMap[11]',
-                  value: 'fff',
+                  value: {
+                    '$blocksuite:internal:text$': true,
+                    delta: [
+                      {
+                        insert: 'fff',
+                      },
+                    ],
+                  },
                 },
               },
             },
@@ -2206,7 +3515,7 @@ hhh
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });
@@ -2222,7 +3531,7 @@ hhh
       flavour: 'affine:note',
       props: {
         xywh: '[0,0,800,95]',
-        background: '--affine-background-secondary-color',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
         index: 'a0',
         hidden: false,
         displayMode: NoteDisplayMode.DocAndEdgeless,
@@ -2248,7 +3557,289 @@ hhh
       ],
     };
 
-    const mdAdapter = new MarkdownAdapter();
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
+      file: markdown,
+    });
+    expect(nanoidReplacement(rawBlockSnapshot)).toEqual(blockSnapshot);
+  });
+
+  test('inline latex', async () => {
+    const markdown = 'inline $E=mc^2$ latex\n';
+    const blockSnapshot: BlockSnapshot = {
+      type: 'block',
+      id: 'matchesReplaceMap[0]',
+      flavour: 'affine:note',
+      props: {
+        xywh: '[0,0,800,95]',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
+        index: 'a0',
+        hidden: false,
+        displayMode: NoteDisplayMode.DocAndEdgeless,
+      },
+      children: [
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[1]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [
+                {
+                  insert: 'inline ',
+                },
+                {
+                  insert: ' ',
+                  attributes: {
+                    latex: 'E=mc^2',
+                  },
+                },
+                {
+                  insert: ' latex',
+                },
+              ],
+            },
+          },
+          children: [],
+        },
+      ],
+    };
+
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
+      file: markdown,
+    });
+    expect(nanoidReplacement(rawBlockSnapshot)).toEqual(blockSnapshot);
+  });
+
+  test('latex block', async () => {
+    const markdown = '$$\nE=mc^2\n$$\n';
+
+    const blockSnapshot: BlockSnapshot = {
+      type: 'block',
+      id: 'matchesReplaceMap[0]',
+      flavour: 'affine:note',
+      props: {
+        xywh: '[0,0,800,95]',
+        background: DEFAULT_NOTE_BACKGROUND_COLOR,
+        index: 'a0',
+        hidden: false,
+        displayMode: NoteDisplayMode.DocAndEdgeless,
+      },
+      children: [
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[1]',
+          flavour: 'affine:latex',
+          props: {
+            latex: 'E=mc^2',
+          },
+          children: [],
+        },
+      ],
+    };
+
+    const mdAdapter = new MarkdownAdapter(createJob());
+    const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
+      file: markdown,
+    });
+    expect(nanoidReplacement(rawBlockSnapshot)).toEqual(blockSnapshot);
+  });
+
+  test('reference', async () => {
+    const markdown = `
+aaa
+
+&#x20;   bbb
+
+[untitled](https://example.com/4T5ObMgEIMII-4Bexyta1)
+
+&#x20;   ccc
+
+&#x20;       ddd
+
+&#x20;       eee[test](https://example.com/deadbeef?mode=page\\&blockIds=abc%2C123\\&elementIds=def%2C456)[](https://example.com/foobar)
+
+&#x20;       fff
+
+&#x20;   ggg
+
+hhh
+`;
+    const blockSnapshot: BlockSnapshot = {
+      type: 'block',
+      id: 'matchesReplaceMap[0]',
+      flavour: 'affine:note',
+      props: {
+        xywh: '[0,0,800,95]',
+        background: '--affine-note-background-white',
+        index: 'a0',
+        hidden: false,
+        displayMode: 'both',
+      },
+      children: [
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[1]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [{ insert: 'aaa' }],
+            },
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[2]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [{ insert: '    bbb' }],
+            },
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[3]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [
+                {
+                  insert: ' ',
+                  attributes: {
+                    reference: {
+                      type: 'LinkedPage',
+                      pageId: '4T5ObMgEIMII-4Bexyta1',
+                      params: {},
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[4]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [{ insert: '    ccc' }],
+            },
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[5]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [{ insert: '        ddd' }],
+            },
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[6]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [
+                { insert: '        eee' },
+                {
+                  insert: ' ',
+                  attributes: {
+                    reference: {
+                      type: 'LinkedPage',
+                      pageId: 'deadbeef',
+                      params: {
+                        mode: 'page',
+                        blockIds: ['abc', '123'],
+                        elementIds: ['def', '456'],
+                      },
+                    },
+                  },
+                },
+                {
+                  insert: ' ',
+                  attributes: {
+                    reference: {
+                      type: 'LinkedPage',
+                      pageId: 'foobar',
+                      params: {},
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[7]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [{ insert: '        fff' }],
+            },
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[8]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [{ insert: '    ggg' }],
+            },
+          },
+          children: [],
+        },
+        {
+          type: 'block',
+          id: 'matchesReplaceMap[9]',
+          flavour: 'affine:paragraph',
+          props: {
+            type: 'text',
+            text: {
+              '$blocksuite:internal:text$': true,
+              delta: [{ insert: 'hhh' }],
+            },
+          },
+          children: [],
+        },
+      ],
+    };
+    const middleware: JobMiddleware = ({ adapterConfigs }) => {
+      adapterConfigs.set('docLinkBaseUrl', 'https://example.com');
+    };
+    const mdAdapter = new MarkdownAdapter(createJob([middleware]));
     const rawBlockSnapshot = await mdAdapter.toBlockSnapshot({
       file: markdown,
     });

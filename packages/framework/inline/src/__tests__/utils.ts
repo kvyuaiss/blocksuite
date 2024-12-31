@@ -1,12 +1,10 @@
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports
-import type {
-  DeltaInsert,
-  InlineEditor,
-  InlineRange,
-} from '@blocksuite/inline';
 import { expect, type Page } from '@playwright/test';
 
-const defaultPlaygroundURL = new URL(`http://localhost:5173/`);
+import type { DeltaInsert, InlineEditor, InlineRange } from '../index.js';
+
+const defaultPlaygroundURL = new URL(
+  `http://localhost:${process.env.CI ? 4173 : 5173}/`
+);
 
 export async function type(page: Page, content: string) {
   await page.keyboard.type(content, { delay: 50 });
@@ -119,7 +117,11 @@ export async function getInlineRichTextLine(
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const editor = (richTexts[i] as any).inlineEditor as InlineEditor;
-      const { line, rangeIndexRelatedToLine } = editor.getLine(index);
+      const result = editor.getLine(index);
+      if (!result) {
+        throw new Error('Cannot find line');
+      }
+      const { line, rangeIndexRelatedToLine } = result;
       return [line.vTextContent, rangeIndexRelatedToLine] as const;
     },
     [index, i]

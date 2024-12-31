@@ -1,159 +1,471 @@
-import { assertExists } from '@blocksuite/global/utils';
+import type { SurfaceBlockModel } from '@blocksuite/affine-block-surface';
 import type { Doc } from '@blocksuite/store';
-import { DocCollection } from '@blocksuite/store';
 
-import type {
-  EdgelessModel,
-  Selectable,
-  TopLevelBlockModel,
-} from '../../_common/types.js';
-import { matchFlavours } from '../../_common/utils/model.js';
-import type { FrameBlockModel } from '../../frame-block/frame-model.js';
-import type { EdgelessRootService } from '../../index.js';
-import type { NoteBlockModel } from '../../note-block/note-model.js';
-import { Bound, Overlay, type RoughCanvas } from '../../surface-block/index.js';
-import type { SurfaceBlockModel } from '../../surface-block/surface-model.js';
-import { edgelessElementsBound } from './utils/bound-utils.js';
+import { Overlay } from '@blocksuite/affine-block-surface';
+import {
+  generateKeyBetweenV2,
+  getTopElements,
+  type GfxController,
+  GfxExtension,
+  GfxExtensionIdentifier,
+  type GfxModel,
+  isGfxGroupCompatibleModel,
+  renderableInEdgeless,
+} from '@blocksuite/block-std/gfx';
+import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
+import {
+  Bound,
+  deserializeXYWH,
+  DisposableGroup,
+  type IVec,
+  type SerializedXYWH,
+} from '@blocksuite/global/utils';
+import { DocCollection, Text } from '@blocksuite/store';
+
+import type { FrameBlockModel, NoteBlockModel } from '../../index.js';
+
+import { GfxBlockModel } from './block-model.js';
+import { areSetsEqual } from './utils/misc.js';
 import { isFrameBlock } from './utils/query.js';
 
-const MIN_FRAME_WIDTH = 800;
-const MIN_FRAME_HEIGHT = 640;
 const FRAME_PADDING = 40;
 
-export function removeContainedFrames(frames: FrameBlockModel[]) {
-  return frames.filter(frame => {
-    const bound = Bound.deserialize(frame.xywh);
-    return frames.some(
-      f => f.id === frame.id || !Bound.deserialize(f.xywh).contains(bound)
-    );
-  });
-}
-
 export class FrameOverlay extends Overlay {
-  bound: Bound | null = null;
+  static override overlayName: string = 'frame';
 
-  override render(ctx: CanvasRenderingContext2D, _rc: RoughCanvas): void {
-    if (!this.bound) return;
-    const { x, y, w, h } = this.bound;
+  private _disposable = new DisposableGroup();
+
+  private _frame: FrameBlockModel | null = null;
+
+  private _innerElements = new Set<GfxModel>();
+
+  private _prevXYWH: SerializedXYWH | null = null;
+
+  private get _frameManager() {
+    return this.gfx.std.get(
+      GfxExtensionIdentifier('frame-manager')
+    ) as EdgelessFrameManager;
+  }
+
+  constructor(gfx: GfxController) {
+    super(gfx);
+  }
+
+  private _reset() {
+    this._disposable.dispose();
+    this._disposable = new DisposableGroup();
+
+    this._frame = null;
+    this._innerElements.clear();
+  }
+
+  override clear() {
+    if (this._frame === null && this._innerElements.size === 0) return;
+    this._reset();
+    this._renderer?.refresh();
+  }
+
+  highlight(
+    frame: FrameBlockModel,
+    highlightElementsInBound = false,
+    highlightOutline = true
+  ) {
+    if (!highlightElementsInBound && !highlightOutline) return;
+
+    let needRefresh = false;
+
+    if (highlightOutline && this._prevXYWH !== frame.xywh) {
+      needRefresh = true;
+    }
+
+    let innerElements = new Set<GfxModel>();
+    if (highlightElementsInBound) {
+      innerElements = new Set(
+        getTopElements(
+          this._frameManager.getElementsInFrameBound(frame)
+        ).concat(
+          this._frameManager.getChildElementsInFrame(frame).filter(child => {
+            return frame.intersectsBound(child.elementBound);
+          })
+        )
+      );
+      if (!areSetsEqual(this._innerElements, innerElements)) {
+        needRefresh = true;
+      }
+    }
+
+    if (!needRefresh) return;
+
+    this._reset();
+    if (highlightOutline) this._frame = frame;
+    if (highlightElementsInBound) this._innerElements = innerElements;
+
+    this._disposable.add(
+      frame.deleted.once(() => {
+        this.clear();
+      })
+    );
+    this._renderer?.refresh();
+  }
+
+  override render(ctx: CanvasRenderingContext2D): void {
     ctx.beginPath();
     ctx.strokeStyle = '#1E96EB';
-    ctx.lineWidth = 2;
-    ctx.roundRect(x, y, w, h, 8);
-    ctx.stroke();
-  }
+    ctx.lineWidth = 2 / this.gfx.viewport.zoom;
+    const radius = 2 / this.gfx.viewport.zoom;
 
-  highlight(frame: FrameBlockModel) {
-    const bound = Bound.deserialize(frame.xywh);
+    if (this._frame) {
+      const { x, y, w, h } = this._frame.elementBound;
+      ctx.roundRect(x, y, w, h, radius);
+      ctx.stroke();
+    }
 
-    this.bound = bound;
-    this._renderer.refresh();
-  }
-
-  clear() {
-    this.bound = null;
-    this._renderer.refresh();
-  }
-}
-
-export function isFrameInner(
-  frame: FrameBlockModel,
-  frames: FrameBlockModel[]
-) {
-  const bound = Bound.deserialize(frame.xywh);
-  return frames.some(
-    f => f.id !== frame.id && Bound.deserialize(f.xywh).contains(bound)
-  );
-}
-
-export class EdgelessFrameManager {
-  private _innerMap = new Map<string, boolean>();
-
-  constructor(private _rootService: EdgelessRootService) {
-    this._rootService.doc.slots.blockUpdated.on(e => {
-      const { id, type } = e;
-      const element = this._rootService.getElementById(id);
-      if (!isFrameBlock(element)) return;
-      if (type === 'add') {
-        this._innerMap.set(id, isFrameInner(element, this._rootService.frames));
-      } else if (type === 'update' && e.props.key === 'xywh') {
-        this._innerMap.set(id, isFrameInner(element, this._rootService.frames));
-      }
+    this._innerElements.forEach(element => {
+      const [x, y, w, h] = deserializeXYWH(element.xywh);
+      ctx.translate(x + w / 2, y + h / 2);
+      ctx.rotate(element.rotate);
+      ctx.roundRect(-w / 2, -h / 2, w, h, radius);
+      ctx.translate(-x - w / 2, -y - h / 2);
+      ctx.stroke();
     });
   }
+}
 
-  getFrameInner(frame: FrameBlockModel) {
-    return this._innerMap.get(frame.id);
+export class EdgelessFrameManager extends GfxExtension {
+  static override key = 'frame-manager';
+
+  private _disposable = new DisposableGroup();
+
+  /**
+   * Get all sorted frames by presentation orderer,
+   * the legacy frame that uses `index` as presentation order
+   * will be put at the beginning of the array.
+   */
+  get frames() {
+    return Object.values(this.gfx.doc.blocks.value)
+      .map(({ model }) => model)
+      .filter(isFrameBlock)
+      .sort(EdgelessFrameManager.framePresentationComparator);
   }
 
-  setFrameInner(frame: FrameBlockModel, isInner: boolean) {
-    this._innerMap.set(frame.id, isInner);
+  constructor(gfx: GfxController) {
+    super(gfx);
+    this._watchElementAdded();
   }
 
-  selectFrame(eles: Selectable[]) {
-    const frames = this._rootService.frames;
-    if (frames.length === 0) return null;
+  static framePresentationComparator<
+    T extends FrameBlockModel | { index: string; presentationIndex?: string },
+  >(a: T, b: T) {
+    function stringCompare(a: string, b: string) {
+      if (a < b) return -1;
+      if (a > b) return 1;
+      return 0;
+    }
 
-    const selectedFrames = eles.filter(ele => isFrameBlock(ele));
-    const bound = edgelessElementsBound(eles);
-    for (let i = frames.length - 1; i >= 0; i--) {
-      const frame = frames[i];
-      if (selectedFrames.includes(frame)) continue;
-      if (Bound.deserialize(frame.xywh).contains(bound)) {
+    if (
+      'presentationIndex$' in a &&
+      'presentationIndex$' in b &&
+      a.presentationIndex$.value &&
+      b.presentationIndex$.value
+    ) {
+      return stringCompare(
+        a.presentationIndex$.value,
+        b.presentationIndex$.value
+      );
+    } else if (a.presentationIndex && b.presentationIndex) {
+      return stringCompare(a.presentationIndex, b.presentationIndex);
+    } else if (a.presentationIndex) {
+      return -1;
+    } else if (b.presentationIndex) {
+      return 1;
+    } else {
+      return stringCompare(a.index, b.index);
+    }
+  }
+
+  private _addChildrenToLegacyFrame(frame: FrameBlockModel) {
+    if (frame.childElementIds !== undefined) return;
+    const elements = this.getElementsInFrameBound(frame);
+    const childElements = elements.filter(
+      element => this.getParentFrame(element) === null && element !== frame
+    );
+
+    frame.addChildren(childElements);
+  }
+
+  private _addFrameBlock(bound: Bound) {
+    const surfaceModel = this.gfx.surface as SurfaceBlockModel;
+    const id = this.gfx.doc.addBlock(
+      'affine:frame',
+      {
+        title: new Text(
+          new DocCollection.Y.Text(`Frame ${this.frames.length + 1}`)
+        ),
+        xywh: bound.serialize(),
+        index: this.gfx.layer.generateIndex(true),
+        presentationIndex: this.generatePresentationIndex(),
+      },
+      surfaceModel
+    );
+    const frameModel = this.gfx.getElementById(id);
+
+    if (!frameModel || !isFrameBlock(frameModel)) {
+      throw new BlockSuiteError(
+        ErrorCode.GfxBlockElementError,
+        'Frame model is not found'
+      );
+    }
+
+    return frameModel;
+  }
+
+  private _watchElementAdded() {
+    if (!this.gfx.surface) {
+      return;
+    }
+
+    const { surface: surfaceModel, doc } = this.gfx;
+
+    this._disposable.add(
+      surfaceModel.elementAdded.on(({ id, local }) => {
+        const element = surfaceModel.getElementById(id);
+        if (element && local) {
+          const frame = this.getFrameFromPoint(element.elementBound.center);
+
+          // if the container created with a frame, skip it.
+          if (
+            isGfxGroupCompatibleModel(element) &&
+            frame &&
+            element.hasChild(frame)
+          ) {
+            return;
+          }
+
+          // new element may intended to be added to other group
+          // so we need to wait for the next microtask to check if the element can be added to the frame
+          queueMicrotask(() => {
+            if (!element.group && frame) {
+              this.addElementsToFrame(frame, [element]);
+            }
+          });
+        }
+      })
+    );
+
+    this._disposable.add(
+      doc.slots.blockUpdated.on(payload => {
+        if (
+          payload.type === 'add' &&
+          payload.model instanceof GfxBlockModel &&
+          renderableInEdgeless(doc, surfaceModel, payload.model)
+        ) {
+          const frame = this.getFrameFromPoint(
+            payload.model.elementBound.center,
+            isFrameBlock(payload.model) ? [payload.model] : []
+          );
+          if (!frame) return;
+
+          if (
+            isFrameBlock(payload.model) &&
+            payload.model.containsBound(frame.elementBound)
+          ) {
+            return;
+          }
+          this.addElementsToFrame(frame, [payload.model]);
+        }
+      })
+    );
+  }
+
+  /**
+   * Reset parent of elements to the frame
+   */
+  addElementsToFrame(frame: FrameBlockModel, elements: GfxModel[]) {
+    if (frame.isLocked()) return;
+
+    if (frame.childElementIds === undefined) {
+      this._addChildrenToLegacyFrame(frame);
+    }
+
+    elements = elements.filter(
+      el => el !== frame && !frame.childElements.includes(el)
+    );
+
+    if (elements.length === 0) return;
+
+    frame.addChildren(elements);
+  }
+
+  createFrameOnBound(bound: Bound) {
+    const frameModel = this._addFrameBlock(bound);
+
+    this.addElementsToFrame(
+      frameModel,
+      getTopElements(this.getElementsInFrameBound(frameModel))
+    );
+
+    this.gfx.doc.captureSync();
+
+    this.gfx.selection.set({
+      elements: [frameModel.id],
+      editing: false,
+    });
+
+    return frameModel;
+  }
+
+  createFrameOnElements(elements: GfxModel[]) {
+    // make sure all elements are in the same level
+    for (const element of elements) {
+      if (element.group !== elements[0].group) return;
+    }
+
+    const parentFrameBound = this.getParentFrame(elements[0])?.elementBound;
+
+    let bound = this.gfx.selection.selectedBound;
+
+    if (parentFrameBound?.contains(bound)) {
+      bound.x -= Math.min(0.5 * (bound.x - parentFrameBound.x), FRAME_PADDING);
+      bound.y -= Math.min(0.5 * (bound.y - parentFrameBound.y), FRAME_PADDING);
+      bound.w += Math.min(
+        0.5 * (parentFrameBound.x + parentFrameBound.w - bound.x - bound.w),
+        FRAME_PADDING
+      );
+      bound.h += Math.min(
+        0.5 * (parentFrameBound.y + parentFrameBound.h - bound.y - bound.h),
+        FRAME_PADDING
+      );
+    } else {
+      bound = bound.expand(FRAME_PADDING);
+    }
+
+    const frameModel = this._addFrameBlock(bound);
+
+    this.addElementsToFrame(frameModel, getTopElements(elements));
+
+    this.gfx.doc.captureSync();
+
+    this.gfx.selection.set({
+      elements: [frameModel.id],
+      editing: false,
+    });
+
+    return frameModel;
+  }
+
+  createFrameOnSelected() {
+    return this.createFrameOnElements(this.gfx.selection.selectedElements);
+  }
+
+  createFrameOnViewportCenter(wh: [number, number]) {
+    const center = this.gfx.viewport.center;
+    const bound = new Bound(
+      center.x - wh[0] / 2,
+      center.y - wh[1] / 2,
+      wh[0],
+      wh[1]
+    );
+
+    this.createFrameOnBound(bound);
+  }
+
+  generatePresentationIndex() {
+    const before =
+      this.frames[this.frames.length - 1]?.presentationIndex ?? null;
+
+    return generateKeyBetweenV2(before, null);
+  }
+
+  /**
+   * Get all elements in the frame, there are three cases:
+   * 1. The frame doesn't have `childElements`, return all elements in the frame bound but not owned by another frame.
+   * 2. Return all child elements of the frame if `childElements` exists.
+   */
+  getChildElementsInFrame(frame: FrameBlockModel): GfxModel[] {
+    if (frame.childElementIds === undefined) {
+      return this.getElementsInFrameBound(frame).filter(
+        element => this.getParentFrame(element) !== null
+      );
+    }
+
+    const childElements = frame.childIds
+      .map(id => this.gfx.getElementById(id))
+      .filter(element => element !== null);
+
+    return childElements as BlockSuite.EdgelessModel[];
+  }
+
+  /**
+   * Get all elements in the frame bound,
+   * whatever the element already has another parent frame or not.
+   */
+  getElementsInFrameBound(frame: FrameBlockModel, fullyContained = true) {
+    const bound = Bound.deserialize(frame.xywh);
+    const elements: GfxModel[] = this.gfx.grid
+      .search(bound, { strict: fullyContained })
+      .filter(element => element !== frame);
+
+    return elements;
+  }
+
+  /**
+   * Get most top frame from the point.
+   */
+  getFrameFromPoint([x, y]: IVec, ignoreFrames: FrameBlockModel[] = []) {
+    for (let i = this.frames.length - 1; i >= 0; i--) {
+      const frame = this.frames[i];
+      if (frame.includesPoint(x, y, {}) && !ignoreFrames.includes(frame)) {
         return frame;
       }
     }
     return null;
   }
 
-  getElementsInFrame(frame: FrameBlockModel, fullyContained = true) {
-    const bound = Bound.deserialize(frame.xywh);
-    const elements: EdgelessModel[] = this._rootService.layer.canvasGrid.search(
-      bound,
-      true
-    );
-
-    return elements.concat(
-      getBlocksInFrame(this._rootService.doc, frame, fullyContained)
-    );
+  getParentFrame(element: GfxModel) {
+    const container = element.group;
+    return container && isFrameBlock(container) ? container : null;
   }
 
-  createFrameOnSelected() {
-    const frames = this._rootService.frames;
-    const surfaceModel =
-      this._rootService.doc.getBlockByFlavour('affine:surface')[0];
+  /**
+   * This method will populate `presentationIndex` for all legacy frames,
+   * and keep the orderer of the legacy frames.
+   */
+  refreshLegacyFrameOrder() {
+    const frames = this.frames.splice(0, this.frames.length);
 
-    let bound = edgelessElementsBound(this._rootService.selection.elements);
-    bound = bound.expand(FRAME_PADDING);
-    if (bound.w < MIN_FRAME_WIDTH) {
-      const offset = (MIN_FRAME_WIDTH - bound.w) / 2;
-      bound = bound.expand(offset, 0);
-    }
-    if (bound.h < MIN_FRAME_HEIGHT) {
-      const offset = (MIN_FRAME_HEIGHT - bound.h) / 2;
-      bound = bound.expand(0, offset);
-    }
-    const id = this._rootService.addBlock(
-      'affine:frame',
-      {
-        title: new DocCollection.Y.Text(`Frame ${frames.length + 1}`),
-        xywh: bound.serialize(),
-      },
-      surfaceModel
-    );
-    const frameModel = this._rootService.getElementById(id);
-    this._rootService.doc.captureSync();
-    assertExists(frameModel);
+    let splitIndex = frames.findIndex(frame => frame.presentationIndex);
+    if (splitIndex === 0) return;
 
-    this._rootService.selection.set({
-      elements: [frameModel.id],
-      editing: false,
+    if (splitIndex === -1) splitIndex = frames.length;
+
+    let afterPreIndex =
+      frames[splitIndex]?.presentationIndex || generateKeyBetweenV2(null, null);
+
+    for (let index = splitIndex - 1; index >= 0; index--) {
+      const preIndex = generateKeyBetweenV2(null, afterPreIndex);
+      frames[index].presentationIndex = preIndex;
+      afterPreIndex = preIndex;
+    }
+  }
+
+  removeAllChildrenFromFrame(frame: FrameBlockModel) {
+    this.gfx.doc.transact(() => {
+      frame.childElementIds = {};
     });
+  }
 
-    return this._rootService.getElementById(id);
+  removeFromParentFrame(element: GfxModel) {
+    const parentFrame = this.getParentFrame(element);
+    // eslint-disable-next-line unicorn/prefer-dom-node-remove
+    parentFrame?.removeChild(element);
+  }
+
+  override unmounted(): void {
+    this._disposable.dispose();
   }
 }
 
-export function getNotesInFrame(
+export function getNotesInFrameBound(
   doc: Doc,
   frame: FrameBlockModel,
   fullyContained: boolean = true
@@ -171,22 +483,25 @@ export function getNotesInFrame(
   ) as NoteBlockModel[];
 }
 
-export function getBlocksInFrame(
+export function getBlocksInFrameBound(
   doc: Doc,
   model: FrameBlockModel,
   fullyContained: boolean = true
 ) {
   const bound = Bound.deserialize(model.xywh);
-  const surfaceModel = doc.getBlockByFlavour([
-    'affine:surface',
-  ]) as SurfaceBlockModel[];
+  const surface = model.surface;
+  if (!surface) return [];
 
   return (
-    getNotesInFrame(doc, model, fullyContained) as TopLevelBlockModel[]
+    getNotesInFrameBound(
+      doc,
+      model,
+      fullyContained
+    ) as BlockSuite.EdgelessBlockModelType[]
   ).concat(
-    surfaceModel[0].children.filter(ele => {
+    surface.children.filter(ele => {
       if (ele.id === model.id) return;
-      if (matchFlavours(ele, ['affine:image', 'affine:frame'])) {
+      if (ele instanceof GfxBlockModel) {
         const blockBound = Bound.deserialize(ele.xywh);
         return fullyContained
           ? bound.contains(blockBound)
@@ -194,6 +509,6 @@ export function getBlocksInFrame(
       }
 
       return false;
-    }) as TopLevelBlockModel[]
+    }) as BlockSuite.EdgelessBlockModelType[]
   );
 }

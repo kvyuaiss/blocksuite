@@ -1,11 +1,10 @@
-import { WithDisposable } from '@blocksuite/block-std';
-import { css, html, LitElement } from 'lit';
-import { customElement, property, query } from 'lit/decorators.js';
+import { AIStarIcon } from '@blocksuite/affine-components/icons';
+import { stopPropagation } from '@blocksuite/affine-shared/utils';
+import { WithDisposable } from '@blocksuite/global/utils';
+import { SendIcon } from '@blocksuite/icons/lit';
+import { css, html, LitElement, nothing } from 'lit';
+import { property, query, state } from 'lit/decorators.js';
 
-import { AIStarIcon } from '../../../../../_common/icons/ai.js';
-import { ArrowUpBigIcon } from '../../../../../_common/icons/text.js';
-
-@customElement('ai-panel-input')
 export class AIPanelInput extends WithDisposable(LitElement) {
   static override styles = css`
     :host {
@@ -69,69 +68,103 @@ export class AIPanelInput extends WithDisposable(LitElement) {
       padding: 2px;
       gap: 10px;
       border-radius: 4px;
-      background: var(--light-black-black10, rgba(0, 0, 0, 0.1));
+      background: var(--affine-black-10, rgba(0, 0, 0, 0.1));
 
       svg {
         width: 16px;
         height: 16px;
-        color: var(--light-pure-white, #fff);
+        color: var(--affine-pure-white, #fff);
       }
     }
     .arrow[data-active] {
-      background: var(--light-brandColor, #1e96eb);
+      background: var(--affine-brand-color, #1e96eb);
+    }
+    .arrow[data-active]:hover {
+      cursor: pointer;
     }
   `;
 
-  @property({ attribute: false })
-  onFinish?: (input: string) => void;
+  private _onInput = () => {
+    this.textarea.style.height = 'auto';
+    this.textarea.style.height = this.textarea.scrollHeight + 'px';
 
-  @query('.arrow')
-  private _arrow!: HTMLDivElement;
+    this.onInput?.(this.textarea.value);
+    const value = this.textarea.value.trim();
+    if (value.length > 0) {
+      this._arrow.dataset.active = '';
+      this._hasContent = true;
+    } else {
+      delete this._arrow.dataset.active;
+      this._hasContent = false;
+    }
+  };
 
-  @query('textarea')
-  private _textarea!: HTMLTextAreaElement;
+  private _onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      this._sendToAI();
+    }
+  };
 
-  override updated(_changedProperties: Map<PropertyKey, unknown>): void {
-    const result = super.updated(_changedProperties);
-    this._textarea.style.height = this._textarea.scrollHeight + 'px';
-    return result;
-  }
+  private _sendToAI = () => {
+    const value = this.textarea.value.trim();
+    if (value.length === 0) return;
+
+    this.onFinish?.(value);
+    this.remove();
+  };
 
   override render() {
-    this.updateComplete
-      .then(() => {
-        requestAnimationFrame(() => {
-          this._textarea.focus();
-        });
-      })
-      .catch(console.error);
-
     return html`<div class="root">
       <div class="icon">${AIStarIcon}</div>
       <div class="textarea-container">
         <textarea
-          placeholder="Ask AI to edit or generate..."
+          placeholder="What are your thoughts?"
           rows="1"
-          @keydown=${(e: KeyboardEvent) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-              e.preventDefault();
-              this.onFinish?.(this._textarea.value);
-              this.remove();
-            }
-          }}
-          @input=${() => {
-            this._textarea.style.height = 'auto';
-            this._textarea.style.height = this._textarea.scrollHeight + 'px';
-
-            if (this._textarea.value.length > 0) {
-              this._arrow.dataset.active = '';
-            }
-          }}
+          @keydown=${this._onKeyDown}
+          @input=${this._onInput}
+          @pointerdown=${stopPropagation}
+          @click=${stopPropagation}
+          @dblclick=${stopPropagation}
+          @cut=${stopPropagation}
+          @copy=${stopPropagation}
+          @paste=${stopPropagation}
+          @keyup=${stopPropagation}
         ></textarea>
-        <div class="arrow">${ArrowUpBigIcon}</div>
+        <div
+          class="arrow"
+          @click=${this._sendToAI}
+          @pointerdown=${stopPropagation}
+        >
+          ${SendIcon()}
+          ${this._hasContent
+            ? html`<affine-tooltip .offset=${12}>Send to AI</affine-tooltip>`
+            : nothing}
+        </div>
       </div>
     </div>`;
   }
+
+  override updated(_changedProperties: Map<PropertyKey, unknown>): void {
+    const result = super.updated(_changedProperties);
+    this.textarea.style.height = this.textarea.scrollHeight + 'px';
+    return result;
+  }
+
+  @query('.arrow')
+  private accessor _arrow!: HTMLDivElement;
+
+  @state()
+  private accessor _hasContent = false;
+
+  @property({ attribute: false })
+  accessor onFinish: ((input: string) => void) | undefined = undefined;
+
+  @property({ attribute: false })
+  accessor onInput: ((input: string) => void) | undefined = undefined;
+
+  @query('textarea')
+  accessor textarea!: HTMLTextAreaElement;
 }
 
 declare global {

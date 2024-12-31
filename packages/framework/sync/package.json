@@ -1,29 +1,33 @@
 {
   "name": "@blocksuite/sync",
-  "version": "0.13.0",
+  "version": "0.19.5",
   "description": "BlockSuite data synchronization engine abstraction and implementation.",
   "type": "module",
-  "repository": "toeverything/blocksuite",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/toeverything/blocksuite.git",
+    "directory": "packages/framework/sync"
+  },
   "scripts": {
     "build": "tsc",
-    "test:unit": "vitest --run",
-    "test": "pnpm test:unit"
+    "test:unit": "nx vite:test --run",
+    "test": "yarn test:unit"
   },
+  "sideEffects": false,
   "keywords": [],
   "author": "toeverything",
   "license": "MPL-2.0",
   "dependencies": {
     "@blocksuite/global": "workspace:*",
-    "y-protocols": "^1.0.6",
-    "idb": "^8.0.0"
+    "idb": "^8.0.0",
+    "idb-keyval": "^6.2.1",
+    "y-protocols": "^1.0.6"
   },
-  "devDependencies": {},
   "peerDependencies": {
-    "yjs": "^13"
+    "yjs": "^13.6.15"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./impl/*": "./src/impl/*"
+    ".": "./src/index.ts"
   },
   "publishConfig": {
     "access": "public",

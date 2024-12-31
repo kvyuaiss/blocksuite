@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion */
 import type { Page } from '@playwright/test';
+
 import { expect } from '@playwright/test';
 
 import {
@@ -11,8 +11,8 @@ import {
   dragEmbedResizeByTopLeft,
   enterPlaygroundRoom,
   focusRichText,
-  getCenterPosition,
   getIndexCoordinate,
+  getPageSnapshot,
   getRichTextBoundingBox,
   initEmptyParagraphState,
   initImageState,
@@ -42,7 +42,6 @@ import {
   assertAlmostEqual,
   assertBlockCount,
   assertRichTexts,
-  assertStoreMatchJSX,
 } from '../utils/asserts.js';
 import { test } from '../utils/playwright.js';
 
@@ -258,7 +257,7 @@ test('selection on heavy page', async ({ page }) => {
   await expect(rects).toHaveCount(5);
 });
 
-test('should indent multi-selection block', async ({ page }) => {
+test('should indent multi-selection block', async ({ page }, testInfo) => {
   await enterPlaygroundRoom(page);
   await initEmptyParagraphState(page);
   await initThreeParagraphs(page);
@@ -275,45 +274,12 @@ test('should indent multi-selection block', async ({ page }) => {
 
   await page.keyboard.press('Tab');
 
-  await assertStoreMatchJSX(
-    page,
-    `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:paragraph
-      prop:text="123"
-      prop:type="text"
-    >
-      <affine:paragraph
-        prop:text="456"
-        prop:type="text"
-      />
-      <affine:paragraph
-        prop:text="789"
-        prop:type="text"
-      />
-    </affine:paragraph>
-  </affine:note>
-</affine:page>`
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}.json`
   );
 });
 
-test('should unindent multi-selection block', async ({ page }) => {
+test('should unindent multi-selection block', async ({ page }, testInfo) => {
   await enterPlaygroundRoom(page);
   await initEmptyParagraphState(page);
   await initThreeParagraphs(page);
@@ -330,41 +296,8 @@ test('should unindent multi-selection block', async ({ page }) => {
 
   await page.keyboard.press('Tab');
 
-  await assertStoreMatchJSX(
-    page,
-    `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:paragraph
-      prop:text="123"
-      prop:type="text"
-    >
-      <affine:paragraph
-        prop:text="456"
-        prop:type="text"
-      />
-      <affine:paragraph
-        prop:text="789"
-        prop:type="text"
-      />
-    </affine:paragraph>
-  </affine:note>
-</affine:page>`
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_init.json`
   );
 
   coord = await getIndexCoordinate(page, [1, 2]);
@@ -379,40 +312,8 @@ test('should unindent multi-selection block', async ({ page }) => {
 
   await pressShiftTab(page);
 
-  await assertStoreMatchJSX(
-    page,
-    `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:paragraph
-      prop:text="123"
-      prop:type="text"
-    />
-    <affine:paragraph
-      prop:text="456"
-      prop:type="text"
-    />
-    <affine:paragraph
-      prop:text="789"
-      prop:type="text"
-    />
-  </affine:note>
-</affine:page>`
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}_final.json`
   );
 });
 
@@ -1192,7 +1093,7 @@ test('undo should clear block selection', async ({ page }) => {
 
 test('should not draw rect for sub selected blocks when entering tab key', async ({
   page,
-}) => {
+}, testInfo) => {
   await enterPlaygroundRoom(page);
   await initEmptyParagraphState(page);
   await initThreeParagraphs(page);
@@ -1211,41 +1112,8 @@ test('should not draw rect for sub selected blocks when entering tab key', async
 
   await pressTab(page);
 
-  await assertStoreMatchJSX(
-    page,
-    `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:paragraph
-      prop:text="123"
-      prop:type="text"
-    >
-      <affine:paragraph
-        prop:text="456"
-        prop:type="text"
-      />
-      <affine:paragraph
-        prop:text="789"
-        prop:type="text"
-      />
-    </affine:paragraph>
-  </affine:note>
-</affine:page>`
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}.json`
   );
 });
 
@@ -1276,9 +1144,7 @@ test('should not show option menu of image on block selection', async ({
   await initImageState(page);
   await activeEmbed(page);
 
-  await expect(
-    page.locator('.affine-embed-editing-state-container')
-  ).toHaveCount(1);
+  await expect(page.locator('.affine-image-toolbar-container')).toHaveCount(1);
 
   await pressEnter(page);
 
@@ -1301,51 +1167,15 @@ test('should not show option menu of image on block selection', async ({
 
   await page.waitForTimeout(50);
 
-  await expect(
-    page.locator('.affine-embed-editing-state-container')
-  ).toHaveCount(0);
+  await expect(page.locator('.affine-image-toolbar-container')).toHaveCount(0);
   await expect(
     page.locator('affine-block-selection').locator('visible=true')
   ).toHaveCount(1);
 });
 
-test.skip('should be cleared when dragging block card from BlockHub', async ({
-  page,
-}) => {
-  await enterPlaygroundRoom(page);
-  await initEmptyParagraphState(page);
-  await initThreeParagraphs(page);
-  await assertRichTexts(page, ['123', '456', '789']);
-
-  await selectAllByKeyboard(page);
-  await selectAllByKeyboard(page);
-  await selectAllByKeyboard(page);
-
-  await expect(
-    page.locator('affine-block-selection').locator('visible=true')
-  ).toHaveCount(3);
-
-  await page.click('.block-hub-menu-container [role="menuitem"]');
-  await page.waitForTimeout(200);
-  const blankMenu = '.block-hub-icon-container:nth-child(1)';
-
-  const blankMenuRect = await getCenterPosition(page, blankMenu);
-  const targetPos = await getCenterPosition(page, '[data-block-id="2"]');
-  await dragBetweenCoords(
-    page,
-    { x: blankMenuRect.x, y: blankMenuRect.y },
-    { x: targetPos.x, y: targetPos.y + 5 },
-    { steps: 50 }
-  );
-
-  await expect(
-    page.locator('affine-block-selection').locator('visible=true')
-  ).toHaveCount(0);
-});
-
 test('click bottom of page and if the last is embed block, editor should insert a new editable block', async ({
   page,
-}) => {
+}, testInfo) => {
   await enterPlaygroundRoom(page);
   await initImageState(page);
   await activeEmbed(page);
@@ -1361,40 +1191,8 @@ test('click bottom of page and if the last is embed block, editor should insert 
 
   await page.mouse.click(hostRect.x + hostRect.width / 2, hostRect.bottom - 10);
 
-  await assertStoreMatchJSX(
-    page,
-    `
-<affine:page>
-  <affine:note
-    prop:background="--affine-background-secondary-color"
-    prop:displayMode="both"
-    prop:edgeless={
-      Object {
-        "style": Object {
-          "borderRadius": 8,
-          "borderSize": 4,
-          "borderStyle": "solid",
-          "shadowType": "--affine-note-shadow-box",
-        },
-      }
-    }
-    prop:hidden={false}
-    prop:index="a0"
-  >
-    <affine:image
-      prop:caption=""
-      prop:height={256.5}
-      prop:index="a0"
-      prop:rotate={0}
-      prop:size={-1}
-      prop:sourceId="ejImogf-Tb7AuKY-v94uz1zuOJbClqK-tWBxVr_ksGA="
-      prop:width={342}
-    />
-    <affine:paragraph
-      prop:type="text"
-    />
-  </affine:note>
-</affine:page>`
+  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
+    `${testInfo.title}.json`
   );
 });
 

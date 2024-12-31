@@ -1,8 +1,8 @@
+import { CommonUtils } from '@blocksuite/affine-block-surface';
 import { css, html, LitElement, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-import { toRadian } from '../../../../surface-block/index.js';
 import { getPosition } from '../utils.js';
 
 const styles = css`
@@ -19,19 +19,13 @@ const styles = css`
   }
 `;
 
-@customElement('pie-center-rotator')
 export class PieCenterRotator extends LitElement {
   static override styles = styles;
-  @property({ attribute: false })
-  isActive!: boolean;
-
-  @property({ attribute: false })
-  angle: number | null = null;
 
   protected override render() {
     if (!this.isActive || this.angle === null) return nothing;
 
-    const [x, y] = getPosition(toRadian(this.angle), [45, 45]);
+    const [x, y] = getPosition(CommonUtils.toRadian(this.angle), [45, 45]);
 
     const styles = {
       transform: `translate(${x}px, ${y}px) translate(-50%, -50%)`,
@@ -39,6 +33,12 @@ export class PieCenterRotator extends LitElement {
 
     return html`<span style="${styleMap(styles)}" class="rotator"></span>`;
   }
+
+  @property({ attribute: false })
+  accessor angle: number | null = null;
+
+  @property({ attribute: false })
+  accessor isActive!: boolean;
 }
 
 declare global {

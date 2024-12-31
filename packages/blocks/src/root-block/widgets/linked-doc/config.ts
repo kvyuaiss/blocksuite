@@ -1,151 +1,238 @@
-import type { EditorHost } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import { type DocMeta } from '@blocksuite/store';
+import type { BlockStdScope, EditorHost } from '@blocksuite/block-std';
+import type { InlineRange } from '@blocksuite/inline';
 import type { TemplateResult } from 'lit';
 
-import { toast } from '../../../_common/components/toast.js';
 import {
-  DocIcon,
   ImportIcon,
+  LinkedDocIcon,
+  LinkedEdgelessIcon,
   NewDocIcon,
-} from '../../../_common/icons/index.js';
-import type { AffineInlineEditor } from '../../../_common/inline/presets/affine-inline-specs.js';
-import { REFERENCE_NODE } from '../../../_common/inline/presets/nodes/consts.js';
-import { createDefaultDoc } from '../../../_common/utils/init.js';
-import { isFuzzyMatch } from '../../../_common/utils/string.js';
+} from '@blocksuite/affine-components/icons';
+import {
+  type AffineInlineEditor,
+  insertLinkedNode,
+} from '@blocksuite/affine-components/rich-text';
+import { toast } from '@blocksuite/affine-components/toast';
+import {
+  DocModeProvider,
+  TelemetryProvider,
+} from '@blocksuite/affine-shared/services';
+import {
+  createDefaultDoc,
+  isFuzzyMatch,
+  type Signal,
+} from '@blocksuite/affine-shared/utils';
+
 import { showImportModal } from './import-doc/index.js';
 
-export type LinkedDocOptions = {
-  triggerKeys: string[];
-  ignoreBlockTypes: BlockSuite.Flavour[];
+export interface LinkedWidgetConfig {
+  /**
+   * The first item of the trigger keys will be the primary key
+   * e.g. @, [[
+   */
+  triggerKeys: [string, ...string[]];
+  /**
+   * Convert trigger key to primary key (the first item of the trigger keys)
+   * [[ -> @
+   */
   convertTriggerKey: boolean;
-  getMenus: (ctx: {
-    editorHost: EditorHost;
-    query: string;
-    inlineEditor: AffineInlineEditor;
-    docMetas: DocMeta[];
-  }) => LinkedDocGroup[];
-};
+  ignoreBlockTypes: (keyof BlockSuite.BlockModels)[];
+  getMenus: (
+    query: string,
+    abort: () => void,
+    editorHost: EditorHost,
+    inlineEditor: AffineInlineEditor,
+    abortSignal: AbortSignal
+  ) => Promise<LinkedMenuGroup[]> | LinkedMenuGroup[];
 
-export type LinkedDocItem = {
+  mobile: {
+    useScreenHeight?: boolean;
+    /**
+     * The linked doc menu widget will scroll the container to make sure the input cursor is visible in viewport.
+     * It accepts a selector string, HTMLElement or Window
+     *
+     * @default getViewportElement(editorHost) this is the scrollable container in playground
+     */
+    scrollContainer?: string | HTMLElement | Window;
+    /**
+     * The offset between the top of viewport and the input cursor
+     *
+     * @default 46 The height of header in playground
+     */
+    scrollTopOffset?: number | (() => number);
+  };
+}
+
+export type LinkedMenuItem = {
   key: string;
-  name: string;
+  name: string | TemplateResult<1>;
   icon: TemplateResult<1>;
-  // suffix?: TemplateResult<1>;
+  suffix?: string | TemplateResult<1>;
   // disabled?: boolean;
   action: () => Promise<void> | void;
 };
 
-export type LinkedDocGroup = {
+export type LinkedMenuGroup = {
   name: string;
+  items: LinkedMenuItem[] | Signal<LinkedMenuItem[]>;
   styles?: string;
-  items: LinkedDocItem[];
+  // maximum quantity displayed by default
+  maxDisplay?: number;
+  // copywriting when display quantity exceeds
+  overflowText?: string;
+};
+
+export type LinkedDocContext = {
+  std: BlockStdScope;
+  inlineEditor: AffineInlineEditor;
+  startRange: InlineRange;
+  triggerKey: string;
+  config: LinkedWidgetConfig;
+  close: () => void;
 };
 
 const DEFAULT_DOC_NAME = 'Untitled';
 const DISPLAY_NAME_LENGTH = 8;
 
-export function insertLinkedNode({
-  inlineEditor,
-  docId,
-}: {
-  inlineEditor: AffineInlineEditor;
-  docId: string;
-}) {
-  assertExists(inlineEditor, 'Editor not found');
-  const inlineRange = inlineEditor.getInlineRange();
-  assertExists(inlineRange);
-  inlineEditor.insertText(inlineRange, REFERENCE_NODE, {
-    reference: { type: 'LinkedPage', pageId: docId },
-  });
-  inlineEditor.setInlineRange({
-    index: inlineRange.index + 1,
-    length: 0,
-  });
+export function createLinkedDocMenuGroup(
+  query: string,
+  abort: () => void,
+  editorHost: EditorHost,
+  inlineEditor: AffineInlineEditor
+) {
+  const doc = editorHost.doc;
+  const { docMetas } = doc.collection.meta;
+  const filteredDocList = docMetas
+    .filter(({ id }) => id !== doc.id)
+    .filter(({ title }) => isFuzzyMatch(title, query));
+  const MAX_DOCS = 6;
+
+  return {
+    name: 'Link to Doc',
+    items: filteredDocList.map(doc => ({
+      key: doc.id,
+      name: doc.title || DEFAULT_DOC_NAME,
+      icon:
+        editorHost.std.get(DocModeProvider).getPrimaryMode(doc.id) ===
+        'edgeless'
+          ? LinkedEdgelessIcon
+          : LinkedDocIcon,
+      action: () => {
+        abort();
+        insertLinkedNode({
+          inlineEditor,
+          docId: doc.id,
+        });
+        editorHost.std
+          .getOptional(TelemetryProvider)
+          ?.track('LinkedDocCreated', {
+            control: 'linked doc',
+            module: 'inline @',
+            type: 'doc',
+            other: 'existing doc',
+          });
+      },
+    })),
+    maxDisplay: MAX_DOCS,
+    overflowText: `${filteredDocList.length - MAX_DOCS} more docs`,
+  };
 }
 
-export const getMenus: (ctx: {
-  editorHost: EditorHost;
-  query: string;
-  inlineEditor: AffineInlineEditor;
-  docMetas: DocMeta[];
-}) => LinkedDocGroup[] = ({ editorHost, query, inlineEditor, docMetas }) => {
+export function createNewDocMenuGroup(
+  query: string,
+  abort: () => void,
+  editorHost: EditorHost,
+  inlineEditor: AffineInlineEditor
+): LinkedMenuGroup {
   const doc = editorHost.doc;
   const docName = query || DEFAULT_DOC_NAME;
   const displayDocName =
     docName.slice(0, DISPLAY_NAME_LENGTH) +
     (docName.length > DISPLAY_NAME_LENGTH ? '..' : '');
 
-  const filteredDocList = docMetas
-    .filter(({ id }) => id !== doc.id)
-    .filter(({ title }) => isFuzzyMatch(title, query));
-
-  return [
-    {
-      name: 'Link to Doc',
-      styles: 'overflow-y: scroll; max-height: 224px;',
-      items: filteredDocList.map(doc => ({
-        key: doc.id,
-        name: doc.title || DEFAULT_DOC_NAME,
-        icon: DocIcon,
-        action: () =>
+  return {
+    name: 'New Doc',
+    items: [
+      {
+        key: 'create',
+        name: `Create "${displayDocName}" doc`,
+        icon: NewDocIcon,
+        action: () => {
+          abort();
+          const docName = query;
+          const newDoc = createDefaultDoc(doc.collection, {
+            title: docName,
+          });
           insertLinkedNode({
             inlineEditor,
-            docId: doc.id,
-          }),
-      })),
-    },
-    {
-      name: 'New Doc',
-      items: [
-        {
-          key: 'create',
-          name: `Create "${displayDocName}" doc`,
-          icon: NewDocIcon,
-          action: () => {
-            const docName = query;
-            const newDoc = createDefaultDoc(doc.collection, {
-              title: docName,
-            });
-            insertLinkedNode({
-              inlineEditor,
-              docId: newDoc.id,
-            });
-          },
+            docId: newDoc.id,
+          });
+          const telemetryService =
+            editorHost.std.getOptional(TelemetryProvider);
+          telemetryService?.track('LinkedDocCreated', {
+            control: 'new doc',
+            module: 'inline @',
+            type: 'doc',
+            other: 'new doc',
+          });
+          telemetryService?.track('DocCreated', {
+            control: 'new doc',
+            module: 'inline @',
+            type: 'doc',
+          });
         },
-        {
-          key: 'import',
-          name: 'Import',
-          icon: ImportIcon,
-          action: () => {
-            const onSuccess = (
-              docIds: string[],
-              options: {
-                importedCount: number;
-              }
-            ) => {
-              toast(
-                editorHost,
-                `Successfully imported ${options.importedCount} Doc${options.importedCount > 1 ? 's' : ''}.`
-              );
-              for (const docId of docIds) {
-                insertLinkedNode({
-                  inlineEditor,
-                  docId,
-                });
-              }
-            };
-            const onFail = (message: string) => {
-              toast(editorHost, message);
-            };
-            showImportModal({
-              collection: doc.collection,
-              onSuccess,
-              onFail,
-            });
-          },
+      },
+      {
+        key: 'import',
+        name: 'Import',
+        icon: ImportIcon,
+        action: () => {
+          abort();
+          const onSuccess = (
+            docIds: string[],
+            options: {
+              importedCount: number;
+            }
+          ) => {
+            toast(
+              editorHost,
+              `Successfully imported ${options.importedCount} Doc${options.importedCount > 1 ? 's' : ''}.`
+            );
+            for (const docId of docIds) {
+              insertLinkedNode({
+                inlineEditor,
+                docId,
+              });
+            }
+          };
+          const onFail = (message: string) => {
+            toast(editorHost, message);
+          };
+          showImportModal({
+            collection: doc.collection,
+            onSuccess,
+            onFail,
+          });
         },
-      ],
-    },
-  ] satisfies LinkedDocGroup[];
+      },
+    ],
+  };
+}
+
+export function getMenus(
+  query: string,
+  abort: () => void,
+  editorHost: EditorHost,
+  inlineEditor: AffineInlineEditor
+): Promise<LinkedMenuGroup[]> {
+  return Promise.resolve([
+    createLinkedDocMenuGroup(query, abort, editorHost, inlineEditor),
+    createNewDocMenuGroup(query, abort, editorHost, inlineEditor),
+  ]);
+}
+
+export const LinkedWidgetUtils = {
+  createLinkedDocMenuGroup,
+  createNewDocMenuGroup,
+  insertLinkedNode,
 };

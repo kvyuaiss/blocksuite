@@ -1,35 +1,53 @@
-import './surface-ref-portal.js';
-import '../_common/components/embed-card/embed-card-caption.js';
+import type { BlockCaptionEditor } from '@blocksuite/affine-components/caption';
+import type { Doc } from '@blocksuite/store';
 
-import { PathFinder } from '@blocksuite/block-std';
-import { BlockElement } from '@blocksuite/block-std';
-import { assertExists, type Disposable, noop } from '@blocksuite/global/utils';
-import { css, html, nothing, type TemplateResult } from 'lit';
-import { customElement, query, state } from 'lit/decorators.js';
-import { styleMap } from 'lit/directives/style-map.js';
-
-import type { EmbedCardCaption } from '../_common/components/embed-card/embed-card-caption.js';
+import {
+  type SurfaceBlockModel,
+  SurfaceElementModel,
+} from '@blocksuite/affine-block-surface';
 import {
   EdgelessModeIcon,
   FrameIcon,
   MoreDeleteIcon,
-} from '../_common/icons/index.js';
-import { requestConnectedFrame } from '../_common/utils/event.js';
-import { buildPath } from '../_common/utils/query.js';
-import type { FrameBlockModel } from '../frame-block/index.js';
-import { getBackgroundGrid } from '../root-block/edgeless/utils/query.js';
-import type { Renderer } from '../surface-block/canvas-renderer/renderer.js';
-import type { ElementModel } from '../surface-block/element-model/base.js';
-import type { SurfaceBlockModel } from '../surface-block/index.js';
-import { Bound } from '../surface-block/utils/bound.js';
-import { deserializeXYWH } from '../surface-block/utils/xywh.js';
-import type { SurfaceRefBlockModel } from './surface-ref-model.js';
-import { SurfaceRefPortal } from './surface-ref-portal.js';
-import type { SurfaceRefRenderer } from './surface-ref-renderer.js';
-import type { SurfaceRefBlockService } from './surface-ref-service.js';
-import { noContentPlaceholder } from './utils.js';
+} from '@blocksuite/affine-components/icons';
+import { Peekable } from '@blocksuite/affine-components/peek';
+import {
+  FrameBlockModel,
+  GroupElementModel,
+  type SurfaceRefBlockModel,
+} from '@blocksuite/affine-model';
+import {
+  DocModeProvider,
+  EditPropsStore,
+  ThemeProvider,
+} from '@blocksuite/affine-shared/services';
+import { requestConnectedFrame } from '@blocksuite/affine-shared/utils';
+import {
+  type BaseSelection,
+  BlockStdScope,
+  type EditorHost,
+  LifeCycleWatcher,
+} from '@blocksuite/block-std';
+import { BlockComponent, BlockServiceWatcher } from '@blocksuite/block-std';
+import { GfxBlockElementModel } from '@blocksuite/block-std/gfx';
+import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
+import {
+  Bound,
+  deserializeXYWH,
+  DisposableGroup,
+  type SerializedXYWH,
+} from '@blocksuite/global/utils';
+import { assertExists } from '@blocksuite/global/utils';
+import { css, html, nothing, type TemplateResult } from 'lit';
+import { query, state } from 'lit/decorators.js';
+import { styleMap } from 'lit/directives/style-map.js';
 
-noop(SurfaceRefPortal);
+import type { EdgelessRootPreviewBlockComponent } from '../root-block/edgeless/edgeless-root-preview-block.js';
+import type { SurfaceRefBlockService } from './surface-ref-service.js';
+
+import { SpecProvider } from '../_specs/index.js';
+import { EdgelessRootService } from '../root-block/index.js';
+import { noContentPlaceholder } from './utils.js';
 
 const REF_LABEL_ICON = {
   'affine:frame': FrameIcon,
@@ -47,10 +65,8 @@ const NO_CONTENT_REASON = {
   DEFAULT: 'This content was deleted on edgeless mode',
 } as Record<string, string>;
 
-type RefElement = ElementModel | FrameBlockModel;
-
-@customElement('affine-surface-ref')
-export class SurfaceRefBlockComponent extends BlockElement<
+@Peekable()
+export class SurfaceRefBlockComponent extends BlockComponent<
   SurfaceRefBlockModel,
   SurfaceRefBlockService
 > {
@@ -59,6 +75,13 @@ export class SurfaceRefBlockComponent extends BlockElement<
       position: relative;
       user-select: none;
       margin: 10px 0;
+      break-inside: avoid;
+    }
+
+    @media print {
+      .affine-surface-ref {
+        outline: none !important;
+      }
     }
 
     .ref-placeholder {
@@ -149,18 +172,13 @@ export class SurfaceRefBlockComponent extends BlockElement<
       border: 1px solid var(--affine-black-30);
     }
 
-    .ref-canvas-container {
-      height: 100%;
-      width: 100%;
-      position: relative;
-    }
-
     .surface-ref-mask {
       position: absolute;
       left: 0;
       top: 0;
       width: 100%;
       height: 100%;
+      break-inside: avoid;
     }
 
     .surface-ref-mask:hover {
@@ -218,134 +236,37 @@ export class SurfaceRefBlockComponent extends BlockElement<
       line-height: 20px;
     }
   `;
-  @state()
-  private _surfaceModel: SurfaceBlockModel | null = null;
 
-  @state()
-  private _focused: boolean = false;
+  private _previewDoc: Doc | null = null;
 
-  private _surfaceRefRenderer!: SurfaceRefRenderer;
+  private _previewSpec = SpecProvider.getInstance().getSpec('edgeless:preview');
 
-  private _referencedModel: RefElement | null = null;
+  private _referencedModel: BlockSuite.EdgelessModel | null = null;
 
-  @query('.ref-canvas-container')
-  container!: HTMLDivElement;
+  private _referenceXYWH: SerializedXYWH | null = null;
 
-  @query('surface-ref-portal')
-  portal!: SurfaceRefPortal;
-
-  @query('affine-surface-ref > embed-card-caption')
-  captionElement!: EmbedCardCaption;
-
-  private _isInSurface = false;
-
-  get isInSurface() {
-    return this._isInSurface;
-  }
+  private _viewportEditor: EditorHost | null = null;
 
   private get _shouldRender() {
     return (
       this.isConnected &&
-      this.parentElement &&
-      !this.parentBlockElement.closest('affine-surface-ref')
+      // prevent surface-ref from render itself in loop
+      !this.parentComponent?.closest('affine-surface-ref')
     );
-  }
-
-  get surfaceRenderer() {
-    return this._surfaceRefRenderer.surfaceRenderer;
   }
 
   get referenceModel() {
     return this._referencedModel;
   }
 
-  override connectedCallback() {
-    super.connectedCallback();
+  private _deleteThis() {
+    this.doc.deleteBlock(this.model);
+  }
 
-    this.contentEditable = 'false';
-
-    const parent = this.host.doc.getParent(this.model);
-    this._isInSurface = parent?.flavour === 'affine:surface';
-
-    if (!this._shouldRender) return;
-
-    const service = this.service;
-    assertExists(service, `Surface ref block must run with its service.`);
-    this._surfaceRefRenderer = service.getRenderer(
-      PathFinder.id(this.path),
-      this.doc,
-      true
-    );
-    this._disposables.add(() => {
-      this.service?.removeRenderer(this._surfaceRefRenderer.id);
+  private _focusBlock() {
+    this.selection.update(() => {
+      return [this.selection.create('block', { blockId: this.blockId })];
     });
-    this._disposables.add(
-      this._surfaceRefRenderer.slots.surfaceModelChanged.on(model => {
-        this._surfaceModel = model;
-      })
-    );
-    this._disposables.add(
-      this._surfaceRefRenderer.slots.surfaceRendererRefresh.on(() => {
-        this.requestUpdate();
-      })
-    );
-    this._disposables.add(
-      this._surfaceRefRenderer.slots.surfaceRendererInit.on(() => {
-        let lastWidth = 0;
-        const observer = new ResizeObserver(entries => {
-          if (entries[0].contentRect.width !== lastWidth) {
-            lastWidth = entries[0].contentRect.width;
-            this._refreshViewport();
-          }
-        });
-        observer.observe(this);
-
-        this._disposables.add(() => observer.disconnect());
-      })
-    );
-    this._disposables.add(
-      this._surfaceRefRenderer.surfaceService.layer.slots.layerUpdated.on(
-        () => {
-          this.portal.setStackingCanvas(
-            this._surfaceRefRenderer.surfaceRenderer.stackingCanvas
-          );
-        }
-      )
-    );
-    this._surfaceRefRenderer.mount();
-    this._initHotkey();
-    this._initReferencedModel();
-    this._initSelection();
-  }
-
-  override updated() {
-    if (!this._shouldRender) return;
-
-    this._attachRenderer();
-  }
-
-  private _attachRenderer() {
-    if (
-      this._surfaceRefRenderer?.surfaceRenderer.canvas.isConnected ||
-      !this.container ||
-      !this.portal
-    )
-      return;
-
-    this.surfaceRenderer.attach(this.container);
-    if (this.portal.isUpdatePending) {
-      this.portal.updateComplete
-        .then(() => {
-          this.portal.setStackingCanvas(
-            this._surfaceRefRenderer.surfaceRenderer.stackingCanvas
-          );
-        })
-        .catch(console.error);
-    } else {
-      this.portal.setStackingCanvas(
-        this._surfaceRefRenderer.surfaceRenderer.stackingCanvas
-      );
-    }
   }
 
   private _initHotkey() {
@@ -358,16 +279,17 @@ export class SurfaceRefBlockComponent extends BlockElement<
           flavour: 'affine:paragraph',
         },
       ]);
-      const path = buildPath(this.doc.getBlockById(paragraphId));
+      const model = this.doc.getBlockById(paragraphId);
+      assertExists(model, `Failed to add paragraph block.`);
 
       requestConnectedFrame(() => {
         selection.update(selList => {
           return selList
-            .filter(sel => !sel.is('block'))
+            .filter<BaseSelection>(sel => !sel.is('block'))
             .concat(
               selection.create('text', {
                 from: {
-                  path,
+                  blockId: model.id,
                   index: 0,
                   length: 0,
                 },
@@ -388,58 +310,112 @@ export class SurfaceRefBlockComponent extends BlockElement<
   }
 
   private _initReferencedModel() {
-    let refWatcher: Disposable | null = null;
-    const init = () => {
-      refWatcher?.dispose();
+    const surfaceModel: SurfaceBlockModel | null =
+      (this.doc.getBlocksByFlavour('affine:surface')[0]?.model as
+        | SurfaceBlockModel
+        | undefined) ?? null;
+    this._surfaceModel = surfaceModel;
 
-      const referencedModel = this._surfaceRefRenderer.getModel(
-        this.model.reference
-      ) as RefElement;
-      this._referencedModel =
-        referencedModel && 'xywh' in referencedModel ? referencedModel : null;
+    const findReferencedModel = (): [
+      BlockSuite.EdgelessModel | null,
+      string,
+    ] => {
+      if (!this.model.reference) return [null, this.doc.id];
 
-      if (!referencedModel) return;
-
-      if ('propsUpdated' in referencedModel) {
-        refWatcher = referencedModel.propsUpdated.on(() => {
-          if (referencedModel.flavour !== this.model.refFlavour) {
-            this.doc.updateBlock(this.model, {
-              refFlavour: referencedModel.flavour,
-            });
-          }
-
-          this.updateComplete
-            .then(() => {
-              this._refreshViewport();
-            })
-            .catch(console.error);
-        });
+      if (this.doc.getBlock(this.model.reference)) {
+        return [
+          this.doc.getBlock(this.model.reference)
+            ?.model as GfxBlockElementModel,
+          this.doc.id,
+        ];
       }
 
-      this._refreshViewport();
+      if (this._surfaceModel?.getElementById(this.model.reference)) {
+        return [
+          this._surfaceModel.getElementById(this.model.reference),
+          this.doc.id,
+        ];
+      }
+
+      const doc = [...this.std.collection.docs.values()]
+        .map(doc => doc.getDoc())
+        .find(
+          doc =>
+            doc.getBlock(this.model.reference) ||
+            (
+              doc.getBlocksByFlavour('affine:surface')[0]
+                .model as SurfaceBlockModel
+            ).getElementById(this.model.reference)
+        );
+
+      if (doc) {
+        this._surfaceModel = doc.getBlocksByFlavour('affine:surface')[0]
+          .model as SurfaceBlockModel;
+      }
+
+      if (doc && doc.getBlock(this.model.reference)) {
+        return [
+          doc.getBlock(this.model.reference)?.model as GfxBlockElementModel,
+          doc.id,
+        ];
+      }
+
+      if (doc && doc.getBlocksByFlavour('affine:surface')[0]) {
+        return [
+          (
+            doc.getBlocksByFlavour('affine:surface')[0]
+              .model as SurfaceBlockModel
+          ).getElementById(this.model.reference),
+          doc.id,
+        ];
+      }
+
+      return [null, this.doc.id];
+    };
+
+    const init = () => {
+      const [referencedModel, docId] = findReferencedModel();
+
+      this._referencedModel =
+        referencedModel && referencedModel.xywh ? referencedModel : null;
+      this._previewDoc = this.doc.collection.getDoc(docId, {
+        readonly: true,
+      });
+      this._referenceXYWH = this._referencedModel?.xywh ?? null;
     };
 
     init();
 
-    this._disposables.add(() => {
-      this.doc.slots.blockUpdated.on(({ type, id }) => {
-        if (type === 'delete' && id === this.model.reference) {
+    this._disposables.add(
+      this.model.propsUpdated.on(payload => {
+        if (
+          payload.key === 'reference' &&
+          this.model.reference !== this._referencedModel?.id
+        ) {
           init();
         }
-      });
-    });
+      })
+    );
 
-    this._disposables.add(() => {
-      this.model.propsUpdated.on(() => {
-        if (this.model.reference !== this._referencedModel?.id) {
-          init();
-        }
-      });
-    });
+    if (surfaceModel && this._referencedModel instanceof SurfaceElementModel) {
+      this._disposables.add(
+        surfaceModel.elementRemoved.on(({ id }) => {
+          if (this.model.reference === id) {
+            init();
+          }
+        })
+      );
+    }
 
-    this._disposables.add(() => {
-      refWatcher?.dispose();
-    });
+    if (this._referencedModel instanceof GfxBlockElementModel) {
+      this._disposables.add(
+        this.doc.slots.blockUpdated.on(({ type, id }) => {
+          if (type === 'delete' && id === this.model.reference) {
+            init();
+          }
+        })
+      );
+    }
   }
 
   private _initSelection() {
@@ -447,59 +423,108 @@ export class SurfaceRefBlockComponent extends BlockElement<
     this._disposables.add(
       selection.slots.changed.on(selList => {
         this._focused = selList.some(
-          sel => PathFinder.equals(sel.path, this.path) && sel.is('block')
+          sel => sel.blockId === this.blockId && sel.is('block')
         );
       })
     );
   }
 
-  private _refreshViewport() {
-    if (!this._referencedModel) {
-      return;
+  private _initSpec() {
+    const refreshViewport = this._refreshViewport.bind(this);
+    class PageViewWatcher extends BlockServiceWatcher {
+      static override readonly flavour = 'affine:page';
+
+      override mounted() {
+        this.blockService.disposables.add(
+          this.blockService.specSlots.viewConnected.once(({ component }) => {
+            const edgelessBlock =
+              component as EdgelessRootPreviewBlockComponent;
+
+            edgelessBlock.editorViewportSelector = 'ref-viewport';
+            refreshViewport();
+            edgelessBlock.service.viewport.sizeUpdated.once(() => {
+              refreshViewport();
+            });
+          })
+        );
+      }
+    }
+    this._previewSpec.extend([PageViewWatcher]);
+
+    const referenceId = this.model.reference;
+    const setReferenceXYWH = (xywh: typeof this._referenceXYWH) => {
+      this._referenceXYWH = xywh;
+    };
+
+    class FrameGroupViewWatcher extends LifeCycleWatcher {
+      static override readonly key = 'surface-ref-group-view-watcher';
+
+      private _disposable = new DisposableGroup();
+
+      override mounted() {
+        const edgelessService = this.std.get(EdgelessRootService);
+        const { _disposable } = this;
+
+        const referenceElement = edgelessService.getElementById(referenceId);
+        if (!referenceElement) {
+          throw new BlockSuiteError(
+            ErrorCode.MissingViewModelError,
+            `can not find element(id:${referenceElement})`
+          );
+        }
+
+        if (referenceElement instanceof FrameBlockModel) {
+          _disposable.add(
+            referenceElement.xywh$.subscribe(xywh => {
+              setReferenceXYWH(xywh);
+              refreshViewport();
+            })
+          );
+        } else if (referenceElement instanceof GroupElementModel) {
+          _disposable.add(
+            edgelessService.surface.elementUpdated.on(({ id, oldValues }) => {
+              if (
+                id === referenceId &&
+                oldValues.xywh !== referenceElement.xywh
+              ) {
+                setReferenceXYWH(referenceElement.xywh);
+                refreshViewport();
+              }
+            })
+          );
+        } else {
+          console.warn('Unsupported reference element type');
+        }
+      }
+
+      override unmounted() {
+        this._disposable.dispose();
+      }
     }
 
-    const referencedModel = this._referencedModel;
-
-    // trigger a rerender to update element's size
-    // and set viewport after element's size has been updated
-    this.requestUpdate();
-    this.updateComplete
-      .then(() => {
-        this.surfaceRenderer.onResize();
-        this.surfaceRenderer.setViewportByBound(
-          Bound.fromXYWH(deserializeXYWH(referencedModel.xywh))
-        );
-
-        // update portal transform
-        this.portal?.setViewport(this.surfaceRenderer);
-      })
-      .catch(console.error);
+    this._previewSpec.extend([FrameGroupViewWatcher]);
   }
 
-  private _deleteThis() {
-    this.doc.deleteBlock(this.model);
+  private _refreshViewport() {
+    if (!this._referenceXYWH) return;
+
+    const previewEditorHost = this.previewEditor;
+
+    if (!previewEditorHost) return;
+
+    const edgelessService = previewEditorHost.std.getService(
+      'affine:page'
+    ) as EdgelessRootService;
+
+    edgelessService.viewport.setViewportByBound(
+      Bound.deserialize(this._referenceXYWH)
+    );
   }
 
-  private _focusBlock() {
-    this.selection.update(() => {
-      return [this.selection.create('block', { path: this.path })];
-    });
-  }
-
-  viewInEdgeless() {
-    if (!this._referencedModel) return;
-
-    const viewport = {
-      xywh: this._referencedModel.xywh,
-      padding: [60, 20, 20, 20] as [number, number, number, number],
-    };
-    const pageService = this.std.spec.getService('affine:page');
-
-    pageService.editSession.setItem('viewport', viewport);
-    pageService.slots.editorModeSwitch.emit('edgeless');
-  }
-
-  private _renderMask(referencedModel: RefElement, flavourOrType: string) {
+  private _renderMask(
+    referencedModel: BlockSuite.EdgelessModel,
+    flavourOrType: string
+  ) {
     const title = 'title' in referencedModel ? referencedModel.title : '';
 
     return html`
@@ -514,6 +539,35 @@ export class SurfaceRefBlockComponent extends BlockElement<
         </div>
       </div>
     `;
+  }
+
+  private _renderRefContent(referencedModel: BlockSuite.EdgelessModel) {
+    const [, , w, h] = deserializeXYWH(referencedModel.xywh);
+    const flavourOrType =
+      'flavour' in referencedModel
+        ? referencedModel.flavour
+        : referencedModel.type;
+    const _previewSpec = this._previewSpec.value;
+
+    if (!this._viewportEditor) {
+      this._viewportEditor = new BlockStdScope({
+        doc: this._previewDoc!,
+        extensions: _previewSpec,
+      }).render();
+    }
+
+    return html`<div class="ref-content">
+      <div
+        class="ref-viewport ${flavourOrType === 'affine:frame' ? 'frame' : ''}"
+        style=${styleMap({
+          width: `${w}px`,
+          aspectRatio: `${w} / ${h}`,
+        })}
+      >
+        ${this._viewportEditor}
+      </div>
+      ${this._renderMask(referencedModel, flavourOrType)}
+    </div>`;
   }
 
   private _renderRefPlaceholder(model: SurfaceRefBlockModel) {
@@ -537,59 +591,36 @@ export class SurfaceRefBlockComponent extends BlockElement<
     </div>`;
   }
 
-  private _renderRefContent(referencedModel: RefElement, renderer: Renderer) {
-    const [, , w, h] = deserializeXYWH(referencedModel.xywh);
-    const { zoom } = renderer;
-    const { gap } = getBackgroundGrid(zoom, true);
-    const flavourOrType =
-      'flavour' in referencedModel
-        ? referencedModel.flavour
-        : referencedModel.type;
-    const edgelessBlocks =
-      flavourOrType === 'affine:frame' || flavourOrType === 'group'
-        ? html`<surface-ref-portal
-            .doc=${this.doc}
-            .host=${this.host}
-            .refModel=${referencedModel}
-            .renderModel=${this.host.renderModel}
-          ></surface-ref-portal>`
-        : nothing;
+  override connectedCallback() {
+    super.connectedCallback();
 
-    return html`<div
-      class="ref-content"
-      style=${styleMap({
-        backgroundSize: `${gap}px ${gap}px`,
-      })}
-    >
-      <div
-        class="ref-viewport ${flavourOrType === 'affine:frame' ? 'frame' : ''}"
-        style=${styleMap({
-          width: `${w}px`,
-          aspectRatio: `${w} / ${h}`,
-        })}
-      >
-        ${edgelessBlocks}
-        <div class="ref-canvas-container">
-          <!-- attach canvas here -->
-        </div>
-      </div>
-      ${this._renderMask(referencedModel, flavourOrType)}
-    </div>`;
+    this.contentEditable = 'false';
+
+    if (!this._shouldRender) return;
+
+    const service = this.service;
+    assertExists(service, `Surface ref block must run with its service.`);
+    this._initHotkey();
+    this._initSpec();
+    this._initReferencedModel();
+    this._initSelection();
   }
 
   override render() {
-    if (!this._shouldRender) return;
+    if (!this._shouldRender) return nothing;
 
-    const { _surfaceModel, _referencedModel, surfaceRenderer, model } = this;
+    const { _surfaceModel, _referencedModel, model } = this;
     const isEmpty =
       !_surfaceModel || !_referencedModel || !_referencedModel.xywh;
     const content = isEmpty
       ? this._renderRefPlaceholder(model)
-      : this._renderRefContent(_referencedModel, surfaceRenderer);
+      : this._renderRefContent(_referencedModel);
+    const edgelessTheme = this.std.get(ThemeProvider).edgeless$.value;
 
     return html`
       <div
         class="affine-surface-ref"
+        data-theme=${edgelessTheme}
         @click=${this._focusBlock}
         style=${styleMap({
           outline: this._focused
@@ -600,11 +631,41 @@ export class SurfaceRefBlockComponent extends BlockElement<
         ${content}
       </div>
 
-      <embed-card-caption .block=${this}></embed-card-caption>
+      <block-caption-editor></block-caption-editor>
 
       ${Object.values(this.widgets)}
     `;
   }
+
+  viewInEdgeless() {
+    if (!this._referenceXYWH) return;
+
+    const viewport = {
+      xywh: this._referenceXYWH,
+      padding: [60, 20, 20, 20] as [number, number, number, number],
+    };
+
+    this.std.get(EditPropsStore).setStorage('viewport', viewport);
+    this.std.get(DocModeProvider).setEditorMode('edgeless');
+  }
+
+  override willUpdate(_changedProperties: Map<PropertyKey, unknown>): void {
+    if (_changedProperties.has('_referencedModel')) {
+      this._refreshViewport();
+    }
+  }
+
+  @state()
+  private accessor _focused: boolean = false;
+
+  @state()
+  private accessor _surfaceModel: SurfaceBlockModel | null = null;
+
+  @query('affine-surface-ref > block-caption-editor')
+  accessor captionElement!: BlockCaptionEditor;
+
+  @query('editor-host')
+  accessor previewEditor!: EditorHost | null;
 }
 
 declare global {

@@ -1,7 +1,8 @@
-import type { EdgelessTool } from '../../../_common/types.js';
-import { type IVec } from '../../../surface-block/index.js';
-import { ShapeToolController } from '../../edgeless/controllers/tools/shape-tool.js';
-import { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
+import type { ToolController } from '@blocksuite/block-std/gfx';
+import type { IVec } from '@blocksuite/global/utils';
+
+import { EditPropsStore } from '@blocksuite/affine-shared/services';
+
 import type {
   ActionFunction,
   IPieNodeWithAction,
@@ -14,35 +15,47 @@ import type {
   PieSubmenuNodeModel,
 } from './base.js';
 
-export function updateShapeOverlay(rootElement: EdgelessRootBlockComponent) {
-  const controller = rootElement.tools.currentController;
-  if (controller instanceof ShapeToolController) {
+import { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
+import { ShapeTool } from '../../edgeless/gfx-tool/shape-tool.js';
+
+export function updateShapeOverlay(rootComponent: EdgelessRootBlockComponent) {
+  const controller = rootComponent.gfx.tool.currentTool$.peek();
+  if (controller instanceof ShapeTool) {
     controller.createOverlay();
   }
 }
 
 export function getActiveShapeColor(type: 'fill' | 'stroke') {
-  return ({ rootElement }: PieMenuContext) => {
-    if (rootElement instanceof EdgelessRootBlockComponent) {
-      const props = rootElement.service.editSession.getLastProps('shape');
-      if (type == 'fill') return props.fillColor;
-      else return props.strokeColor;
+  return ({ rootComponent }: PieMenuContext) => {
+    if (rootComponent instanceof EdgelessRootBlockComponent) {
+      const props =
+        rootComponent.std.get(EditPropsStore).lastProps$.value[
+          'shape:roundedRect'
+        ];
+      const color = type == 'fill' ? props.fillColor : props.strokeColor;
+      return color.toString();
     }
     return '';
   };
 }
 
-export function getActiveConnectorStrokeColor({ rootElement }: PieMenuContext) {
-  if (rootElement instanceof EdgelessRootBlockComponent) {
-    const props = rootElement.service.editSession.getLastProps('connector');
-    return props.stroke;
+export function getActiveConnectorStrokeColor({
+  rootComponent,
+}: PieMenuContext) {
+  if (rootComponent instanceof EdgelessRootBlockComponent) {
+    const props =
+      rootComponent.std.get(EditPropsStore).lastProps$.value.connector;
+    const color = props.stroke;
+    return color.toString();
   }
   return '';
 }
 
-export function setEdgelessToolAction(tool: EdgelessTool): ActionFunction {
-  return ({ rootElement }) => {
-    rootElement.service.tool.setEdgelessTool(tool);
+export function setEdgelessToolAction(
+  callback: (tool: ToolController) => void
+): ActionFunction {
+  return ({ rootComponent }) => {
+    callback(rootComponent.gfx.tool);
   };
 }
 

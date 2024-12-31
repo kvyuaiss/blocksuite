@@ -1,52 +1,31 @@
-import type { EditorHost } from '@blocksuite/block-std';
+import { AttachmentBlockSchema } from '@blocksuite/affine-model';
+import {
+  DragHandleConfigExtension,
+  TelemetryProvider,
+} from '@blocksuite/affine-shared/services';
+import {
+  captureEventTarget,
+  convertDragPreviewDocToEdgeless,
+  convertDragPreviewEdgelessToDoc,
+  isInsideEdgelessEditor,
+  matchFlavours,
+} from '@blocksuite/affine-shared/utils';
 import { BlockService } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import { Slot } from '@blocksuite/store';
-import { render } from 'lit';
+import { GfxControllerIdentifier } from '@blocksuite/block-std/gfx';
+
+import type { AttachmentBlockComponent } from './attachment-block.js';
 
 import {
   FileDropManager,
   type FileDropOptions,
 } from '../_common/components/file-drop-manager.js';
 import { EMBED_CARD_HEIGHT, EMBED_CARD_WIDTH } from '../_common/consts.js';
-import { matchFlavours } from '../_common/utils/model.js';
-import { isInsideEdgelessEditor } from '../_common/utils/query.js';
-import type { EdgelessRootBlockComponent } from '../root-block/edgeless/edgeless-root-block.js';
-import type { RootBlockComponent } from '../root-block/types.js';
-import type { DragHandleOption } from '../root-block/widgets/drag-handle/config.js';
-import {
-  AFFINE_DRAG_HANDLE_WIDGET,
-  AffineDragHandleWidget,
-} from '../root-block/widgets/drag-handle/drag-handle.js';
-import {
-  captureEventTarget,
-  convertDragPreviewDocToEdgeless,
-  convertDragPreviewEdgelessToDoc,
-} from '../root-block/widgets/drag-handle/utils.js';
-import type { AttachmentBlockComponent } from './attachment-block.js';
-import {
-  type AttachmentBlockModel,
-  AttachmentBlockSchema,
-} from './attachment-model.js';
+import { addAttachments } from '../root-block/edgeless/utils/common.js';
+import { AttachmentEdgelessBlockComponent } from './attachment-edgeless-block.js';
 import { addSiblingAttachmentBlocks } from './utils.js';
 
-export class AttachmentService extends BlockService<AttachmentBlockModel> {
-  get rootElement(): RootBlockComponent {
-    const rootModel = this.doc.root;
-    assertExists(rootModel);
-
-    const rootElement = this.std.view.viewFromPath('block', [
-      rootModel.id,
-    ]) as RootBlockComponent | null;
-    assertExists(rootElement);
-    return rootElement;
-  }
-
-  maxFileSize = 10 * 1000 * 1000; // 10MB (default)
-
-  slots = {
-    onFilesDropped: new Slot<File[]>(),
-  };
+export class AttachmentBlockService extends BlockService {
+  static override readonly flavour = AttachmentBlockSchema.model.flavour;
 
   private _fileDropOptions: FileDropOptions = {
     flavour: this.flavour,
@@ -59,134 +38,92 @@ export class AttachmentService extends BlockService<AttachmentBlockModel> {
       );
 
       if (targetModel && !matchFlavours(targetModel, ['affine:surface'])) {
-        addSiblingAttachmentBlocks(
-          this.host as EditorHost,
+        await addSiblingAttachmentBlocks(
+          this.host,
           attachmentFiles,
           this.maxFileSize,
           targetModel,
           place
         );
-      } else if (isInsideEdgelessEditor(this.host as EditorHost)) {
-        const edgelessRoot = this.rootElement as EdgelessRootBlockComponent;
-        await edgelessRoot.addAttachments(attachmentFiles, point);
+      } else if (isInsideEdgelessEditor(this.host)) {
+        const gfx = this.std.get(GfxControllerIdentifier);
+        point = gfx.viewport.toViewCoordFromClientCoord(point);
+        await addAttachments(this.std, attachmentFiles, point);
+
+        this.std.getOptional(TelemetryProvider)?.track('CanvasElementAdded', {
+          control: 'canvas:drop',
+          page: 'whiteboard editor',
+          module: 'toolbar',
+          segment: 'toolbar',
+          type: 'attachment',
+        });
       }
 
-      this.slots.onFilesDropped.emit(attachmentFiles);
       return true;
     },
   };
 
   fileDropManager!: FileDropManager;
 
-  private _dragHandleOption: DragHandleOption = {
-    flavour: AttachmentBlockSchema.model.flavour,
-    edgeless: true,
-    onDragStart: ({ state, startDragging, anchorBlockPath, editorHost }) => {
-      if (!anchorBlockPath) return false;
-      const anchorComponent = editorHost.std.view.viewFromPath(
-        'block',
-        anchorBlockPath
-      );
-      if (
-        !anchorComponent ||
-        !matchFlavours(anchorComponent.model, [
-          AttachmentBlockSchema.model.flavour,
-        ])
-      )
-        return false;
-
-      const blockComponent = anchorComponent as AttachmentBlockComponent;
-      const element = captureEventTarget(state.raw.target);
-
-      const isDraggingByDragHandle = !!element?.closest(
-        AFFINE_DRAG_HANDLE_WIDGET
-      );
-      const isDraggingByComponent = blockComponent.contains(element);
-      const isInSurface = blockComponent.isInSurface;
-
-      if (!isInSurface && (isDraggingByDragHandle || isDraggingByComponent)) {
-        editorHost.selection.setGroup('note', [
-          editorHost.selection.create('block', {
-            path: blockComponent.path,
-          }),
-        ]);
-        startDragging([blockComponent], state);
-        return true;
-      } else if (isInSurface && isDraggingByDragHandle) {
-        const attachmentPortal = blockComponent.closest(
-          '.edgeless-block-portal-attachment'
-        );
-        assertExists(attachmentPortal);
-        const dragPreviewEl = attachmentPortal.cloneNode() as HTMLElement;
-        dragPreviewEl.style.transform = '';
-        dragPreviewEl.style.left = '0';
-        dragPreviewEl.style.top = '0';
-        render(
-          blockComponent.host.renderModel(blockComponent.model),
-          dragPreviewEl
-        );
-
-        startDragging([blockComponent], state, dragPreviewEl);
-        return true;
-      }
-      return false;
-    },
-    onDragEnd: props => {
-      const { state, draggingElements, editorHost } = props;
-      if (
-        draggingElements.length !== 1 ||
-        !matchFlavours(draggingElements[0].model, [
-          AttachmentBlockSchema.model.flavour,
-        ])
-      )
-        return false;
-
-      const blockComponent = draggingElements[0] as AttachmentBlockComponent;
-      const isInSurface = blockComponent.isInSurface;
-      const target = captureEventTarget(state.raw.target);
-      const isTargetEdgelessContainer =
-        target?.classList.contains('edgeless') &&
-        target?.classList.contains('affine-block-children-container');
-
-      if (isInSurface) {
-        const style = blockComponent.model.style;
-        const targetStyle = style === 'cubeThick' ? 'horizontalThin' : style;
-        return convertDragPreviewEdgelessToDoc({
-          blockComponent,
-          style: targetStyle,
-          ...props,
-        });
-      } else if (isTargetEdgelessContainer) {
-        let style = blockComponent.model.style ?? 'cubeThick';
-        const embed = blockComponent.model.embed;
-        if (embed) {
-          style = 'cubeThick';
-          editorHost.doc.updateBlock(blockComponent.model, {
-            style,
-            embed: false,
-          });
-        }
-
-        return convertDragPreviewDocToEdgeless({
-          blockComponent,
-          cssSelector: '.affine-attachment-container',
-          width: EMBED_CARD_WIDTH[style],
-          height: EMBED_CARD_HEIGHT[style],
-          ...props,
-        });
-      }
-
-      return false;
-    },
-  };
+  maxFileSize = 10 * 1000 * 1000; // 10MB (default)
 
   override mounted(): void {
     super.mounted();
 
     this.fileDropManager = new FileDropManager(this, this._fileDropOptions);
-
-    this.disposables.add(
-      AffineDragHandleWidget.registerOption(this._dragHandleOption)
-    );
   }
 }
+
+export const AttachmentDragHandleOption = DragHandleConfigExtension({
+  flavour: AttachmentBlockSchema.model.flavour,
+  edgeless: true,
+  onDragEnd: props => {
+    const { state, draggingElements, editorHost } = props;
+    if (
+      draggingElements.length !== 1 ||
+      !matchFlavours(draggingElements[0].model, [
+        AttachmentBlockSchema.model.flavour,
+      ])
+    )
+      return false;
+
+    const blockComponent = draggingElements[0] as
+      | AttachmentBlockComponent
+      | AttachmentEdgelessBlockComponent;
+    const isInSurface =
+      blockComponent instanceof AttachmentEdgelessBlockComponent;
+    const target = captureEventTarget(state.raw.target);
+    const isTargetEdgelessContainer =
+      target?.classList.contains('edgeless-container');
+
+    if (isInSurface) {
+      const style = blockComponent.model.style;
+      const targetStyle = style === 'cubeThick' ? 'horizontalThin' : style;
+      return convertDragPreviewEdgelessToDoc({
+        blockComponent,
+        style: targetStyle,
+        ...props,
+      });
+    } else if (isTargetEdgelessContainer) {
+      let style = blockComponent.model.style ?? 'cubeThick';
+      const embed = blockComponent.model.embed;
+      if (embed) {
+        style = 'cubeThick';
+        editorHost.doc.updateBlock(blockComponent.model, {
+          style,
+          embed: false,
+        });
+      }
+
+      return convertDragPreviewDocToEdgeless({
+        blockComponent,
+        cssSelector: '.affine-attachment-container',
+        width: EMBED_CARD_WIDTH[style],
+        height: EMBED_CARD_HEIGHT[style],
+        ...props,
+      });
+    }
+
+    return false;
+  },
+});

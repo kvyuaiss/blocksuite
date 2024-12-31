@@ -1,14 +1,14 @@
-import { ShadowlessElement, WithDisposable } from '@blocksuite/block-std';
-import type { RichText } from '@blocksuite/blocks';
-import { type RootBlockModel } from '@blocksuite/blocks';
-import { assertExists } from '@blocksuite/global/utils';
+import type { EditorHost } from '@blocksuite/block-std';
+import type { RichText, RootBlockModel } from '@blocksuite/blocks';
 import type { Doc } from '@blocksuite/store';
+
+import { ShadowlessElement } from '@blocksuite/block-std';
+import { assertExists, WithDisposable } from '@blocksuite/global/utils';
 import { css, html } from 'lit';
-import { customElement, property, query, state } from 'lit/decorators.js';
+import { property, query, state } from 'lit/decorators.js';
 
 const DOC_BLOCK_CHILD_PADDING = 24;
 
-@customElement('doc-title')
 export class DocTitle extends WithDisposable(ShadowlessElement) {
   static override styles = css`
     .doc-title-container {
@@ -60,53 +60,27 @@ export class DocTitle extends WithDisposable(ShadowlessElement) {
     }
   `;
 
-  @property({ attribute: false })
-  doc!: Doc;
-
-  @state()
-  private _isReadonly = false;
-
-  @state()
-  private _isComposing = false;
-
-  @query('rich-text')
-  private _richTextElement!: RichText;
-
-  private get _rootModel() {
-    return this.doc.root as RootBlockModel;
-  }
-
-  private get _inlineEditor() {
-    return this._richTextElement.inlineEditor;
-  }
-
-  private get _pageRoot() {
-    const docViewport = this.closest('.affine-page-viewport') as HTMLElement;
-    assertExists(docViewport);
-    const pageRoot = docViewport.querySelector('affine-page-root');
-    assertExists(pageRoot);
-    return pageRoot;
-  }
-
   private _onTitleKeyDown = (event: KeyboardEvent) => {
     if (event.isComposing || this.doc.readonly) return;
     const hasContent = !this.doc.isEmpty;
 
     if (event.key === 'Enter' && hasContent && !event.isComposing) {
       event.preventDefault();
+      event.stopPropagation();
 
       const inlineEditor = this._inlineEditor;
-      assertExists(inlineEditor);
-      const inlineRange = inlineEditor.getInlineRange();
-      assertExists(inlineRange);
-
-      const rightText = this._rootModel.title.split(inlineRange.index);
-      this._pageRoot.prependParagraphWithText(rightText);
+      const inlineRange = inlineEditor?.getInlineRange();
+      if (inlineRange) {
+        const rightText = this._rootModel.title.split(inlineRange.index);
+        this._pageRoot.prependParagraphWithText(rightText);
+      }
     } else if (event.key === 'ArrowDown' && hasContent) {
       event.preventDefault();
+      event.stopPropagation();
       this._pageRoot.focusFirstParagraph();
     } else if (event.key === 'Tab') {
       event.preventDefault();
+      event.stopPropagation();
     }
   };
 
@@ -115,6 +89,26 @@ export class DocTitle extends WithDisposable(ShadowlessElement) {
       title: this._rootModel.title.toString(),
     });
   };
+
+  private get _inlineEditor() {
+    return this._richTextElement.inlineEditor;
+  }
+
+  private get _pageRoot() {
+    const pageRoot = this._viewport.querySelector('affine-page-root');
+    assertExists(pageRoot);
+    return pageRoot;
+  }
+
+  private get _rootModel() {
+    return this.doc.root as RootBlockModel;
+  }
+
+  private get _viewport() {
+    const el = this.closest<HTMLElement>('.affine-page-viewport');
+    assertExists(el);
+    return el;
+  }
 
   override connectedCallback() {
     super.connectedCallback();
@@ -144,9 +138,13 @@ export class DocTitle extends WithDisposable(ShadowlessElement) {
       () => (this._isComposing = false)
     );
 
-    this._rootModel.title.yText.observe(() => {
+    const updateMetaTitle = () => {
       this._updateTitleInMeta();
       this.requestUpdate();
+    };
+    this._rootModel.title.yText.observe(updateMetaTitle);
+    this._disposables.add(() => {
+      this._rootModel.title.yText.unobserve(updateMetaTitle);
     });
   }
 
@@ -163,12 +161,33 @@ export class DocTitle extends WithDisposable(ShadowlessElement) {
         <rich-text
           .yText=${this._rootModel.title.yText}
           .undoManager=${this.doc.history}
+          .verticalScrollContainerGetter=${() => this._viewport}
           .readonly=${this.doc.readonly}
           .enableFormat=${false}
         ></rich-text>
       </div>
     `;
   }
+
+  @state()
+  private accessor _isComposing = false;
+
+  @state()
+  private accessor _isReadonly = false;
+
+  @query('rich-text')
+  private accessor _richTextElement!: RichText;
+
+  @property({ attribute: false })
+  accessor doc!: Doc;
+}
+
+export function getDocTitleByEditorHost(
+  editorHost: EditorHost
+): DocTitle | null {
+  const docViewport = editorHost.closest('.affine-page-viewport');
+  if (!docViewport) return null;
+  return docViewport.querySelector('doc-title');
 }
 
 declare global {

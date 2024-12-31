@@ -1,7 +1,6 @@
+import type { DocMode } from '@blocksuite/affine-model';
 import type { Chain, EditorHost, InitCommandCtx } from '@blocksuite/block-std';
 import type { TemplateResult } from 'lit';
-
-import type { EditorMode } from '../../utils/index.js';
 
 export interface AIItemGroupConfig {
   name?: string;
@@ -13,11 +12,13 @@ export interface AIItemConfig {
   icon: TemplateResult | (() => HTMLElement);
   showWhen?: (
     chain: Chain<InitCommandCtx>,
-    editorMode: EditorMode,
+    editorMode: DocMode,
     host: EditorHost
   ) => boolean;
   subItem?: AISubItemConfig[];
+  subItemOffset?: [number, number];
   handler?: (host: EditorHost) => void;
+  beta?: boolean;
 }
 
 export interface AISubItemConfig {
@@ -30,13 +31,14 @@ abstract class BaseAIError extends Error {
 }
 
 export enum AIErrorType {
-  Unauthorized = 'Unauthorized',
-  PaymentRequired = 'PaymentRequired',
   GeneralNetworkError = 'GeneralNetworkError',
+  PaymentRequired = 'PaymentRequired',
+  Unauthorized = 'Unauthorized',
 }
 
 export class UnauthorizedError extends BaseAIError {
   readonly type = AIErrorType.Unauthorized;
+
   constructor() {
     super('Unauthorized');
   }
@@ -45,6 +47,7 @@ export class UnauthorizedError extends BaseAIError {
 // user has used up the quota
 export class PaymentRequiredError extends BaseAIError {
   readonly type = AIErrorType.PaymentRequired;
+
   constructor() {
     super('Payment required');
   }
@@ -53,6 +56,7 @@ export class PaymentRequiredError extends BaseAIError {
 // general 500x error
 export class GeneralNetworkError extends BaseAIError {
   readonly type = AIErrorType.GeneralNetworkError;
+
   constructor(message: string = 'Network error') {
     super(message);
   }

@@ -1,60 +1,120 @@
+import type { RichText } from '@blocksuite/affine-components/rich-text';
+import type { ShapeElementModel } from '@blocksuite/affine-model';
+
+import { CommonUtils, TextUtils } from '@blocksuite/affine-block-surface';
+import { MindmapElementModel, TextResizing } from '@blocksuite/affine-model';
+import { ThemeProvider } from '@blocksuite/affine-shared/services';
 import {
-  RangeManager,
+  RANGE_SYNC_EXCLUDE_ATTR,
   ShadowlessElement,
-  WithDisposable,
 } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import { html } from 'lit';
-import { customElement, property, query } from 'lit/decorators.js';
+import {
+  assertExists,
+  Bound,
+  Vec,
+  WithDisposable,
+} from '@blocksuite/global/utils';
+import { DocCollection } from '@blocksuite/store';
+import { html, nothing } from 'lit';
+import { property, query } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
-import type { RichText } from '../../../../_common/components/rich-text/rich-text.js';
-import { isCssVariable } from '../../../../_common/theme/css-variables.js';
-import {
-  SHAPE_TEXT_PADDING,
-  SHAPE_TEXT_VERTICAL_PADDING,
-} from '../../../../surface-block/canvas-renderer/element-renderer/shape/utils.js';
-import { TextResizing } from '../../../../surface-block/element-model/common.js';
-import {
-  MindmapElementModel,
-  type ShapeElementModel,
-} from '../../../../surface-block/element-model/index.js';
-import { Bound, toRadian, Vec } from '../../../../surface-block/index.js';
-import { wrapFontFamily } from '../../../../surface-block/utils/font.js';
 import type { EdgelessRootBlockComponent } from '../../edgeless-root-block.js';
+
 import { getSelectedRect } from '../../utils/query.js';
 
-@customElement('edgeless-shape-text-editor')
+const { toRadian } = CommonUtils;
+
 export class EdgelessShapeTextEditor extends WithDisposable(ShadowlessElement) {
-  @query('rich-text')
-  richText!: RichText;
+  private _keeping = false;
 
-  @property({ attribute: false })
-  element!: ShapeElementModel;
+  private _lastXYWH = '';
 
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
-
-  @property({ attribute: false })
-  mounteEditor?: (
-    element: ShapeElementModel,
-    edgeless: EdgelessRootBlockComponent
-  ) => void;
+  private _resizeObserver: ResizeObserver | null = null;
 
   get inlineEditor() {
     assertExists(this.richText.inlineEditor);
     return this.richText.inlineEditor;
   }
+
   get inlineEditorContainer() {
     return this.inlineEditor.rootElement;
   }
 
-  private _lastXYWH = '';
-  private _keeping = false;
-  private _resizeObserver: ResizeObserver | null = null;
+  get isMindMapNode() {
+    return this.element.group instanceof MindmapElementModel;
+  }
 
-  setKeeping(keeping: boolean) {
-    this._keeping = keeping;
+  private _initMindmapKeyBindings() {
+    if (!this.isMindMapNode) {
+      return;
+    }
+
+    const service = this.edgeless.service;
+
+    this._disposables.addFromEvent(this, 'keydown', evt => {
+      switch (evt.key) {
+        case 'Enter': {
+          evt.stopPropagation();
+          if (evt.shiftKey || evt.isComposing) return;
+
+          (this.ownerDocument.activeElement as HTMLElement).blur();
+          service.selection.set({
+            elements: [this.element.id],
+            editing: false,
+          });
+          break;
+        }
+        case 'Esc':
+        case 'Tab': {
+          evt.stopPropagation();
+          (this.ownerDocument.activeElement as HTMLElement).blur();
+          service.selection.set({
+            elements: [this.element.id],
+            editing: false,
+          });
+          break;
+        }
+      }
+    });
+  }
+
+  private _stashMindMapTree() {
+    if (!this.isMindMapNode) {
+      return;
+    }
+
+    const mindmap = this.element.group as MindmapElementModel;
+    const pop = mindmap.stashTree(mindmap.tree);
+
+    this._disposables.add(() => {
+      mindmap.layout();
+      pop?.();
+    });
+  }
+
+  private _unmount() {
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
+
+    if (this.element.text) {
+      const text = this.element.text.toString();
+      const trimed = text.trim();
+      const len = trimed.length;
+      if (len === 0) {
+        this.element.text = undefined;
+      } else if (len < text.length) {
+        this.element.text = new DocCollection.Y.Text(trimed);
+      }
+    }
+
+    this.element.textDisplay = true;
+
+    this.remove();
+    this.edgeless.service.selection.set({
+      elements: [],
+      editing: false,
+    });
   }
 
   private _updateElementWH() {
@@ -63,15 +123,12 @@ export class EdgelessShapeTextEditor extends WithDisposable(ShadowlessElement) {
     const containerWidth = this.richText.offsetWidth;
     const textResizing = this.element.textResizing;
 
-    if (this._lastXYWH !== this.element.xywh) {
-      this.requestUpdate();
-    }
-
     if (
       (containerHeight !== this.element.h &&
         textResizing === TextResizing.AUTO_HEIGHT) ||
-      (textResizing === TextResizing.AUTO_WIDTH &&
-        containerWidth !== this.element.w)
+      (textResizing === TextResizing.AUTO_WIDTH_AND_HEIGHT &&
+        (containerWidth !== this.element.w ||
+          containerHeight !== this.element.h))
     ) {
       const [leftTopX, leftTopY] = Vec.rotWith(
         [this.richText.offsetLeft, this.richText.offsetTop],
@@ -86,12 +143,23 @@ export class EdgelessShapeTextEditor extends WithDisposable(ShadowlessElement) {
         xywh: new Bound(
           modelLeftTopX,
           modelLeftTopY,
-          textResizing === TextResizing.AUTO_WIDTH
+          textResizing === TextResizing.AUTO_WIDTH_AND_HEIGHT
             ? containerWidth
             : this.element.w,
           containerHeight
         ).serialize(),
       });
+
+      if (this._lastXYWH !== this.element.xywh) {
+        this.requestUpdate();
+      }
+
+      if (this.isMindMapNode) {
+        const mindmap = this.element.group as MindmapElementModel;
+
+        mindmap.layout();
+      }
+
       this.richText.style.minHeight = `${containerHeight}px`;
     }
 
@@ -103,7 +171,7 @@ export class EdgelessShapeTextEditor extends WithDisposable(ShadowlessElement) {
 
   override connectedCallback() {
     super.connectedCallback();
-    this.setAttribute(RangeManager.rangeSyncExcludeAttr, 'true');
+    this.setAttribute(RANGE_SYNC_EXCLUDE_ATTR, 'true');
   }
 
   override firstUpdated(): void {
@@ -157,7 +225,21 @@ export class EdgelessShapeTextEditor extends WithDisposable(ShadowlessElement) {
       })
       .catch(console.error);
 
+    this.disposables.addFromEvent(this, 'keydown', evt => {
+      if (evt.key === 'Escape') {
+        requestAnimationFrame(() => {
+          this.edgeless.service.selection.set({
+            elements: [this.element.id],
+            editing: false,
+          });
+        });
+
+        (this.ownerDocument.activeElement as HTMLElement).blur();
+      }
+    });
+
     this._initMindmapKeyBindings();
+    this._stashMindMapTree();
   }
 
   override async getUpdateComplete(): Promise<boolean> {
@@ -166,77 +248,13 @@ export class EdgelessShapeTextEditor extends WithDisposable(ShadowlessElement) {
     return result;
   }
 
-  private _unmount() {
-    this._resizeObserver?.disconnect();
-    this._resizeObserver = null;
-
-    this.element.textDisplay = true;
-    this.element.group instanceof MindmapElementModel &&
-      this.element.group.layout();
-
-    this.remove();
-    this.edgeless.service.selection.set({
-      elements: [],
-      editing: false,
-    });
-  }
-
-  private _initMindmapKeyBindings() {
-    if (!this.element.surface.isInMindmap(this.element.id)) {
-      return;
-    }
-
-    this._disposables.addFromEvent(this, 'keydown', evt => {
-      switch (evt.key) {
-        case 'Enter': {
-          evt.preventDefault();
-          const edgeless = this.edgeless;
-          const element = this.element;
-          const mindmap = this.element.group as MindmapElementModel;
-          const parent = mindmap.getParentNode(element.id) ?? element;
-
-          edgeless.doc.transact(() => {
-            const id = mindmap.addNode(parent.id, 'shape');
-
-            requestAnimationFrame(() => {
-              this.element = edgeless.service.getElementById(
-                id
-              ) as ShapeElementModel;
-              this.mounteEditor?.(this.element, edgeless);
-            });
-          });
-
-          (this.ownerDocument.activeElement as HTMLElement).blur();
-          break;
-        }
-        case 'Tab': {
-          evt.preventDefault();
-          const edgeless = this.edgeless;
-          const element = this.element;
-          const mindmap = this.element.group as MindmapElementModel;
-
-          edgeless.doc.transact(() => {
-            const id = mindmap.addNode(element.id, 'shape');
-
-            requestAnimationFrame(() => {
-              this.element = edgeless.service.getElementById(
-                id
-              ) as ShapeElementModel;
-              this.mounteEditor?.(this.element, edgeless);
-            });
-          });
-
-          (this.ownerDocument.activeElement as HTMLElement).blur();
-        }
-      }
-    });
-  }
-
   override render() {
     if (!this.element.text) {
-      throw new Error('Failed to mount shape editor because of no text.');
+      console.error('Failed to mount shape editor because of no text.');
+      return nothing;
     }
 
+    const [verticalPadding, horiPadding] = this.element.padding;
     const textResizing = this.element.textResizing;
     const viewport = this.edgeless.service.viewport;
     const zoom = viewport.zoom;
@@ -251,36 +269,41 @@ export class EdgelessShapeTextEditor extends WithDisposable(ShadowlessElement) {
       leftTopX,
       leftTopY
     );
+    const autoWidth = textResizing === TextResizing.AUTO_WIDTH_AND_HEIGHT;
+    const color = this.edgeless.std
+      .get(ThemeProvider)
+      .generateColorProperty(this.element.color, '#000000');
 
     const inlineEditorStyle = styleMap({
       position: 'absolute',
       left: x + 'px',
       top: y + 'px',
       width:
-        textResizing > TextResizing.AUTO_WIDTH
+        textResizing === TextResizing.AUTO_HEIGHT
           ? rect.width + 'px'
           : 'fit-content',
-      minHeight: rect.height + 'px',
+      // override rich-text style (height: 100%)
+      height: 'initial',
+      minHeight:
+        textResizing === TextResizing.AUTO_WIDTH_AND_HEIGHT
+          ? '1em'
+          : `${rect.height}px`,
       maxWidth:
-        textResizing === TextResizing.AUTO_WIDTH
+        textResizing === TextResizing.AUTO_WIDTH_AND_HEIGHT
           ? this.element.maxWidth
             ? `${this.element.maxWidth}px`
             : undefined
           : undefined,
       boxSizing: 'border-box',
-      // override rich-text style (height: 100%)
-      height: 'initial',
       fontSize: this.element.fontSize + 'px',
-      fontFamily: wrapFontFamily(this.element.fontFamily),
+      fontFamily: TextUtils.wrapFontFamily(this.element.fontFamily),
       fontWeight: this.element.fontWeight,
-      lineHeight: 'initial',
+      lineHeight: 'normal',
       outline: 'none',
       transform: `scale(${zoom}, ${zoom}) rotate(${rotate}deg)`,
       transformOrigin: 'top left',
-      color: isCssVariable(this.element.color)
-        ? `var(${this.element.color})`
-        : this.element.color,
-      padding: `${SHAPE_TEXT_VERTICAL_PADDING}px ${SHAPE_TEXT_PADDING}px`,
+      color,
+      padding: `${verticalPadding}px ${horiPadding}px`,
       textAlign: this.element.textAlign,
       display: 'grid',
       gridTemplateColumns: '100%',
@@ -297,14 +320,45 @@ export class EdgelessShapeTextEditor extends WithDisposable(ShadowlessElement) {
 
     this._lastXYWH = this.element.xywh;
 
-    return html`<rich-text
-      .yText=${this.element.text}
-      .enableFormat=${false}
-      .enableAutoScrollHorizontally=${false}
-      .enableAutoScrollVertically=${false}
-      style=${inlineEditorStyle}
-    ></rich-text>`;
+    return html` <style>
+        edgeless-shape-text-editor v-text [data-v-text] {
+          overflow-wrap: ${autoWidth ? 'normal' : 'anywhere'};
+          word-break: ${autoWidth ? 'normal' : 'break-word'} !important;
+          white-space: ${autoWidth ? 'pre' : 'pre-wrap'} !important;
+        }
+
+        edgeless-shape-text-editor .inline-editor {
+          min-width: 1px;
+        }
+      </style>
+      <rich-text
+        .yText=${this.element.text}
+        .enableFormat=${false}
+        .enableAutoScrollHorizontally=${false}
+        style=${inlineEditorStyle}
+      ></rich-text>`;
   }
+
+  setKeeping(keeping: boolean) {
+    this._keeping = keeping;
+  }
+
+  @property({ attribute: false })
+  accessor edgeless!: EdgelessRootBlockComponent;
+
+  @property({ attribute: false })
+  accessor element!: ShapeElementModel;
+
+  @property({ attribute: false })
+  accessor mountEditor:
+    | ((
+        element: ShapeElementModel,
+        edgeless: EdgelessRootBlockComponent
+      ) => void)
+    | undefined = undefined;
+
+  @query('rich-text')
+  accessor richText!: RichText;
 }
 
 declare global {

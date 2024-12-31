@@ -1,19 +1,24 @@
-import './database-convert-view.js';
-
 import type { EditorHost } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import { html, type TemplateResult } from 'lit';
+import type { TemplateResult } from 'lit';
 
-import { matchFlavours } from '../../../_common/utils/model.js';
-import { createSimplePortal } from '../../components/portal.js';
-import { toast } from '../../components/toast.js';
 import {
   CopyIcon,
   DatabaseTableViewIcon20,
-  FontLinkedDocIcon,
-} from '../../icons/index.js';
-import { createLinkedDocFromSelectedBlocks } from '../../utils/render-linked-doc.js';
-import { DATABASE_CONVERT_WHITE_LIST } from './database-convert-view.js';
+  LinkedDocIcon,
+} from '@blocksuite/affine-components/icons';
+import { toast } from '@blocksuite/affine-components/toast';
+import { matchFlavours } from '@blocksuite/affine-shared/utils';
+import { tableViewMeta } from '@blocksuite/data-view/view-presets';
+import { assertExists } from '@blocksuite/global/utils';
+
+import { convertToDatabase } from '../../../database-block/data-source.js';
+import { DATABASE_CONVERT_WHITE_LIST } from '../../../database-block/utils/block-utils.js';
+import {
+  convertSelectedBlocksToLinkedDoc,
+  getTitleFromSelectedModels,
+  notifyDocCreated,
+  promptDocTitle,
+} from '../../utils/render-linked-doc.js';
 
 export interface QuickActionConfig {
   id: string;
@@ -44,13 +49,14 @@ export const quickActionConfig: QuickActionConfig[] = [
             toast(host, 'Copied to clipboard');
           },
         })
+        .draftSelectedModels()
         .copySelectedModels()
         .run();
     },
   },
   {
     id: 'convert-to-database',
-    name: 'Group as Database',
+    name: 'Group as Table',
     disabledToolTip:
       'Contains Block types that cannot be converted to Database',
     icon: DatabaseTableViewIcon20,
@@ -87,17 +93,13 @@ export const quickActionConfig: QuickActionConfig[] = [
       );
     },
     action: host => {
-      createSimplePortal({
-        template: html`<database-convert-view
-          .host=${host}
-        ></database-convert-view>`,
-      });
+      convertToDatabase(host, tableViewMeta.type);
     },
   },
   {
     id: 'convert-to-linked-doc',
     name: 'Create Linked Doc',
-    icon: FontLinkedDocIcon,
+    icon: LinkedDocIcon,
     hotkey: `Mod-Shift-l`,
     showWhen: host => {
       const [_, ctx] = host.std.command
@@ -126,17 +128,26 @@ export const quickActionConfig: QuickActionConfig[] = [
           types: ['block'],
           mode: 'highest',
         })
+        .draftSelectedModels()
         .run();
-      const { selectedModels } = ctx;
+      const { selectedModels, draftedModels } = ctx;
       assertExists(selectedModels);
-      if (!selectedModels.length) return;
+      if (!selectedModels.length || !draftedModels) return;
 
       host.selection.clear();
 
       const doc = host.doc;
-      const linkedDoc = createLinkedDocFromSelectedBlocks(doc, selectedModels);
-      const linkedDocService = host.spec.getService('affine:embed-linked-doc');
-      linkedDocService.slots.linkedDocCreated.emit({ docId: linkedDoc.id });
+      const autofill = getTitleFromSelectedModels(selectedModels);
+      void promptDocTitle(host, autofill).then(title => {
+        if (title === null) return;
+        convertSelectedBlocksToLinkedDoc(
+          host.std,
+          doc,
+          draftedModels,
+          title
+        ).catch(console.error);
+        notifyDocCreated(host, doc);
+      });
     },
   },
 ];

@@ -1,10 +1,11 @@
+import type { AttachmentBlockModel } from '@blocksuite/affine-model';
 import type { EditorHost } from '@blocksuite/block-std';
+
+import { ConfirmIcon } from '@blocksuite/affine-components/icons';
+import { toast } from '@blocksuite/affine-components/toast';
 import { html } from 'lit';
 import { createRef, ref } from 'lit/directives/ref.js';
 
-import { toast } from '../../_common/components/toast.js';
-import { ConfirmIcon } from '../../_common/icons/index.js';
-import type { AttachmentBlockModel } from '../attachment-model.js';
 import { renameStyles } from './styles.js';
 
 export const RenameModal = ({
@@ -80,9 +81,13 @@ export const RenameModal = ({
         />
         <span class="affine-attachment-rename-extension">${extension}</span>
       </div>
-      <icon-button class="affine-confirm-button" @click=${onConfirm}
-        >${ConfirmIcon}</icon-button
+      <editor-icon-button
+        class="affine-confirm-button"
+        .iconSize=${'24px'}
+        @click=${onConfirm}
       >
+        ${ConfirmIcon}
+      </editor-icon-button>
     </div>
   `;
 };

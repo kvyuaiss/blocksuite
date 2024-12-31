@@ -1,6 +1,7 @@
 import type { EditorHost } from '@blocksuite/block-std';
-import { WithDisposable } from '@blocksuite/block-std';
-import { type EdgelessRootBlockComponent } from '@blocksuite/blocks';
+
+import { EdgelessRootService, EditPropsStore } from '@blocksuite/blocks';
+import { WithDisposable } from '@blocksuite/global/utils';
 import { css, html, LitElement, type PropertyValues } from 'lit';
 import { property, state } from 'lit/decorators.js';
 
@@ -67,98 +68,57 @@ const styles = css`
   }
 `;
 
+export const AFFINE_FRAMES_SETTING_MENU = 'affine-frames-setting-menu';
+
 export class FramesSettingMenu extends WithDisposable(LitElement) {
   static override styles = styles;
 
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent | null;
-
-  @property({ attribute: false })
-  editorHost!: EditorHost;
-
-  @state()
-  blackBackground = false;
-
-  @state()
-  fillScreen = false;
-
-  @state()
-  hideToolbar = false;
-
-  private get _rootService() {
-    return this.editorHost.spec.getService('affine:page');
-  }
-
-  private _tryRestoreSettings() {
-    const { editSession } = this._rootService;
-    const blackBackground = editSession.getItem('presentBlackBackground');
-
-    this.blackBackground = blackBackground ? blackBackground : true;
-    this.fillScreen = editSession.getItem('presentFillScreen') ?? false;
-    this.hideToolbar = editSession.getItem('presentHideToolbar') ?? false;
-  }
-
   private _onBlackBackgroundChange = (checked: boolean) => {
     this.blackBackground = checked;
-    this.edgeless?.slots.navigatorSettingUpdated.emit({
+    this._edgelessRootService?.slots.navigatorSettingUpdated.emit({
       blackBackground: this.blackBackground,
     });
   };
 
   private _onFillScreenChange = (checked: boolean) => {
     this.fillScreen = checked;
-    this.edgeless?.slots.navigatorSettingUpdated.emit({
+    this._edgelessRootService?.slots.navigatorSettingUpdated.emit({
       fillScreen: this.fillScreen,
     });
-    this._rootService.editSession.setItem('presentFillScreen', this.fillScreen);
+    this._editPropsStore.setStorage('presentFillScreen', this.fillScreen);
   };
 
   private _onHideToolBarChange = (checked: boolean) => {
     this.hideToolbar = checked;
-    this.edgeless?.slots.navigatorSettingUpdated.emit({
+    this._edgelessRootService?.slots.navigatorSettingUpdated.emit({
       hideToolbar: this.hideToolbar,
     });
-    this._rootService.editSession.setItem(
-      'presentHideToolbar',
-      this.hideToolbar
-    );
+    this._editPropsStore.setStorage('presentHideToolbar', this.hideToolbar);
   };
+
+  private get _edgelessRootService() {
+    return this.editorHost.std.getOptional(EdgelessRootService);
+  }
+
+  private get _editPropsStore() {
+    return this.editorHost.std.get(EditPropsStore);
+  }
+
+  private _tryRestoreSettings() {
+    const blackBackground = this._editPropsStore.getStorage(
+      'presentBlackBackground'
+    );
+
+    this.blackBackground = blackBackground ?? true;
+    this.fillScreen =
+      this._editPropsStore.getStorage('presentFillScreen') ?? false;
+    this.hideToolbar =
+      this._editPropsStore.getStorage('presentHideToolbar') ?? false;
+  }
 
   override connectedCallback() {
     super.connectedCallback();
     this._tryRestoreSettings();
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-  }
-
-  override updated(_changedProperties: PropertyValues) {
-    if (_changedProperties.has('edgeless')) {
-      if (this.edgeless) {
-        this.disposables.add(
-          this.edgeless.slots.navigatorSettingUpdated.on(
-            ({ blackBackground, hideToolbar }) => {
-              if (
-                blackBackground !== undefined &&
-                blackBackground !== this.blackBackground
-              ) {
-                this.blackBackground = blackBackground;
-              }
-
-              if (
-                hideToolbar !== undefined &&
-                hideToolbar !== this.hideToolbar
-              ) {
-                this.hideToolbar = hideToolbar;
-              }
-            }
-          )
-        );
-      } else {
-        this.disposables.dispose();
-      }
-    }
   }
 
   override render() {
@@ -206,10 +166,50 @@ export class FramesSettingMenu extends WithDisposable(LitElement) {
       </div>
     </div>`;
   }
+
+  override updated(_changedProperties: PropertyValues) {
+    if (_changedProperties.has('editorHost')) {
+      if (this._edgelessRootService) {
+        this.disposables.add(
+          this._edgelessRootService.slots.navigatorSettingUpdated.on(
+            ({ blackBackground, hideToolbar }) => {
+              if (
+                blackBackground !== undefined &&
+                blackBackground !== this.blackBackground
+              ) {
+                this.blackBackground = blackBackground;
+              }
+
+              if (
+                hideToolbar !== undefined &&
+                hideToolbar !== this.hideToolbar
+              ) {
+                this.hideToolbar = hideToolbar;
+              }
+            }
+          )
+        );
+      } else {
+        this.disposables.dispose();
+      }
+    }
+  }
+
+  @state()
+  accessor blackBackground = false;
+
+  @property({ attribute: false })
+  accessor editorHost!: EditorHost;
+
+  @state()
+  accessor fillScreen = false;
+
+  @state()
+  accessor hideToolbar = false;
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    'frames-setting-menu': FramesSettingMenu;
+    [AFFINE_FRAMES_SETTING_MENU]: FramesSettingMenu;
   }
 }

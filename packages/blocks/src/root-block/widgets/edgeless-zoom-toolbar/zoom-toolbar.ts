@@ -1,19 +1,19 @@
-import { WithDisposable } from '@blocksuite/block-std';
-import { baseTheme } from '@toeverything/theme';
-import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
-
 import {
   MinusIcon,
   PlusIcon,
   ViewBarIcon,
-} from '../../../_common/icons/edgeless.js';
-import type { EdgelessTool } from '../../../_common/types.js';
-import { stopPropagation } from '../../../_common/utils/event.js';
-import type { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
-import { ZOOM_STEP } from '../../edgeless/utils/viewport.js';
+} from '@blocksuite/affine-components/icons';
+import { stopPropagation } from '@blocksuite/affine-shared/utils';
+import { WithDisposable } from '@blocksuite/global/utils';
+import { effect } from '@preact/signals-core';
+import { baseTheme } from '@toeverything/theme';
+import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
+import { property } from 'lit/decorators.js';
 
-@customElement('edgeless-zoom-toolbar')
+import type { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
+
+import { ZOOM_STEP } from '../../edgeless/utils/zoom.js';
+
 export class EdgelessZoomToolbar extends WithDisposable(LitElement) {
   static override styles = css`
     :host {
@@ -84,14 +84,28 @@ export class EdgelessZoomToolbar extends WithDisposable(LitElement) {
     }
   `;
 
-  @property({ attribute: false })
-  layout: 'horizontal' | 'vertical' = 'horizontal';
+  get edgelessService() {
+    return this.edgeless.service;
+  }
 
-  @property({ attribute: false })
-  edgeless: EdgelessRootBlockComponent;
+  get edgelessTool() {
+    return this.edgeless.gfx.tool.currentToolOption$.peek();
+  }
 
-  private _isVerticalBar() {
-    return this.layout === 'vertical';
+  get locked() {
+    return this.edgelessService.locked;
+  }
+
+  get viewport() {
+    return this.edgelessService.viewport;
+  }
+
+  get zoom() {
+    if (!this.viewport) {
+      console.error('Something went wrong, viewport is not available');
+      return 1;
+    }
+    return this.viewport.zoom;
   }
 
   constructor(edgeless: EdgelessRootBlockComponent) {
@@ -99,29 +113,20 @@ export class EdgelessZoomToolbar extends WithDisposable(LitElement) {
     this.edgeless = edgeless;
   }
 
-  get edgelessTool() {
-    return this.edgeless.edgelessTool;
+  private _isVerticalBar() {
+    return this.layout === 'vertical';
   }
 
-  get edgelessService() {
-    return this.edgeless.service;
-  }
+  override connectedCallback() {
+    super.connectedCallback();
 
-  get zoom() {
-    return this.viewport.zoom;
+    this.disposables.add(
+      effect(() => {
+        this.edgeless.gfx.tool.currentToolName$.value;
+        this.requestUpdate();
+      })
+    );
   }
-
-  get viewport() {
-    return this.edgelessService.viewport;
-  }
-
-  get locked() {
-    return this.edgelessService.locked;
-  }
-
-  setEdgelessTool = (edgelessTool: EdgelessTool) => {
-    this.edgeless.tools.setEdgelessTool(edgelessTool);
-  };
 
   override firstUpdated() {
     const { disposables } = this;
@@ -129,9 +134,6 @@ export class EdgelessZoomToolbar extends WithDisposable(LitElement) {
       this.edgeless.service.viewport.viewportUpdated.on(() =>
         this.requestUpdate()
       )
-    );
-    disposables.add(
-      this.edgeless.slots.edgelessToolUpdated.on(() => this.requestUpdate())
     );
     disposables.add(
       this.edgeless.slots.readonlyUpdated.on(() => {
@@ -197,6 +199,12 @@ export class EdgelessZoomToolbar extends WithDisposable(LitElement) {
       </div>
     `;
   }
+
+  @property({ attribute: false })
+  accessor edgeless: EdgelessRootBlockComponent;
+
+  @property({ attribute: false })
+  accessor layout: 'horizontal' | 'vertical' = 'horizontal';
 }
 
 declare global {

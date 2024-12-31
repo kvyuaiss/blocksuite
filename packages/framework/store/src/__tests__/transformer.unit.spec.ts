@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import * as Y from 'yjs';
 
-import { MemoryBlobManager } from '../adapter/index.js';
+import { MemoryBlobCRUD } from '../adapter/index.js';
 import { Text } from '../reactive/index.js';
 import {
   type BlockModel,
@@ -9,7 +9,7 @@ import {
   Schema,
   type SchemaToModel,
 } from '../schema/index.js';
-import { DocCollection, Generator } from '../store/index.js';
+import { DocCollection, IdGeneratorType } from '../store/index.js';
 import { AssetsManager, BaseBlockTransformer } from '../transformer/index.js';
 
 const docSchema = defineBlockSchema({
@@ -44,19 +44,20 @@ const docSchema = defineBlockSchema({
 type RootBlockModel = SchemaToModel<typeof docSchema>;
 
 function createTestOptions() {
-  const idGenerator = Generator.AutoIncrement;
+  const idGenerator = IdGeneratorType.AutoIncrement;
   const schema = new Schema();
   schema.register([docSchema]);
   return { id: 'test-collection', idGenerator, schema };
 }
 
 const transformer = new BaseBlockTransformer();
-const blobManager = new MemoryBlobManager();
-const assets = new AssetsManager({ blob: blobManager });
+const blobCRUD = new MemoryBlobCRUD();
+const assets = new AssetsManager({ blob: blobCRUD });
 
 test('model to snapshot', () => {
   const options = createTestOptions();
   const collection = new DocCollection(options);
+  collection.meta.initialize();
   const doc = collection.createDoc({ id: 'home' });
   doc.load();
   doc.addBlock('page');
@@ -73,6 +74,7 @@ test('model to snapshot', () => {
 test('snapshot to model', async () => {
   const options = createTestOptions();
   const collection = new DocCollection(options);
+  collection.meta.initialize();
   const doc = collection.createDoc({ id: 'home' });
   doc.load();
   doc.addBlock('page');
@@ -82,7 +84,7 @@ test('snapshot to model', async () => {
   const map = tempDoc.getMap('temp');
 
   expect(rootModel).not.toBeNull();
-  const snapshot = await transformer.toSnapshot({
+  const snapshot = transformer.toSnapshot({
     model: rootModel,
     assets,
   });

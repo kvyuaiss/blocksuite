@@ -1,11 +1,10 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig(_configEnv =>
   defineConfig({
-    esbuild: { target: 'es2022' },
+    esbuild: { target: 'es2018' },
     optimizeDeps: {
       force: true,
       esbuildOptions: {
@@ -18,11 +17,16 @@ export default defineConfig(_configEnv =>
       include: ['src/__tests__/**/*.spec.ts'],
       browser: {
         enabled: true,
-        headless: false,
+        headless: process.env.CI === 'true',
         name: 'chromium',
         provider: 'playwright',
         isolate: false,
         providerOptions: {},
+      },
+      coverage: {
+        provider: 'istanbul', // or 'c8'
+        reporter: ['lcov'],
+        reportsDirectory: '../../.coverage/presets',
       },
       deps: {
         interopDefault: true,

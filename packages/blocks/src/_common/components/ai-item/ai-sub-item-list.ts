@@ -1,14 +1,22 @@
-import type { EditorHost } from '@blocksuite/block-std';
-import { WithDisposable } from '@blocksuite/block-std';
+import { EnterIcon } from '@blocksuite/affine-components/icons';
+import {
+  EditorHost,
+  PropTypes,
+  requiredProperties,
+} from '@blocksuite/block-std';
+import { WithDisposable } from '@blocksuite/global/utils';
 import { baseTheme } from '@toeverything/theme';
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 
-import { EnterIcon } from '../../icons/ai.js';
-import { menuItemStyles } from './styles.js';
 import type { AIItemConfig, AISubItemConfig } from './types.js';
 
-@customElement('ai-sub-item-list')
+import { menuItemStyles } from './styles.js';
+
+@requiredProperties({
+  host: PropTypes.instanceOf(EditorHost),
+  item: PropTypes.object,
+})
 export class AISubItemList extends WithDisposable(LitElement) {
   static override styles = css`
     .ai-sub-menu {
@@ -38,26 +46,13 @@ export class AISubItemList extends WithDisposable(LitElement) {
     ${menuItemStyles}
   `;
 
-  @property({ attribute: false })
-  host!: EditorHost;
-
-  @property({ attribute: false })
-  item!: AIItemConfig;
-
-  @property({ attribute: false })
-  abortController!: AbortController;
-
-  @property({ attribute: false })
-  onClick?: () => void;
-
   private _handleClick = (subItem: AISubItemConfig) => {
+    this.onClick?.();
     if (subItem.handler) {
       // TODO: add parameters to ai handler
       subItem.handler(this.host);
     }
-
     this.abortController.abort();
-    this.onClick?.();
   };
 
   override render() {
@@ -75,6 +70,18 @@ export class AISubItemList extends WithDisposable(LitElement) {
       )}
     </div>`;
   }
+
+  @property({ attribute: false })
+  accessor abortController: AbortController = new AbortController();
+
+  @property({ attribute: false })
+  accessor host!: EditorHost;
+
+  @property({ attribute: false })
+  accessor item!: AIItemConfig;
+
+  @property({ attribute: false })
+  accessor onClick: (() => void) | undefined;
 }
 
 declare global {

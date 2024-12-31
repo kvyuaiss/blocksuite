@@ -1,20 +1,23 @@
-import '../card/frame-card.js';
+import type { Doc } from '@blocksuite/store';
 
+import { type EditorHost, ShadowlessElement } from '@blocksuite/block-std';
+import { generateKeyBetweenV2 } from '@blocksuite/block-std/gfx';
 import {
-  type EditorHost,
-  ShadowlessElement,
-  WithDisposable,
-} from '@blocksuite/block-std';
+  DocModeProvider,
+  EdgelessFrameManager,
+  EdgelessRootService,
+  EditPropsStore,
+  type FrameBlockModel,
+} from '@blocksuite/blocks';
 import {
   Bound,
-  type EdgelessRootBlockComponent,
-  type FrameBlockModel,
-  generateKeyBetween,
-} from '@blocksuite/blocks';
-import { DisposableGroup } from '@blocksuite/global/utils';
-import type { Doc } from '@blocksuite/store';
+  DisposableGroup,
+  SignalWatcher,
+  WithDisposable,
+} from '@blocksuite/global/utils';
 import { css, html, nothing, type PropertyValues } from 'lit';
 import { property, query, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type {
@@ -23,7 +26,10 @@ import type {
   FrameCard,
   SelectEvent,
 } from '../card/frame-card.js';
+
 import { startDragging } from '../utils/drag.js';
+
+const compare = EdgelessFrameManager.framePresentationComparator;
 
 type FrameListItem = {
   frame: FrameBlockModel;
@@ -80,144 +86,47 @@ const styles = css`
   }
 `;
 
-export class FramePanelBody extends WithDisposable(ShadowlessElement) {
+export const AFFINE_FRAME_PANEL_BODY = 'affine-frame-panel-body';
+
+export class FramePanelBody extends SignalWatcher(
+  WithDisposable(ShadowlessElement)
+) {
   static override styles = styles;
-
-  @property({ attribute: false })
-  edgeless: EdgelessRootBlockComponent | null = null;
-
-  @property({ attribute: false })
-  doc!: Doc;
-
-  @property({ attribute: false })
-  editorHost!: EditorHost;
-
-  // Store the ids of the selected frames
-  @state()
-  private _selected: string[] = [];
-
-  @state()
-  private _dragging = false;
-
-  @property({ attribute: false })
-  insertIndex?: number;
-
-  @property({ attribute: false })
-  fitPadding!: number[];
-
-  @property({ attribute: false })
-  domHost!: Document | HTMLElement;
-
-  @query('.frame-list-container')
-  frameListContainer!: HTMLElement;
-
-  private _frameItems: FrameListItem[] = [];
-  private _frameElementHeight = 0;
-  private _indicatorTranslateY = 0;
-  private _docDisposables: DisposableGroup | null = null;
-  private _lastEdgelessRootId = '';
-
-  get frames() {
-    const frames = this.doc.getBlockByFlavour(
-      'affine:frame'
-    ) as FrameBlockModel[];
-    return frames.sort(this.compare);
-  }
-
-  get viewportPadding(): [number, number, number, number] {
-    return this.fitPadding
-      ? ([0, 0, 0, 0].map((val, idx) =>
-          Number.isFinite(this.fitPadding[idx]) ? this.fitPadding[idx] : val
-        ) as [number, number, number, number])
-      : [0, 0, 0, 0];
-  }
-
-  compare(a: FrameBlockModel, b: FrameBlockModel) {
-    if (a.index < b.index) return -1;
-    else if (a.index > b.index) return 1;
-    return 0;
-  }
 
   private _clearDocDisposables = () => {
     this._docDisposables?.dispose();
     this._docDisposables = null;
   };
 
-  private _setDocDisposables(doc: Doc) {
-    this._clearDocDisposables();
-    this._docDisposables = new DisposableGroup();
-    this._docDisposables.add(
-      doc.slots.blockUpdated.on(({ flavour }) => {
-        if (flavour === 'affine:frame') {
-          requestAnimationFrame(() => {
-            this._updateFrames();
-          });
-        }
-      })
-    );
-  }
-
-  private _updateFrames() {
-    if (this._dragging) return;
-
-    if (!this.frames.length) {
-      this._selected = [];
-      this._frameItems = [];
+  /**
+   * click at blank area to clear selection
+   */
+  private _clickBlank = (e: MouseEvent) => {
+    e.stopPropagation();
+    // check if click at frame-card, if not, set this._selected to empty
+    if (
+      (e.target as HTMLElement).closest('frame-card') ||
+      this._selected.length === 0
+    ) {
       return;
     }
 
-    const frameItems: FramePanelBody['_frameItems'] = [];
-    const oldSelectedSet = new Set(this._selected);
-    const newSelected: string[] = [];
-    const frames = this.frames.sort(this.compare);
-    frames.forEach((frame, idx) => {
-      const frameItem = {
-        frame,
-        frameIndex: frame.index,
-        cardIndex: idx,
-      };
-
-      frameItems.push(frameItem);
-      if (oldSelectedSet.has(frame.id)) {
-        newSelected.push(frame.id);
-      }
+    this._selected = [];
+    this._edgelessRootService?.selection.set({
+      elements: this._selected,
+      editing: false,
     });
+  };
 
-    this._frameItems = frameItems;
-    this._selected = newSelected;
-    this.requestUpdate();
-  }
+  private _docDisposables: DisposableGroup | null = null;
 
-  private _reorderFrames(
-    selected: string[],
-    framesMap: Map<string, FrameListItem>,
-    insertIndex: number
-  ) {
-    if (insertIndex >= 0 && insertIndex <= this._frameItems.length) {
-      const frames = Array.from(framesMap.values()).map(
-        frameItem => frameItem.frame
-      );
-      const selectedFrames = selected
-        .map(id => framesMap.get(id) as FrameListItem)
-        .map(frameItem => frameItem.frame)
-        .sort(this.compare);
+  private _frameElementHeight = 0;
 
-      // update selected frames index
-      // make the indexes larger than the frame before and smaller than the frame after
-      let before = frames[insertIndex - 1]?.index || null;
-      const after = frames[insertIndex]?.index || null;
-      selectedFrames.forEach(frame => {
-        const newIndex = generateKeyBetween(before, after);
-        frame.doc.updateBlock(frame, {
-          index: newIndex,
-        });
-        before = newIndex;
-      });
+  private _frameItems: FrameListItem[] = [];
 
-      this.doc.captureSync();
-      this._updateFrames();
-    }
-  }
+  private _indicatorTranslateY = 0;
+
+  private _lastEdgelessRootId = '';
 
   private _selectFrame = (e: SelectEvent) => {
     const { selected, id, multiselect } = e.detail;
@@ -231,35 +140,37 @@ export class FramePanelBody extends WithDisposable(ShadowlessElement) {
       this._selected = [id];
     }
 
-    this.edgeless?.service.selection.set({
+    this._edgelessRootService?.selection.set({
       elements: this._selected,
       editing: false,
     });
   };
 
-  private _fitToElement(e: FitViewEvent) {
-    const { block } = e.detail;
-    const bound = Bound.deserialize(block.xywh);
+  private _updateFrameItems = () => {
+    this._frameItems = this.frames.map((frame, idx) => ({
+      frame,
+      frameIndex: frame.presentationIndex ?? frame.index,
+      cardIndex: idx,
+    }));
+  };
 
-    if (!this.edgeless) {
-      // When click frame card in page mode
-      // Should switch to edgeless mode and set viewport to the frame
-      const viewport = {
-        xywh: block.xywh,
-        referenceId: block.id,
-        padding: this.viewportPadding as [number, number, number, number],
-      };
+  get _edgelessRootService() {
+    return this.editorHost.std.getOptional(EdgelessRootService);
+  }
 
-      const rootService = this.editorHost.spec.getService('affine:page');
-      rootService.editSession.setItem('viewport', viewport);
-      rootService.slots.editorModeSwitch.emit('edgeless');
-    } else {
-      this.edgeless.service.viewport.setViewportByBound(
-        bound,
-        this.viewportPadding,
-        true
-      );
-    }
+  get frames() {
+    const frames = this.editorHost.doc
+      .getBlocksByFlavour('affine:frame')
+      .map(block => block.model as FrameBlockModel);
+    return frames.sort(compare);
+  }
+
+  get viewportPadding(): [number, number, number, number] {
+    return this.fitPadding
+      ? ([0, 0, 0, 0].map((val, idx) =>
+          Number.isFinite(this.fitPadding[idx]) ? this.fitPadding[idx] : val
+        ) as [number, number, number, number])
+      : [0, 0, 0, 0];
   }
 
   private _drag(e: DragEvent) {
@@ -303,14 +214,11 @@ export class FramePanelBody extends WithDisposable(ShadowlessElement) {
       framePanelBody: this,
       frameListContainer: this.frameListContainer,
       frameElementHeight: this._frameElementHeight,
-      edgeless: this.edgeless,
-      doc: this.doc,
-      editorHost: this.editorHost,
       onDragEnd: insertIdx => {
         this._dragging = false;
         this.insertIndex = undefined;
 
-        if (insertIdx === undefined) return;
+        if (insertIdx === undefined || this._frameItems.length <= 1) return;
         this._reorderFrames(selected, framesMap, insertIdx);
       },
       onDragMove: (idx, indicatorTranslateY) => {
@@ -320,33 +228,29 @@ export class FramePanelBody extends WithDisposable(ShadowlessElement) {
     });
   }
 
-  /**
-   * click at blank area to clear selection
-   */
-  private _clickBlank = (e: MouseEvent) => {
-    e.stopPropagation();
-    // check if click at frame-card, if not, set this._selected to empty
-    if (
-      (e.target as HTMLElement).closest('frame-card') ||
-      this._selected.length === 0
-    ) {
-      return;
+  private _fitToElement(e: FitViewEvent) {
+    const { block } = e.detail;
+    const bound = Bound.deserialize(block.xywh);
+
+    if (!this._edgelessRootService) {
+      // When click frame card in page mode
+      // Should switch to edgeless mode and set viewport to the frame
+      const viewport = {
+        xywh: block.xywh,
+        referenceId: block.id,
+        padding: this.viewportPadding as [number, number, number, number],
+      };
+
+      this.editorHost.std.get(EditPropsStore).setStorage('viewport', viewport);
+      this.editorHost.std.get(DocModeProvider).setEditorMode('edgeless');
+    } else {
+      this._edgelessRootService.viewport.setViewportByBound(
+        bound,
+        this.viewportPadding,
+        true
+      );
     }
-
-    this._selected = [];
-    this.edgeless?.service.selection.set({
-      elements: this._selected,
-      editing: false,
-    });
-  };
-
-  private _updateFrameItems = () => {
-    this._frameItems = this.frames.map((frame, idx) => ({
-      frame,
-      frameIndex: frame.index,
-      cardIndex: idx,
-    }));
-  };
+  }
 
   private _renderEmptyContent() {
     const emptyContent = html` <div class="no-frame-container">
@@ -360,16 +264,12 @@ export class FramePanelBody extends WithDisposable(ShadowlessElement) {
 
   private _renderFrameList() {
     const selectedFrames = new Set(this._selected);
-    const frameCards = html`${repeat(
-      this._frameItems,
-      frameItem => [frameItem.frame.id, frameItem.cardIndex].join('-'),
-      frameItem => {
-        const { frame, frameIndex, cardIndex } = frameItem;
-        return html`<frame-card
+    const frameCards = html`${repeat(this._frameItems, frameItem => {
+      const { frame, frameIndex, cardIndex } = frameItem;
+      return keyed(
+        frame,
+        html`<affine-frame-card
           data-frame-id=${frame.id}
-          .edgeless=${this.edgeless}
-          .doc=${this.doc}
-          .host=${this.editorHost}
           .frame=${frame}
           .cardIndex=${cardIndex}
           .frameIndex=${frameIndex}
@@ -381,9 +281,9 @@ export class FramePanelBody extends WithDisposable(ShadowlessElement) {
           @select=${this._selectFrame}
           @fitview=${this._fitToElement}
           @drag=${this._drag}
-        ></frame-card>`;
-      }
-    )}`;
+        ></affine-frame-card>`
+      );
+    })}`;
 
     const frameList = html` <div class="frame-list-container">
       ${this.insertIndex !== undefined
@@ -397,41 +297,95 @@ export class FramePanelBody extends WithDisposable(ShadowlessElement) {
     return frameList;
   }
 
-  override firstUpdated() {
-    const disposables = this.disposables;
-    disposables.addFromEvent(this, 'click', this._clickBlank);
+  private _reorderFrames(
+    selected: string[],
+    framesMap: Map<string, FrameListItem>,
+    insertIndex: number
+  ) {
+    if (insertIndex >= 0 && insertIndex <= this._frameItems.length) {
+      const frames = Array.from(framesMap.values()).map(
+        frameItem => frameItem.frame
+      );
+      const selectedFrames = selected
+        .map(id => framesMap.get(id) as FrameListItem)
+        .map(frameItem => frameItem.frame)
+        .sort(compare);
+
+      // update selected frames index
+      // make the indexes larger than the frame before and smaller than the frame after
+      let before = frames[insertIndex - 1]?.presentationIndex || null;
+      const after = frames[insertIndex]?.presentationIndex || null;
+      selectedFrames.forEach(frame => {
+        const newIndex = generateKeyBetweenV2(before, after);
+        frame.doc.updateBlock(frame, {
+          presentationIndex: newIndex,
+        });
+        before = newIndex;
+      });
+
+      this.editorHost.doc.captureSync();
+      this._updateFrames();
+    }
   }
 
-  override updated(_changedProperties: PropertyValues) {
-    if (_changedProperties.has('doc') || _changedProperties.has('edgeless')) {
-      this._setDocDisposables(this.doc);
+  private _setDocDisposables(doc: Doc) {
+    this._clearDocDisposables();
+    this._docDisposables = new DisposableGroup();
+    this._docDisposables.add(
+      doc.slots.blockUpdated.on(({ type, flavour }) => {
+        if (flavour === 'affine:frame' && type !== 'update') {
+          requestAnimationFrame(() => {
+            this._updateFrames();
+          });
+        }
+      })
+    );
+  }
+
+  private _updateFrames() {
+    if (this._dragging) return;
+
+    if (!this.frames.length) {
+      this._selected = [];
+      this._frameItems = [];
+      return;
     }
 
-    if (_changedProperties.has('edgeless') && this.edgeless) {
-      // after switch to edgeless mode, should update the selection
-      if (this.edgeless.model.id === this._lastEdgelessRootId) {
-        this.edgeless.service.selection.set({
-          elements: this._selected,
-          editing: false,
-        });
-      } else {
-        this._selected = [];
+    const frameItems: FramePanelBody['_frameItems'] = [];
+    const oldSelectedSet = new Set(this._selected);
+    const newSelected: string[] = [];
+    const frames = this.frames.sort(compare);
+    frames.forEach((frame, idx) => {
+      const frameItem = {
+        frame,
+        frameIndex: frame.presentationIndex ?? frame.index,
+        cardIndex: idx,
+      };
+
+      frameItems.push(frameItem);
+      if (oldSelectedSet.has(frame.id)) {
+        newSelected.push(frame.id);
       }
-      this._lastEdgelessRootId = this.edgeless.model.id;
-    }
+    });
+
+    this._frameItems = frameItems;
+    this._selected = newSelected;
+    this.requestUpdate();
   }
 
   override connectedCallback() {
     super.connectedCallback();
     this._updateFrameItems();
-    if (this.edgeless) {
-      this._lastEdgelessRootId = this.edgeless.model.id;
-    }
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._clearDocDisposables();
+  }
+
+  override firstUpdated() {
+    const disposables = this.disposables;
+    disposables.addFromEvent(this, 'click', this._clickBlank);
   }
 
   override render() {
@@ -440,10 +394,48 @@ export class FramePanelBody extends WithDisposable(ShadowlessElement) {
       ? this._renderFrameList()
       : this._renderEmptyContent()}`;
   }
+
+  override updated(_changedProperties: PropertyValues) {
+    if (_changedProperties.has('editorHost') && this.editorHost) {
+      this._setDocDisposables(this.editorHost.doc);
+      // after switch to edgeless mode, should update the selection
+      if (this.editorHost.doc.id === this._lastEdgelessRootId) {
+        this._edgelessRootService?.selection.set({
+          elements: this._selected,
+          editing: false,
+        });
+      } else {
+        this._selected = this._selected.length ? [] : this._selected;
+      }
+      this._lastEdgelessRootId = this.editorHost.doc.id;
+    }
+  }
+
+  @state()
+  private accessor _dragging = false;
+
+  // Store the ids of the selected frames
+  @state()
+  private accessor _selected: string[] = [];
+
+  @property({ attribute: false })
+  accessor domHost!: Document | HTMLElement;
+
+  @property({ attribute: false })
+  accessor editorHost!: EditorHost;
+
+  @property({ attribute: false })
+  accessor fitPadding!: number[];
+
+  @query('.frame-list-container')
+  accessor frameListContainer!: HTMLElement;
+
+  @property({ attribute: false })
+  accessor insertIndex: number | undefined = undefined;
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    'frame-panel-body': FramePanelBody;
+    [AFFINE_FRAME_PANEL_BODY]: FramePanelBody;
   }
 }

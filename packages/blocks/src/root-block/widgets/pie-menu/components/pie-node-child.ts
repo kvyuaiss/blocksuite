@@ -1,5 +1,5 @@
 import { css, html, LitElement } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 
 import { PieNode } from '../node.js';
@@ -45,21 +45,8 @@ const styles = css`
   }
 `;
 
-@customElement('pie-node-child')
 export class PieNodeChild extends LitElement {
   static override styles = [PieNode.styles, styles];
-
-  @property({ attribute: false })
-  visible!: boolean;
-
-  @property({ attribute: false })
-  hovering!: boolean;
-
-  @property({ attribute: false })
-  node!: PieNode;
-
-  @property({ attribute: false })
-  onClick!: (ev: MouseEvent) => void;
 
   protected override render() {
     const { model, position } = this.node;
@@ -88,6 +75,18 @@ export class PieNodeChild extends LitElement {
       </pie-node-content>
     </li>`;
   }
+
+  @property({ attribute: false })
+  accessor hovering!: boolean;
+
+  @property({ attribute: false })
+  accessor node!: PieNode;
+
+  @property({ attribute: false })
+  accessor onClick!: (ev: MouseEvent) => void;
+
+  @property({ attribute: false })
+  accessor visible!: boolean;
 }
 
 declare global {

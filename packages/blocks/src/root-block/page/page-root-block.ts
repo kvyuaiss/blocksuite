@@ -1,27 +1,30 @@
-import { type PointerEventState } from '@blocksuite/block-std';
-import { BlockElement } from '@blocksuite/block-std';
-import { assertExists } from '@blocksuite/global/utils';
-import type { BlockModel } from '@blocksuite/store';
-import { type Text } from '@blocksuite/store';
+import type { NoteBlockModel, RootBlockModel } from '@blocksuite/affine-model';
+import type { Viewport } from '@blocksuite/affine-shared/types';
+import type { PointerEventState } from '@blocksuite/block-std';
+import type { BlockModel, Text } from '@blocksuite/store';
+
+import { focusTextModel } from '@blocksuite/affine-components/rich-text';
+import { NoteDisplayMode } from '@blocksuite/affine-model';
+import {
+  focusTitle,
+  getDocTitleInlineEditor,
+  getScrollContainer,
+  matchFlavours,
+} from '@blocksuite/affine-shared/utils';
+import { BlockComponent } from '@blocksuite/block-std';
 import { css, html } from 'lit';
-import { customElement, query } from 'lit/decorators.js';
+import { query } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
-import { focusTitle, type Viewport } from '../../_common/utils/index.js';
-import {
-  asyncFocusRichText,
-  getDocTitleInlineEditor,
-  matchFlavours,
-  NoteDisplayMode,
-} from '../../_common/utils/index.js';
-import type { NoteBlockModel } from '../../note-block/index.js';
-import { PageClipboard } from '../clipboard/index.js';
 import type { PageRootBlockWidgetName } from '../index.js';
-import { PageKeyboardManager } from '../keyboard/keyboard-manager.js';
-import type { RootBlockModel } from '../root-model.js';
 import type { PageRootService } from './page-root-service.js';
 
+import { buildPath } from '../../_common/utils/index.js';
+import { PageClipboard } from '../clipboard/index.js';
+import { PageKeyboardManager } from '../keyboard/keyboard-manager.js';
+
 const DOC_BLOCK_CHILD_PADDING = 24;
+const DOC_BOTTOM_PADDING = 32;
 
 function testClickOnBlankArea(
   state: PointerEventState,
@@ -43,8 +46,7 @@ function testClickOnBlankArea(
   return false;
 }
 
-@customElement('affine-page-root')
-export class PageRootBlockComponent extends BlockElement<
+export class PageRootBlockComponent extends BlockComponent<
   RootBlockModel,
   PageRootService,
   PageRootBlockWidgetName
@@ -58,6 +60,7 @@ export class PageRootBlockComponent extends BlockElement<
     affine-page-root {
       display: block;
       height: 100%;
+      cursor: default;
     }
 
     .affine-page-root-block-container {
@@ -72,8 +75,6 @@ export class PageRootBlockComponent extends BlockElement<
       font-weight: 400;
       max-width: var(--affine-editor-width);
       margin: 0 auto;
-      /* cursor: crosshair; */
-      cursor: default;
 
       /* Leave a place for drag-handle */
       /* Do not use prettier format this style, or it will be broken */
@@ -81,6 +82,8 @@ export class PageRootBlockComponent extends BlockElement<
       padding-left: var(--affine-editor-side-padding, ${DOC_BLOCK_CHILD_PADDING}px);
       /* prettier-ignore */
       padding-right: var(--affine-editor-side-padding, ${DOC_BLOCK_CHILD_PADDING}px);
+      /* prettier-ignore */
+      padding-bottom: var(--affine-editor-bottom-padding, ${DOC_BOTTOM_PADDING}px);
     }
 
     /* Extra small devices (phones, 640px and down) */
@@ -102,29 +105,52 @@ export class PageRootBlockComponent extends BlockElement<
     }
   `;
 
-  keyboardManager: PageKeyboardManager | null = null;
+  private _viewportElement: HTMLDivElement | null = null;
 
   clipboardController = new PageClipboard(this);
 
-  @query('.affine-page-root-block-container')
-  rootElementContainer!: HTMLDivElement;
+  focusFirstParagraph = () => {
+    const defaultNote = this._getDefaultNoteBlock();
+    const firstText = defaultNote?.children.find(block =>
+      matchFlavours(block, ['affine:paragraph', 'affine:list', 'affine:code'])
+    );
+    if (firstText) {
+      focusTextModel(this.std, firstText.id);
+    } else {
+      const newFirstParagraphId = this.doc.addBlock(
+        'affine:paragraph',
+        {},
+        defaultNote,
+        0
+      );
+      focusTextModel(this.std, newFirstParagraphId);
+    }
+  };
 
-  private _viewportElement: HTMLDivElement | null = null;
+  keyboardManager: PageKeyboardManager | null = null;
+
+  prependParagraphWithText = (text: Text) => {
+    const newFirstParagraphId = this.doc.addBlock(
+      'affine:paragraph',
+      { text },
+      this._getDefaultNoteBlock(),
+      0
+    );
+    focusTextModel(this.std, newFirstParagraphId);
+  };
+
+  get rootScrollContainer() {
+    return getScrollContainer(this);
+  }
 
   get slots() {
     return this.service.slots;
   }
 
-  get viewportElement(): HTMLDivElement {
-    if (this._viewportElement) return this._viewportElement;
-    this._viewportElement = this.host.closest(
-      '.affine-page-viewport'
-    ) as HTMLDivElement | null;
-    assertExists(this._viewportElement);
-    return this._viewportElement;
-  }
-
-  get viewport(): Viewport {
+  get viewport(): Viewport | null {
+    if (!this.viewportElement) {
+      return null;
+    }
     const {
       scrollLeft,
       scrollTop,
@@ -146,6 +172,14 @@ export class PageRootBlockComponent extends BlockElement<
     };
   }
 
+  get viewportElement(): HTMLDivElement | null {
+    if (this._viewportElement) return this._viewportElement;
+    this._viewportElement = this.host.closest(
+      '.affine-page-viewport'
+    ) as HTMLDivElement | null;
+    return this._viewportElement;
+  }
+
   private _createDefaultNoteBlock() {
     const { doc } = this;
 
@@ -161,61 +195,26 @@ export class PageRootBlockComponent extends BlockElement<
   }
 
   private _initViewportResizeEffect() {
+    const viewport = this.viewport;
+    const viewportElement = this.viewportElement;
+    if (!viewport || !viewportElement) {
+      return;
+    }
     // when observe viewportElement resize, emit viewport update event
     const resizeObserver = new ResizeObserver(
       (entries: ResizeObserverEntry[]) => {
         for (const { target } of entries) {
-          if (target === this.viewportElement) {
-            this.slots.viewportUpdated.emit(this.viewport);
+          if (target === viewportElement) {
+            this.slots.viewportUpdated.emit(viewport);
             break;
           }
         }
       }
     );
-    resizeObserver.observe(this.viewportElement);
-  }
-
-  prependParagraphWithText = (text: Text) => {
-    const newFirstParagraphId = this.doc.addBlock(
-      'affine:paragraph',
-      { text },
-      this._getDefaultNoteBlock(),
-      0
-    );
-    asyncFocusRichText(this.host, newFirstParagraphId)?.catch(console.error);
-  };
-
-  focusFirstParagraph = () => {
-    const defaultNote = this._getDefaultNoteBlock();
-    const firstText = defaultNote?.children.find(block =>
-      matchFlavours(block, ['affine:paragraph', 'affine:list', 'affine:code'])
-    );
-    if (firstText) {
-      asyncFocusRichText(this.host, firstText.id)?.catch(console.error);
-    } else {
-      const newFirstParagraphId = this.doc.addBlock(
-        'affine:paragraph',
-        {},
-        defaultNote,
-        0
-      );
-      asyncFocusRichText(this.host, newFirstParagraphId)?.catch(console.error);
-    }
-  };
-
-  override firstUpdated() {
-    this._initViewportResizeEffect();
-    const noteModels = this.model.children.filter(model =>
-      matchFlavours(model, ['affine:note'])
-    );
-    noteModels.forEach(note => {
-      this.disposables.add(
-        note.propsUpdated.on(({ key }) => {
-          if (key === 'displayMode') {
-            this.requestUpdate();
-          }
-        })
-      );
+    resizeObserver.observe(viewportElement);
+    this.disposables.add(() => {
+      resizeObserver.unobserve(viewportElement);
+      resizeObserver.disconnect();
     });
   }
 
@@ -241,7 +240,7 @@ export class PageRootBlockComponent extends BlockElement<
           .flatMap(model => {
             return model.children.map(child => {
               return this.std.selection.create('block', {
-                path: [this.model.id, model.id, child.id],
+                blockId: child.id,
               });
             });
           });
@@ -255,7 +254,7 @@ export class PageRootBlockComponent extends BlockElement<
         );
         if (!sel) return;
         let model: BlockModel | null = null;
-        let path: string[] = sel.path;
+        let path: string[] = buildPath(this.doc.getBlockById(sel.blockId));
         while (path.length > 0 && !model) {
           const m = this.doc.getBlockById(path[path.length - 1]);
           if (m && m.flavour === 'affine:note') {
@@ -277,9 +276,9 @@ export class PageRootBlockComponent extends BlockElement<
         const index = notes.indexOf(prevNote);
         if (index !== 0) return;
 
-        const range = this.host.rangeManager?.value;
+        const range = this.std.range.value;
         requestAnimationFrame(() => {
-          const currentRange = this.host.rangeManager?.value;
+          const currentRange = this.std.range.value;
 
           if (!range || !currentRange) return;
 
@@ -312,6 +311,7 @@ export class PageRootBlockComponent extends BlockElement<
       const { paddingLeft, paddingRight } = window.getComputedStyle(
         this.rootElementContainer
       );
+      if (!this.viewport) return;
       const isClickOnBlankArea = testClickOnBlankArea(
         event,
         this.viewport.left,
@@ -325,7 +325,7 @@ export class PageRootBlockComponent extends BlockElement<
         return;
       }
 
-      let newTextSelectionPath: string[] | null = null;
+      let newTextSelectionId: string | null = null;
       const readonly = this.doc.readonly;
       const lastNote = this.model.children
         .slice()
@@ -343,22 +343,12 @@ export class PageRootBlockComponent extends BlockElement<
         if (readonly) return;
         const noteId = this.doc.addBlock('affine:note', {}, this.model.id);
         const paragraphId = this.doc.addBlock('affine:paragraph', {}, noteId);
-        newTextSelectionPath = [this.model.id, noteId, paragraphId];
+        newTextSelectionId = paragraphId;
       } else {
         const last = lastNote.children.at(-1);
         if (
           !last ||
-          !last.text ||
-          matchFlavours(last, [
-            'affine:code',
-            'affine:divider',
-            'affine:image',
-            'affine:database',
-            'affine:bookmark',
-            'affine:attachment',
-            'affine:surface-ref',
-          ]) ||
-          /affine:embed-*/.test(last.flavour)
+          !(matchFlavours(last, ['affine:paragraph']) && last.text.length === 0)
         ) {
           if (readonly) return;
           const paragraphId = this.doc.addBlock(
@@ -366,17 +356,17 @@ export class PageRootBlockComponent extends BlockElement<
             {},
             lastNote.id
           );
-          newTextSelectionPath = [this.model.id, lastNote.id, paragraphId];
+          newTextSelectionId = paragraphId;
         }
       }
 
       this.updateComplete
         .then(() => {
-          if (!newTextSelectionPath) return;
+          if (!newTextSelectionId) return;
           this.host.selection.setGroup('note', [
             this.host.selection.create('text', {
               from: {
-                path: newTextSelectionPath,
+                blockId: newTextSelectionId,
                 index: 0,
                 length: 0,
               },
@@ -395,31 +385,45 @@ export class PageRootBlockComponent extends BlockElement<
     this.keyboardManager = null;
   }
 
-  override renderBlock() {
-    const content = html`${repeat(
-      this.model.children.filter(child => {
-        const isNote = matchFlavours(child, ['affine:note']);
-        const note = child as NoteBlockModel;
-        const displayOnEdgeless =
-          !!note.displayMode &&
-          note.displayMode === NoteDisplayMode.EdgelessOnly;
-        // Should remove deprecated `hidden` property in the future
-        return !(isNote && displayOnEdgeless);
-      }),
-      child => child.id,
-      child => this.host.renderModel(child)
-    )}`;
+  override firstUpdated() {
+    this._initViewportResizeEffect();
+    const noteModels = this.model.children.filter(model =>
+      matchFlavours(model, ['affine:note'])
+    );
+    noteModels.forEach(note => {
+      this.disposables.add(
+        note.propsUpdated.on(({ key }) => {
+          if (key === 'displayMode') {
+            this.requestUpdate();
+          }
+        })
+      );
+    });
+  }
 
+  override renderBlock() {
     const widgets = html`${repeat(
       Object.entries(this.widgets),
       ([id]) => id,
       ([_, widget]) => widget
     )}`;
 
+    const children = this.renderChildren(this.model, child => {
+      const isNote = matchFlavours(child, ['affine:note']);
+      const note = child as NoteBlockModel;
+      const displayOnEdgeless =
+        !!note.displayMode && note.displayMode === NoteDisplayMode.EdgelessOnly;
+      // Should remove deprecated `hidden` property in the future
+      return !(isNote && displayOnEdgeless);
+    });
+
     return html`
-      <div class="affine-page-root-block-container">${content} ${widgets}</div>
+      <div class="affine-page-root-block-container">${children} ${widgets}</div>
     `;
   }
+
+  @query('.affine-page-root-block-container')
+  accessor rootElementContainer!: HTMLDivElement;
 }
 
 declare global {

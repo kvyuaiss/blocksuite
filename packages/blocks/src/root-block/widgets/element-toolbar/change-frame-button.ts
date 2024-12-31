@@ -1,109 +1,75 @@
-import '../../edgeless/components/buttons/tool-icon-button.js';
-import '../element-toolbar/component-toolbar-menu-divider.js';
-
-import { WithDisposable } from '@blocksuite/block-std';
-import { css, LitElement, nothing } from 'lit';
-import { customElement, property, query, state } from 'lit/decorators.js';
-import { html } from 'lit/static-html.js';
-
-import { toast } from '../../../_common/components/toast.js';
-import { NoteIcon, RenameIcon } from '../../../_common/icons/index.js';
-import type { CssVariableName } from '../../../_common/theme/css-variables.js';
-import { NoteDisplayMode } from '../../../_common/types.js';
-import { createButtonPopper } from '../../../_common/utils/button-popper.js';
-import { matchFlavours } from '../../../_common/utils/model.js';
-import type { FrameBlockModel } from '../../../frame-block/index.js';
 import {
+  NoteIcon,
+  RenameIcon,
+  UngroupButtonIcon,
+} from '@blocksuite/affine-components/icons';
+import { toast } from '@blocksuite/affine-components/toast';
+import { renderToolbarSeparator } from '@blocksuite/affine-components/toolbar';
+import {
+  type ColorScheme,
+  DEFAULT_NOTE_HEIGHT,
+  FRAME_BACKGROUND_COLORS,
+  type FrameBlockModel,
+  NoteDisplayMode,
+} from '@blocksuite/affine-model';
+import { matchFlavours } from '@blocksuite/affine-shared/utils';
+import { GfxExtensionIdentifier } from '@blocksuite/block-std/gfx';
+import {
+  countBy,
   deserializeXYWH,
+  maxBy,
   serializeXYWH,
-} from '../../../surface-block/index.js';
-import type { EdgelessToolIconButton } from '../../edgeless/components/buttons/tool-icon-button.js';
+  WithDisposable,
+} from '@blocksuite/global/utils';
+import { html, LitElement, nothing } from 'lit';
+import { property, query } from 'lit/decorators.js';
+import { join } from 'lit/directives/join.js';
+import { when } from 'lit/directives/when.js';
+
+import type { EdgelessColorPickerButton } from '../../edgeless/components/color-picker/button.js';
+import type { PickColorEvent } from '../../edgeless/components/color-picker/types.js';
 import type { ColorEvent } from '../../edgeless/components/panel/color-panel.js';
-import { ColorUnit } from '../../edgeless/components/panel/color-panel.js';
 import type { EdgelessRootBlockComponent } from '../../edgeless/edgeless-root-block.js';
-import { DEFAULT_NOTE_HEIGHT } from '../../edgeless/utils/consts.js';
+import type { EdgelessFrameManager } from '../../edgeless/frame-manager.js';
+
+import {
+  packColor,
+  packColorsWithColorScheme,
+} from '../../edgeless/components/color-picker/utils.js';
 import { mountFrameTitleEditor } from '../../edgeless/utils/text.js';
 
-const FRAME_BACKGROUND: CssVariableName[] = [
-  '--affine-tag-gray',
-  '--affine-tag-red',
-  '--affine-tag-orange',
-  '--affine-tag-yellow',
-  '--affine-tag-green',
-  '--affine-tag-teal',
-  '--affine-tag-blue',
-  '--affine-tag-purple',
-  '--affine-tag-pink',
-  '--affine-palette-transparent',
-];
+function getMostCommonColor(
+  elements: FrameBlockModel[],
+  colorScheme: ColorScheme
+): string | null {
+  const colors = countBy(elements, (ele: FrameBlockModel) => {
+    return typeof ele.background === 'object'
+      ? (ele.background[colorScheme] ?? ele.background.normal ?? null)
+      : ele.background;
+  });
+  const max = maxBy(Object.entries(colors), ([_k, count]) => count);
+  return max ? (max[0] as string) : null;
+}
 
-@customElement('edgeless-change-frame-button')
 export class EdgelessChangeFrameButton extends WithDisposable(LitElement) {
-  static override styles = css`
-    :host {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--affine-text-primary-color);
-      stroke: none;
-      fill: currentColor;
+  pickColor = (event: PickColorEvent) => {
+    if (event.type === 'pick') {
+      this.frames.forEach(ele =>
+        this.service.updateElement(
+          ele.id,
+          packColor('background', { ...event.detail })
+        )
+      );
+      return;
     }
 
-    edgeless-color-panel {
-      width: 168px;
-    }
-
-    .fill-color-container {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      width: 20px;
-      height: 20px;
-    }
-
-    .color-panel-container,
-    .image-background-container {
-      display: none;
-      justify-content: center;
-      align-items: center;
-      background: var(--affine-background-overlay-panel-color);
-      box-shadow: var(--affine-shadow-2);
-      border-radius: 8px;
-    }
-
-    .color-panel-container[data-show],
-    .image-background-container[data-show] {
-      display: flex;
-    }
-    component-toolbar-menu-divider {
-      margin: 0 12px;
-      height: 24px;
-    }
-  `;
-
-  @property({ attribute: false })
-  edgeless!: EdgelessRootBlockComponent;
-
-  @property({ attribute: false })
-  frames: FrameBlockModel[] = [];
-
-  @state()
-  private _showPopper = false;
-
-  @query('.fill-color-button')
-  private _fillColorButton!: EdgelessToolIconButton;
-  @query('.color-panel-container.fill-color')
-  private _fillColorMenu!: HTMLDivElement;
-  private _frameBackground: ReturnType<typeof createButtonPopper> | null = null;
+    this.frames.forEach(ele =>
+      ele[event.type === 'start' ? 'stash' : 'pop']('background')
+    );
+  };
 
   get service() {
     return this.edgeless.service;
-  }
-
-  private _setFrameBackground(color: CssVariableName) {
-    this.frames.forEach(frame => {
-      this.service.updateElement(frame.id, { background: color });
-    });
   }
 
   private _insertIntoPage() {
@@ -149,79 +115,144 @@ export class EdgelessChangeFrameButton extends WithDisposable(LitElement) {
     toast(this.edgeless.host, 'Frame has been inserted into doc');
   }
 
-  override firstUpdated() {
-    this._frameBackground = createButtonPopper(
-      this._fillColorButton,
-      this._fillColorMenu,
-      ({ display }) => {
-        this._showPopper = display === 'show';
-      }
-    );
-    this._disposables.add(this._frameBackground);
+  private _setFrameBackground(color: string) {
+    this.frames.forEach(frame => {
+      this.service.updateElement(frame.id, { background: color });
+    });
   }
 
   protected override render() {
     const { frames } = this;
+    const len = frames.length;
+    const onlyOne = len === 1;
+    const colorScheme = this.edgeless.surface.renderer.getColorScheme();
+    const background =
+      getMostCommonColor(frames, colorScheme) ?? '--affine-palette-transparent';
 
-    const background = frames[0].background;
-    return html`${frames.length === 1
-        ? html`
-            <edgeless-tool-icon-button
-              .tooltip=${'Insert into doc'}
-              .tipPosition=${'bottom'}
-              @click=${this._insertIntoPage}
+    return join(
+      [
+        onlyOne
+          ? html`
+              <editor-icon-button
+                aria-label=${'Insert into Page'}
+                .tooltip=${'Insert into Page'}
+                .iconSize=${'20px'}
+                .labelHeight=${'20px'}
+                @click=${this._insertIntoPage}
+              >
+                ${NoteIcon}
+                <span class="label">Insert into Page</span>
+              </editor-icon-button>
+            `
+          : nothing,
+
+        onlyOne
+          ? html`
+              <editor-icon-button
+                aria-label="Rename"
+                .tooltip=${'Rename'}
+                .iconSize=${'20px'}
+                @click=${() =>
+                  mountFrameTitleEditor(this.frames[0], this.edgeless)}
+              >
+                ${RenameIcon}
+              </editor-icon-button>
+            `
+          : nothing,
+
+        html`
+          <editor-icon-button
+            aria-label="Ungroup"
+            .tooltip=${'Ungroup'}
+            .iconSize=${'20px'}
+            @click=${() => {
+              this.edgeless.doc.captureSync();
+              const frameMgr = this.edgeless.std.get(
+                GfxExtensionIdentifier('frame-manager')
+              ) as EdgelessFrameManager;
+              frames.forEach(frame =>
+                frameMgr.removeAllChildrenFromFrame(frame)
+              );
+              frames.forEach(frame => {
+                this.edgeless.service.removeElement(frame);
+              });
+              this.edgeless.service.selection.clear();
+            }}
+          >
+            ${UngroupButtonIcon}
+          </editor-icon-button>
+        `,
+
+        when(
+          this.edgeless.doc.awarenessStore.getFlag('enable_color_picker'),
+          () => {
+            const { type, colors } = packColorsWithColorScheme(
+              colorScheme,
+              background,
+              this.frames[0].background
+            );
+
+            return html`
+              <edgeless-color-picker-button
+                class="background"
+                .label=${'Background'}
+                .pick=${this.pickColor}
+                .color=${background}
+                .colors=${colors}
+                .colorType=${type}
+                .palettes=${FRAME_BACKGROUND_COLORS}
+              >
+              </edgeless-color-picker-button>
+            `;
+          },
+          () => html`
+            <editor-menu-button
+              .contentPadding=${'8px'}
+              .button=${html`
+                <editor-icon-button
+                  aria-label="Background"
+                  .tooltip=${'Background'}
+                >
+                  <edgeless-color-button
+                    .color=${background}
+                  ></edgeless-color-button>
+                </editor-icon-button>
+              `}
             >
-              ${NoteIcon}
-
-              <span style="margin-left: 2px;">Insert into Page</span>
-            </edgeless-tool-icon-button>
-
-            <component-toolbar-menu-divider></component-toolbar-menu-divider>
-
-            <edgeless-tool-icon-button
-              .tooltip=${'Rename'}
-              .tipPosition=${'bottom'}
-              .iconContainerPadding=${0}
-              @click=${() =>
-                mountFrameTitleEditor(this.frames[0], this.edgeless)}
-            >
-              ${RenameIcon}
-            </edgeless-tool-icon-button>
-
-            <component-toolbar-menu-divider></component-toolbar-menu-divider>
+              <edgeless-color-panel
+                .value=${background}
+                .options=${FRAME_BACKGROUND_COLORS}
+                @select=${(e: ColorEvent) => this._setFrameBackground(e.detail)}
+              >
+              </edgeless-color-panel>
+            </editor-menu-button>
           `
-        : nothing}
-
-      <edgeless-tool-icon-button
-        class="fill-color-button"
-        .tooltip=${this._showPopper ? '' : 'Background'}
-        .tipPosition=${'bottom'}
-        .active=${false}
-        .iconContainerPadding=${2}
-        @click=${() => this._frameBackground?.toggle()}
-      >
-        <div class="fill-color-container">${ColorUnit(background)}</div>
-      </edgeless-tool-icon-button>
-
-      <div class="color-panel-container fill-color">
-        <edgeless-color-panel
-          .value=${background}
-          .options=${FRAME_BACKGROUND}
-          @select=${(e: ColorEvent) => this._setFrameBackground(e.detail)}
-        >
-        </edgeless-color-panel>
-      </div> `;
+        ),
+      ].filter(button => button !== nothing),
+      renderToolbarSeparator
+    );
   }
+
+  @query('edgeless-color-picker-button.background')
+  accessor backgroundButton!: EdgelessColorPickerButton;
+
+  @property({ attribute: false })
+  accessor edgeless!: EdgelessRootBlockComponent;
+
+  @property({ attribute: false })
+  accessor frames: FrameBlockModel[] = [];
 }
 
 export function renderFrameButton(
   edgeless: EdgelessRootBlockComponent,
   frames?: FrameBlockModel[]
 ) {
-  return frames?.length
-    ? html`
-        <edgeless-change-frame-button .edgeless=${edgeless} .frames=${frames}>
-        </edgeless-change-frame-button>
-      `
-    : nothing;
+  if (!frames?.length) return nothing;
+
+  return html`
+    <edgeless-change-frame-button
+      .edgeless=${edgeless}
+      .frames=${frames}
+    ></edgeless-change-frame-button>
+  `;
 }

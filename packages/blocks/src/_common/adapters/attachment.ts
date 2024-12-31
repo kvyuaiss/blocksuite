@@ -1,5 +1,9 @@
-import type { AssetsManager } from '@blocksuite/store';
+import type { ExtensionType } from '@blocksuite/block-std';
+
+import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
+import { sha } from '@blocksuite/global/utils';
 import {
+  type AssetsManager,
   BaseAdapter,
   type BlockSnapshot,
   type DocSnapshot,
@@ -9,12 +13,14 @@ import {
   type FromDocSnapshotResult,
   type FromSliceSnapshotPayload,
   type FromSliceSnapshotResult,
+  type Job,
   nanoid,
-  sha,
   type SliceSnapshot,
   type ToBlockSnapshotPayload,
   type ToDocSnapshotPayload,
 } from '@blocksuite/store';
+
+import { AdapterFactoryIdentifier } from './type.js';
 
 export type Attachment = File[];
 
@@ -22,23 +28,29 @@ type AttachmentToSliceSnapshotPayload = {
   file: Attachment;
   assets?: AssetsManager;
   blockVersions: Record<string, number>;
-  pageVersion: number;
-  workspaceVersion: number;
   workspaceId: string;
   pageId: string;
 };
 
 export class AttachmentAdapter extends BaseAdapter<Attachment> {
-  override fromDocSnapshot(
-    _payload: FromDocSnapshotPayload
-  ): Promise<FromDocSnapshotResult<Attachment>> {
-    throw new Error('Method not implemented.');
-  }
   override fromBlockSnapshot(
     _payload: FromBlockSnapshotPayload
   ): Promise<FromBlockSnapshotResult<Attachment>> {
-    throw new Error('Method not implemented.');
+    throw new BlockSuiteError(
+      ErrorCode.TransformerNotImplementedError,
+      'AttachmentAdapter.fromBlockSnapshot is not implemented.'
+    );
   }
+
+  override fromDocSnapshot(
+    _payload: FromDocSnapshotPayload
+  ): Promise<FromDocSnapshotResult<Attachment>> {
+    throw new BlockSuiteError(
+      ErrorCode.TransformerNotImplementedError,
+      'AttachmentAdapter.fromDocSnapshot is not implemented.'
+    );
+  }
+
   override fromSliceSnapshot(
     payload: FromSliceSnapshotPayload
   ): Promise<FromSliceSnapshotResult<Attachment>> {
@@ -59,16 +71,25 @@ export class AttachmentAdapter extends BaseAdapter<Attachment> {
     }
     return Promise.resolve({ file: attachments, assetsIds: [] });
   }
-  override toDocSnapshot(
-    _payload: ToDocSnapshotPayload<Attachment>
-  ): Promise<DocSnapshot> {
-    throw new Error('Method not implemented.');
-  }
+
   override toBlockSnapshot(
     _payload: ToBlockSnapshotPayload<Attachment>
   ): Promise<BlockSnapshot> {
-    throw new Error('Method not implemented.');
+    throw new BlockSuiteError(
+      ErrorCode.TransformerNotImplementedError,
+      'AttachmentAdapter.toBlockSnapshot is not implemented.'
+    );
   }
+
+  override toDocSnapshot(
+    _payload: ToDocSnapshotPayload<Attachment>
+  ): Promise<DocSnapshot> {
+    throw new BlockSuiteError(
+      ErrorCode.TransformerNotImplementedError,
+      'AttachmentAdapter.toDocSnapshot is not implemented.'
+    );
+  }
+
   override async toSliceSnapshot(
     payload: AttachmentToSliceSnapshotPayload
   ): Promise<SliceSnapshot | null> {
@@ -101,10 +122,19 @@ export class AttachmentAdapter extends BaseAdapter<Attachment> {
     return {
       type: 'slice',
       content,
-      pageVersion: payload.pageVersion,
-      workspaceVersion: payload.workspaceVersion,
       workspaceId: payload.workspaceId,
       pageId: payload.pageId,
     };
   }
 }
+
+export const AttachmentAdapterFactoryIdentifier =
+  AdapterFactoryIdentifier('Attachment');
+
+export const AttachmentAdapterFactoryExtension: ExtensionType = {
+  setup: di => {
+    di.addImpl(AttachmentAdapterFactoryIdentifier, () => ({
+      get: (job: Job) => new AttachmentAdapter(job),
+    }));
+  },
+};

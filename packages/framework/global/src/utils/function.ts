@@ -37,6 +37,12 @@ export function noop(_?: unknown) {
  * throttledLog("Hello, world!");
  * ```
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function throttle<T extends (...args: any[]) => any>(
+  fn: T,
+  limit: number,
+  options?: { leading?: boolean; trailing?: boolean }
+): T;
 export function throttle<
   Args extends unknown[],
   T extends (...args: Args) => void,
@@ -106,3 +112,15 @@ export const debounce = <T extends (...args: any[]) => void>(
     timer = setTimeout(setTimer, limit);
   } as T;
 };
+
+export async function nextTick() {
+  // @ts-ignore
+  if ('scheduler' in window && 'yield' in window.scheduler) {
+    // @ts-ignore
+    return window.scheduler.yield();
+  } else if (typeof requestIdleCallback !== 'undefined') {
+    return new Promise(resolve => requestIdleCallback(resolve));
+  } else {
+    return new Promise(resolve => setTimeout(resolve, 0));
+  }
+}

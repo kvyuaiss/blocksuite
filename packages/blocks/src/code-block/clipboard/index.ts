@@ -1,42 +1,21 @@
-import type { BlockElement } from '@blocksuite/block-std';
-import { Clipboard, type UIEventHandler } from '@blocksuite/block-std';
+import {
+  type BlockComponent,
+  Clipboard,
+  type UIEventHandler,
+} from '@blocksuite/block-std';
 import { assertExists, DisposableGroup } from '@blocksuite/global/utils';
 
 import { HtmlAdapter, PlainTextAdapter } from '../../_common/adapters/index.js';
 import { pasteMiddleware } from '../../root-block/clipboard/middlewares/index.js';
 
 export class CodeClipboardController {
-  protected _disposables = new DisposableGroup();
-  host: BlockElement;
-
-  private get _std() {
-    return this.host.std;
-  }
-
   private _clipboard!: Clipboard;
-  private _plaintextAdapter = new PlainTextAdapter();
-  private _htmlAdapter = new HtmlAdapter();
 
-  constructor(host: BlockElement) {
-    this.host = host;
-  }
-
-  hostConnected() {
-    if (this._disposables.disposed) {
-      this._disposables = new DisposableGroup();
-    }
-    this._clipboard = new Clipboard(this._std);
-    this.host.handleEvent('paste', this.onPagePaste);
-    this._init();
-  }
-
-  hostDisconnected() {
-    this._disposables.dispose();
-  }
+  protected _disposables = new DisposableGroup();
 
   protected _init = () => {
-    this._clipboard.registerAdapter('text/plain', this._plaintextAdapter, 90);
-    this._clipboard.registerAdapter('text/html', this._htmlAdapter, 80);
+    this._clipboard.registerAdapter('text/plain', PlainTextAdapter, 90);
+    this._clipboard.registerAdapter('text/html', HtmlAdapter, 80);
     const paste = pasteMiddleware(this._std);
     this._clipboard.use(paste);
 
@@ -49,7 +28,9 @@ export class CodeClipboardController {
     });
   };
 
-  public onPagePaste: UIEventHandler = ctx => {
+  host: BlockComponent;
+
+  onPagePaste: UIEventHandler = ctx => {
     const e = ctx.get('clipboardState').raw;
     e.preventDefault();
 
@@ -61,7 +42,7 @@ export class CodeClipboardController {
           const textSelection = ctx.currentTextSelection;
           assertExists(textSelection);
           const end = textSelection.to ?? textSelection.from;
-          next({ currentSelectionPath: end.path });
+          next({ currentSelectionPath: end.blockId });
         }),
         cmd.getBlockSelections().inline<'currentSelectionPath'>((ctx, next) => {
           const currentBlockSelections = ctx.currentBlockSelections;
@@ -70,18 +51,21 @@ export class CodeClipboardController {
           if (!blockSelection) {
             return;
           }
-          next({ currentSelectionPath: blockSelection.path });
+          next({ currentSelectionPath: blockSelection.blockId });
         }),
       ])
       .getBlockIndex()
+      .try(cmd => [cmd.getTextSelection().deleteText()])
       .inline((ctx, next) => {
-        assertExists(ctx.parentBlock);
+        if (!ctx.parentBlock) {
+          return;
+        }
         this._clipboard
           .paste(
             e,
             this._std.doc,
             ctx.parentBlock.model.id,
-            ctx.blockIndex ? ctx.blockIndex + 1 : undefined
+            ctx.blockIndex ? ctx.blockIndex + 1 : 1
           )
           .catch(console.error);
 
@@ -90,4 +74,27 @@ export class CodeClipboardController {
       .run();
     return true;
   };
+
+  private get _std() {
+    return this.host.std;
+  }
+
+  constructor(host: BlockComponent) {
+    this.host = host;
+  }
+
+  hostConnected() {
+    if (this._disposables.disposed) {
+      this._disposables = new DisposableGroup();
+    }
+    if (navigator.clipboard) {
+      this._clipboard = new Clipboard(this._std);
+      this.host.handleEvent('paste', this.onPagePaste);
+      this._init();
+    }
+  }
+
+  hostDisconnected() {
+    this._disposables.dispose();
+  }
 }
